@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 
 
-def main() -> int:
-    root = Path(__file__).resolve().parent
+def install_dependencies(root: Path) -> int:
+    """Install requirements.txt into the current Agent Zero Python environment."""
     req = root / "requirements.txt"
     if not req.is_file():
         print("ERROR: requirements.txt not found next to execute.py")
@@ -38,6 +38,11 @@ def main() -> int:
 
     print("Done.")
     return 0
+
+
+def main() -> int:
+    root = Path(__file__).resolve().parent
+    return install_dependencies(root)
 
 
 if __name__ == "__main__":
