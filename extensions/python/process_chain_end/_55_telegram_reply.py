@@ -18,7 +18,13 @@ CTX_SEND_FAILURES: str = "_telegram_send_failures"
 class TelegramAutoReply(Extension):
 
     async def execute(self, loop_data: LoopData = LoopData(), **kwargs):
-        if not self.agent or self.agent.number != 0:
+        if not self.agent:
+            return
+        if self.agent.number != 0:
+            PrintStyle.warning(
+                f"Telegram auto-reply skipped: agent.number={self.agent.number} "
+                "(chain-end Telegram send and TTS only run for agent 0)."
+            )
             return
 
         context = self.agent.context
@@ -27,6 +33,9 @@ class TelegramAutoReply(Extension):
 
         response_text = _extract_last_response(context)
         if not response_text:
+            PrintStyle.info(
+                "Telegram auto-reply skipped: no response content in context log."
+            )
             return
 
         attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])

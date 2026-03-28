@@ -65,6 +65,10 @@ bots:
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
 - Publishing to the Plugin Index: use `name` without a leading underscore; see `packaging/plugin-index/index.yaml.example` for an `a0-plugins` PR template.
 
+## TTS troubleshooting
+
+See [docs/troubleshooting-tts.md](docs/troubleshooting-tts.md) (Docker log filters, `agent.number`, `speech.tts.enabled`).
+
 ## License
 
 See [LICENSE](LICENSE).

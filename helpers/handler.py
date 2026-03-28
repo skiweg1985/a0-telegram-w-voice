@@ -556,6 +556,24 @@ async def send_telegram_reply(
 
     reply_to = context.data.get(CTX_TG_REPLY_TO)
 
+    tts_on = speech.tts_enabled(bot_cfg)
+    if want_voice and response_text and not tts_on:
+        PrintStyle.info(
+            "Telegram TTS skipped: speech.tts.enabled is false for this bot (check plugin config / project scope)."
+        )
+    elif want_voice and not response_text:
+        PrintStyle.info("Telegram TTS skipped: empty response text.")
+    elif (
+        not want_voice
+        and mode == "auto"
+        and response_text
+        and tts_on
+        and not last_input_was_voice
+    ):
+        PrintStyle.info(
+            "Telegram TTS skipped: voice_mode=auto (send a voice message to get a voice reply, or set reply.voice_mode to force)."
+        )
+
     try:
         async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as reply_bot:
             if attachments:
@@ -568,7 +586,7 @@ async def send_telegram_reply(
 
             sent_voice = False
             voice_file: str | None = None
-            if want_voice and response_text and speech.tts_enabled(bot_cfg):
+            if want_voice and response_text and tts_on:
                 try:
                     max_chars = max(100, int(reply_cfg["max_chars"]))
                     voice_text = response_text[:max_chars]
@@ -576,6 +594,10 @@ async def send_telegram_reply(
                     voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, voice_text)
                     msg_id = await tc.send_voice(reply_bot, chat_id, voice_file, reply_to_message_id=reply_to)
                     sent_voice = bool(msg_id)
+                    if sent_voice:
+                        PrintStyle.info(
+                            f"Telegram TTS: voice message sent (bot={bot_name!r}, mode={mode!r})."
+                        )
                 except Exception as e:
                     PrintStyle.error(f"Telegram TTS failed: {format_error(e)}")
                 finally:
