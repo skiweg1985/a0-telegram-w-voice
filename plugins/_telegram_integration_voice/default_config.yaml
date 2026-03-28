@@ -1,0 +1,45 @@
+bots: []
+# Example bot:
+# - name: my_bot
+#   enabled: true
+#   notify_messages: false       # Show a WebUI notification for each incoming Telegram message.
+#   token: ""
+#   mode: polling                # polling or webhook
+#   webhook_url: ""              # required if mode=webhook, your A0 base URL e.g. https://yourdomain.com (webhook path appended automatically)
+#   webhook_secret: ""           # optional shared secret for webhook verification
+#   allowed_users: []            # Telegram user IDs or @usernames. Empty = allow all.
+#   group_mode: mention          # mention (respond when @mentioned or replied to) | all (respond to every message) | off (ignore groups)
+#   welcome_enabled: false       # Send a greeting when someone joins the group
+#   welcome_message: ""          # Welcome template. Use {name} for the new member's name. Default: "Welcome, {name}!"
+#   user_projects: {}            # Map Telegram user_id to project name, e.g. { "123456": "my_project" }
+#   default_project: ""          # Fallback project if user not in user_projects
+#   attachment_max_age_hours: 0  # Hours to keep downloaded attachments. 0 = keep forever.
+#   agent_instructions: ""       # Extra instructions for the agent in Telegram chats
+#
+#   # Voice/STT/TTS
+#   speech:
+#     stt:
+#       enabled: true
+#       provider: openai_compatible   # openai_compatible | elevenlabs | custom_http | local_whisper
+#       base_url: "http://litellm.internal:4000/v1"
+#       endpoint: ""                  # optional override, if empty provider default is used
+#       api_key: "${LITELLM_API_KEY}"
+#       model: "whisper-1"
+#       language: "de"
+#       timeout_sec: 60
+#
+#     tts:
+#       enabled: true
+#       provider: openai_compatible   # openai_compatible | elevenlabs | custom_http | kokoro_local
+#       base_url: "http://litellm.internal:4000/v1"
+#       endpoint: ""                  # optional override
+#       api_key: "${LITELLM_API_KEY}"
+#       model: "gpt-4o-mini-tts"
+#       voice: "alloy"               # for elevenlabs set voice_id here
+#       format: "opus"               # openai: opus/mp3/wav... | elevenlabs: mp3_44100_128 etc.
+#       timeout_sec: 60
+#
+#     reply:
+#       voice_mode: auto              # off | auto | force
+#       also_send_text: true          # send text in addition to voice
+#       max_chars: 700                # cap text length for TTS
