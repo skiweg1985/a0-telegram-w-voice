@@ -17,6 +17,23 @@
           Configure Telegram bots with optional voice STT/TTS providers (LiteLLM/OpenAI-compatible, ElevenLabs, custom endpoints).
         </div>
 
+        <div class="tg-plugin-update">
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Plugin update</div>
+              <div class="field-description">Pull the latest plugin code from Git (requires a Git-based install). Reload this page if something looks stale.</div>
+            </div>
+            <div class="field-control">
+              <button type="button" class="btn btn-field"
+                      @click="$store.telegramConfig.updatePluginFromGit()"
+                      :disabled="$store.telegramConfig.updating">
+                <span x-show="!$store.telegramConfig.updating">Update from Git</span>
+                <span x-show="$store.telegramConfig.updating">Updating…</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Quick Start Guide (collapsible) -->
         <details class="tg-guide">
           <summary class="tg-guide-toggle">Quick Start Guide</summary>
@@ -477,6 +494,9 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .tg-plugin-update {
+    margin-bottom: 4px;
   }
   .tg-guide {
     border: 1px solid var(--color-border);

@@ -5,12 +5,15 @@ import {
 } from "/components/notifications/notification-store.js";
 
 const API_BASE = "/plugins/telegram_integration_voice";
+const PLUGIN_INSTALLER = "plugins/_plugin_installer/plugin_install";
+const PLUGIN_NAME = "telegram_integration_voice";
 
 export const store = createStore("telegramConfig", {
   projects: [],
   expandedIdx: null,
   testing: null,
   testResults: null,
+  updating: false,
   _loaded: false,
 
   onOpen() {
@@ -20,6 +23,7 @@ export const store = createStore("telegramConfig", {
   cleanup() {
     this.testing = null;
     this.testResults = null;
+    this.updating = false;
   },
 
   async init() {
@@ -143,6 +147,45 @@ export const store = createStore("telegramConfig", {
         if (k) obj[k] = parts[1] || "";
       });
     bot.user_projects = obj;
+  },
+
+  async updatePluginFromGit() {
+    if (
+      !window.confirm(
+        "Update this plugin from Git? You may need to reload this page afterward.",
+      )
+    ) {
+      return;
+    }
+    this.updating = true;
+    try {
+      const { callJsonApi } = await import("/js/api.js");
+      const res = await callJsonApi(PLUGIN_INSTALLER, {
+        action: "update_plugin",
+        plugin_name: PLUGIN_NAME,
+      });
+      const ok = res && (res.success === true || res.ok === true);
+      if (ok) {
+        const sha = res.current_commit
+          ? String(res.current_commit).slice(0, 7)
+          : "";
+        toastFrontendSuccess(
+          sha
+            ? `Plugin updated (${sha}). Consider reloading the page.`
+            : "Plugin updated. Consider reloading the page.",
+          "Telegram Integration (Voice)",
+        );
+      } else {
+        toastFrontendError(
+          (res && (res.error || res.message)) || "Update failed.",
+          "Telegram Integration (Voice)",
+        );
+      }
+    } catch (e) {
+      toastFrontendError(String(e), "Telegram Integration (Voice)");
+    } finally {
+      this.updating = false;
+    }
   },
 
   async testConnection(config, idx) {
