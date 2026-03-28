@@ -71,6 +71,9 @@ class TelegramBotManager(Extension):
                 await stop_bot(name)
 
             try:
+                # Always clear registry entry before recreate (avoids duplicate getUpdates if state desynced)
+                await stop_bot(name)
+
                 # Create handler closures that capture bot_name and config
                 _on_start = partial(_make_handler(handle_start), bot_name=name, bot_cfg=bot_cfg)
                 _on_clear = partial(_make_handler(handle_clear), bot_name=name, bot_cfg=bot_cfg)

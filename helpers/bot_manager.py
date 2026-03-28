@@ -37,6 +37,13 @@ def get_bot(name: str) -> BotInstance | None:
 def get_all_bots() -> dict[str, BotInstance]:
     return _bots
 
+
+async def stop_all_bots() -> None:
+    """Stop every registered bot (polling or webhook). Safe when _bots is empty."""
+    for name in list(_bots.keys()):
+        await stop_bot(name)
+
+
 # Bot creation
 
 def create_bot(
@@ -82,6 +89,10 @@ def create_bot(
         router.message.register(on_message)
 
     dp.include_router(router)
+    if name in _bots:
+        PrintStyle.warning(
+            f"Telegram ({name}): create_bot called while bot still registered; old instance should have been stopped first",
+        )
     instance = BotInstance(name=name, bot=bot, dispatcher=dp, router=router, group_mode=group_mode)
     _bots[name] = instance
     return instance
@@ -137,6 +148,10 @@ def _make_group_mention_filter(handler: Callable, bot: Bot):
 # Polling
 
 async def start_polling(instance: BotInstance) -> asyncio.Task:
+    # Avoid two concurrent getUpdates loops on the same BotInstance (orphaned task)
+    if instance.task and not instance.task.done():
+        await stop_polling(instance)
+
     # Ensure any leftover webhook is removed before polling
     try:
         await instance.bot.delete_webhook()
