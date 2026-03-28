@@ -1,6 +1,10 @@
 import { createStore } from "/js/AlpineStore.js";
+import {
+  toastFrontendError,
+  toastFrontendSuccess,
+} from "/components/notifications/notification-store.js";
 
-const API_BASE = "/plugins/_telegram_integration_voice";
+const API_BASE = "/plugins/telegram_integration_voice";
 
 export const store = createStore("telegramConfig", {
   projects: [],
@@ -8,6 +12,15 @@ export const store = createStore("telegramConfig", {
   testing: null,
   testResults: null,
   _loaded: false,
+
+  onOpen() {
+    this.init();
+  },
+
+  cleanup() {
+    this.testing = null;
+    this.testResults = null;
+  },
 
   async init() {
     if (this._loaded) return;
@@ -141,11 +154,20 @@ export const store = createStore("telegramConfig", {
         bot: config.bots[idx],
       });
       this.testResults = res;
+      if (res && res.success) {
+        toastFrontendSuccess("Connection test succeeded.", "Telegram Integration (Voice)");
+      } else {
+        toastFrontendError(
+          (res && res.message) || "Connection test failed.",
+          "Telegram Integration (Voice)",
+        );
+      }
     } catch (e) {
       this.testResults = {
         success: false,
         results: [{ test: "Connection", ok: false, message: String(e) }],
       };
+      toastFrontendError(String(e), "Telegram Integration (Voice)");
     }
     this.testing = null;
   },

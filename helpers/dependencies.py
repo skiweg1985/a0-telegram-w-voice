@@ -1,3 +1,5 @@
+"""Optional runtime install of aiogram; prefer running execute.py once (a0-create-plugin)."""
+
 from __future__ import annotations
 
 import importlib

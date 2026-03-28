@@ -1,13 +1,13 @@
 from helpers.extension import Extension
 from helpers.tool import Response
-from plugins._telegram_integration_voice.helpers.constants import (
+from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_BOT,
     CTX_TG_ATTACHMENTS,
     CTX_TG_KEYBOARD,
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_FORCE_VOICE_REPLY,
 )
-from plugins._telegram_integration_voice.helpers.dependencies import ensure_dependencies
+from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
 
 class TelegramResponseIntercept(Extension):
@@ -55,7 +55,7 @@ class TelegramResponseIntercept(Extension):
 
     async def _send_inline(self, context, tool, response: Response):
         ensure_dependencies()
-        from plugins._telegram_integration_voice.helpers.handler import send_telegram_reply
+        from usr.plugins.telegram_integration_voice.helpers.handler import send_telegram_reply
 
         agent = self.agent
         assert agent is not None

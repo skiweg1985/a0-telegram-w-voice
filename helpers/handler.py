@@ -20,10 +20,10 @@ from helpers.print_style import PrintStyle
 from helpers.errors import format_error
 from initialize import initialize_agent
 
-from plugins._telegram_integration_voice.helpers import telegram_client as tc
-from plugins._telegram_integration_voice.helpers import speech
-from plugins._telegram_integration_voice.helpers.bot_manager import get_bot
-from plugins._telegram_integration_voice.helpers.constants import (
+from usr.plugins.telegram_integration_voice.helpers import telegram_client as tc
+from usr.plugins.telegram_integration_voice.helpers import speech
+from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
+from usr.plugins.telegram_integration_voice.helpers.constants import (
     PLUGIN_NAME,
     DOWNLOAD_FOLDER,
     STATE_FILE,

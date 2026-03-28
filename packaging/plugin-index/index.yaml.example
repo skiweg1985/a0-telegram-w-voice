@@ -1,0 +1,12 @@
+# Example index manifest for https://github.com/agent0ai/a0-plugins
+# Copy to: plugins/telegram_integration_voice/index.yaml in your a0-plugins fork.
+# Replace github URL and description as needed.
+
+title: Telegram Integration (Voice)
+description: >
+  Telegram for Agent Zero with polling/webhook, per-user sessions, and pluggable
+  STT/TTS (OpenAI-compatible, LiteLLM, ElevenLabs, custom endpoints).
+github: https://github.com/YOUR_ORG/a0-telegram-w-voice
+tags:
+  - communication
+  - telegram

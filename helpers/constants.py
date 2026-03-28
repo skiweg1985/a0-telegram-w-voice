@@ -1,6 +1,6 @@
-PLUGIN_NAME = "_telegram_integration_voice"
+PLUGIN_NAME = "telegram_integration_voice"
 DOWNLOAD_FOLDER = "usr/uploads"
-STATE_FILE = "usr/plugins/_telegram_integration_voice/state.json"
+STATE_FILE = "usr/plugins/telegram_integration_voice/state.json"
 
 # Context data keys
 CTX_TG_BOT = "telegram_bot"

@@ -1,6 +1,6 @@
 from helpers.api import ApiHandler, Request
 from helpers.errors import format_error
-from plugins._telegram_integration_voice.helpers.dependencies import ensure_dependencies
+from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
 
 class TestConnection(ApiHandler):
@@ -20,7 +20,7 @@ class TestConnection(ApiHandler):
 
         try:
             ensure_dependencies()
-            from plugins._telegram_integration_voice.helpers.bot_manager import test_token
+            from usr.plugins.telegram_integration_voice.helpers.bot_manager import test_token
             ok, message = await test_token(token)
             results.append({
                 "test": "Bot Token",

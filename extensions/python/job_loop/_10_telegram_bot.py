@@ -5,10 +5,10 @@ from helpers.extension import Extension
 from helpers.errors import format_error
 from helpers.print_style import PrintStyle
 from helpers import plugins
-from plugins._telegram_integration_voice.helpers.dependencies import ensure_dependencies, has_aiogram
+from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies, has_aiogram
 
 
-PLUGIN_NAME: str = "_telegram_integration_voice"
+PLUGIN_NAME: str = "telegram_integration_voice"
 
 
 class TelegramBotManager(Extension):
@@ -27,7 +27,7 @@ class TelegramBotManager(Extension):
         if enabled_names:
             ensure_dependencies()
 
-        from plugins._telegram_integration_voice.helpers.bot_manager import (
+        from usr.plugins.telegram_integration_voice.helpers.bot_manager import (
             get_all_bots,
             create_bot,
             cache_bot_info,
@@ -35,7 +35,7 @@ class TelegramBotManager(Extension):
             setup_webhook,
             stop_bot,
         )
-        from plugins._telegram_integration_voice.helpers.handler import (
+        from usr.plugins.telegram_integration_voice.helpers.handler import (
             handle_start,
             handle_clear,
             handle_message,

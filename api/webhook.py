@@ -1,6 +1,6 @@
 from helpers.api import ApiHandler, Request, Response
 from helpers.print_style import PrintStyle
-from plugins._telegram_integration_voice.helpers.dependencies import ensure_dependencies
+from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
 
 class TelegramWebhook(ApiHandler):
@@ -22,7 +22,7 @@ class TelegramWebhook(ApiHandler):
         ensure_dependencies()
         from aiogram.types import Update
 
-        from plugins._telegram_integration_voice.helpers.bot_manager import get_bot
+        from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
 
         # Identify which bot this update is for
         bot_name = request.args.get("bot", "")

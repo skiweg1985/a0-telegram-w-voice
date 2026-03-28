@@ -174,7 +174,7 @@ async def stop_polling(instance: BotInstance):
 
 async def setup_webhook(instance: BotInstance, webhook_url: str, secret: str = ""):
     """Register webhook with Telegram. Updates are received via the API handler."""
-    full_url = f"{webhook_url.rstrip('/')}/api/plugins/_telegram_integration_voice/webhook?bot={instance.name}"
+    full_url = f"{webhook_url.rstrip('/')}/api/plugins/telegram_integration_voice/webhook?bot={instance.name}"
 
     await instance.bot.set_webhook(
         url=full_url,
