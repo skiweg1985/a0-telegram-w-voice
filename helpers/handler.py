@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import os
 import threading
@@ -345,6 +346,10 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
 
+def _status_on_off(enabled: bool) -> str:
+    return "✅ on" if enabled else "❌ off"
+
+
 async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /status — model, tokens, project, TTS/STT, run state."""
     user = message.from_user
@@ -355,7 +360,7 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     ctx = _get_existing_context(message, bot_name)
-    lines: list[str] = ["Agent status", ""]
+    lines: list[str] = ["🤖 <b>Agent status</b>", ""]
 
     chat_cfg: dict = {}
     util_cfg: dict = {}
@@ -376,8 +381,14 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
     ctx_hist = float(chat_cfg.get("ctx_history", 0.7) or 0.7)
     hist_limit = int(ctx_len * ctx_hist) if ctx_len else 0
 
-    lines.append(f"Model: {chat_provider} / {chat_name}")
-    lines.append(f"Utility: {util_provider} / {util_name}")
+    lines.append(
+        f"🧠 <b>Model</b>\n<code>{html.escape(chat_provider)}</code> · "
+        f"<code>{html.escape(chat_name)}</code>"
+    )
+    lines.append(
+        f"🔧 <b>Utility</b>\n<code>{html.escape(util_provider)}</code> · "
+        f"<code>{html.escape(util_name)}</code>"
+    )
 
     if ctx:
         agent = ctx.agent0
@@ -386,34 +397,45 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         win_tokens = int((ctx_window.get("tokens") or 0))
         pct = (100.0 * hist_tokens / hist_limit) if hist_limit else 0.0
         lines.append(
-            f"History: ~{hist_tokens} / ~{hist_limit} tokens ({pct:.1f}% of history budget)"
+            f"📊 <b>History</b>\n~{hist_tokens} / ~{hist_limit} tok · {pct:.1f}% of budget"
         )
-        lines.append(f"Last prompt window: ~{win_tokens} tokens (approx.)")
-        lines.append(f"Messages (counter): {agent.history.counter}")
+        lines.append(f"📐 <b>Prompt window</b>\n~{win_tokens} tok (approx.)")
+        lines.append(f"💬 <b>Messages</b>\n{agent.history.counter}")
         proj = projects.get_context_project_name(ctx)
-        lines.append(f"Project: {proj or '(none)'}")
+        proj_disp = "—" if not proj else html.escape(str(proj))
+        lines.append(f"📁 <b>Project</b>\n{proj_disp}")
         sess = ctx.data.get(CTX_TG_TTS_OVERRIDE)
-        sess_lbl = "plugin default" if sess is None else str(sess)
-        lines.append(
-            f"TTS engine: {'on' if speech.tts_enabled(bot_cfg) else 'off'}; session voice: {sess_lbl}"
-        )
-        lines.append(f"STT: {'on' if speech.stt_enabled(bot_cfg) else 'off'}")
+        sess_lbl = "plugin default" if sess is None else html.escape(str(sess))
+        tts_engine = _status_on_off(speech.tts_enabled(bot_cfg))
+        lines.append(f"🔊 <b>TTS</b>\n{tts_engine} · voice: {sess_lbl}")
+        lines.append(f"🎙 <b>STT</b>\n{_status_on_off(speech.stt_enabled(bot_cfg))}")
         opt_eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
         opt_raw = ctx.data.get(CTX_TG_OUTPUT_OPTIMIZE)
-        opt_note = "session unset (bot default)" if opt_raw is None else f"session={opt_raw!r}"
-        lines.append(f"Output optimize: {opt_eff} ({opt_note})")
-        lines.append(f"Running: {ctx.is_running()}; Paused: {ctx.paused}")
-        lines.append(f"Context id: {ctx.id}")
-    else:
-        lines.append("No Telegram session yet — send a message or /start.")
-        lines.append(f"TTS engine: {'on' if speech.tts_enabled(bot_cfg) else 'off'}")
-        lines.append(f"STT: {'on' if speech.stt_enabled(bot_cfg) else 'off'}")
+        opt_note = (
+            "session unset → bot default"
+            if opt_raw is None
+            else html.escape(f"session={opt_raw!r}")
+        )
         lines.append(
-            f"Output optimize (default): {speech.optimize_output_default(bot_cfg)}"
+            f"✨ <b>Output optimize</b>\n{html.escape(str(opt_eff))} ({opt_note})"
+        )
+        job_s = "▶️ running" if ctx.is_running() else "⏹ idle"
+        pause_s = "⏸ yes" if ctx.paused else "— no"
+        lines.append(f"⚡ <b>Run state</b>\n{job_s}\nPaused: {pause_s}")
+        lines.append(f"🆔 <b>Context</b>\n<code>{html.escape(str(ctx.id))}</code>")
+    else:
+        lines.append("💤 <b>No session yet</b>\nSend a message or /start.")
+        lines.append(f"🔊 <b>TTS</b>\n{_status_on_off(speech.tts_enabled(bot_cfg))}")
+        lines.append(f"🎙 <b>STT</b>\n{_status_on_off(speech.stt_enabled(bot_cfg))}")
+        lines.append(
+            f"✨ <b>Output optimize (default)</b>\n"
+            f"{html.escape(str(speech.optimize_output_default(bot_cfg)))}"
         )
 
     text = "\n".join(lines)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, text, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token, message.chat.id, text, parse_mode=ParseMode.HTML
+    )
 
 
 async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):

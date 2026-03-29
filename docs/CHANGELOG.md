@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.
+
 ## [0.10.3] - 2026-03-29
 
 ### Fixed
