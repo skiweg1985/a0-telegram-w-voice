@@ -8,4 +8,4 @@
 
 - Telegram slash commands: `/help`, `/status`, `/tts`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume` (existing `/start`, `/clear`).
 - Command menu registration via `set_my_commands` on bot start (`helpers/command_registry.py`).
-- Per-session `/tts` override (`CTX_TG_TTS_OVERRIDE`); cleared on `/clear`.
+- Per-session `/tts` override (`telegram_tts_voice_session` in context data, persisted in chat); cleared on `/clear`.
