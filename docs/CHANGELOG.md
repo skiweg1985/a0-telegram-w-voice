@@ -23,6 +23,7 @@
 - `/tts` with no argument no longer toggles mute; use the **Muted** or **Default** button (or `/tts off` / `/tts on`).
 - `handle_callback_query`: callbacks with prefix `tgx|` are handled locally (plugin UI); other `callback_data` still goes to the agent as before.
 - `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.
+- `/status` layout: grouped blocks (Models, Tokens &amp; history, Project, Voice, Reply options, Activity, Session ID) with blank lines between sections; one line per metric where possible; clearer labels (e.g. tool-step lines, output shaping, override bullets).
 - Tool detail status lines (`/detail info|debug`) now go through progress message editing, so the chat can update one message in place instead of posting a new line per step.
 
 ## [0.10.4] - 2026-03-29
