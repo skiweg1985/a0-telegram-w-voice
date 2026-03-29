@@ -35,9 +35,13 @@ class TelegramBotManager(Extension):
             setup_webhook,
             stop_bot,
         )
-        from usr.plugins.telegram_integration_voice.helpers.command_registry import (
-            register_bot_command_menu,
-        )
+        try:
+            from usr.plugins.telegram_integration_voice.helpers.command_registry import (
+                register_bot_command_menu,
+            )
+        except ImportError:
+            register_bot_command_menu = None  # graceful: old command_registry without this function
+
         from usr.plugins.telegram_integration_voice.helpers.handler import (
             handle_start,
             handle_clear,
@@ -127,7 +131,8 @@ class TelegramBotManager(Extension):
                 )
 
                 await cache_bot_info(instance)
-                await register_bot_command_menu(instance.bot)
+                if register_bot_command_menu:
+                    await register_bot_command_menu(instance.bot)
 
                 mode = bot_cfg.get("mode", "polling")
                 if mode == "webhook":
