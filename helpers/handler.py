@@ -22,7 +22,7 @@ from helpers.errors import format_error
 from initialize import initialize_agent
 
 from usr.plugins.telegram_integration_voice.helpers import telegram_client as tc
-from usr.plugins.telegram_integration_voice.helpers import speech
+from usr.plugins.telegram_integration_voice.helpers import detail_status, speech
 from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
 from usr.plugins.telegram_integration_voice.helpers.command_registry import format_help_text
 from usr.plugins.telegram_integration_voice.helpers.constants import (
@@ -44,6 +44,8 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_TTS_OVERRIDE,
     CTX_TG_OUTPUT_OPTIMIZE,
     CTX_TG_VOICE_TEXT,
+    CTX_TG_DETAIL_LEVEL_SESSION,
+    CTX_TG_DETAIL_LAST_SENT_TS,
     TG_UI_CALLBACK_PREFIX,
 )
 
@@ -162,6 +164,40 @@ def _apply_tts_setting(ctx: AgentContext, mode: str) -> str:
         ctx.data[CTX_TG_TTS_OVERRIDE] = "force"
         return "Voice mode: force (voice replies when TTS is enabled)."
     return "Usage: /tts on|off|auto|force"
+
+
+def _detail_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "Off", "callback_data": f"{p}d|off"},
+            {"text": "Info", "callback_data": f"{p}d|info"},
+        ],
+        [
+            {"text": "Debug", "callback_data": f"{p}d|debug"},
+            {"text": "Reset", "callback_data": f"{p}d|reset"},
+        ],
+    ]
+
+
+def _detail_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
+    eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
+    sess = ctx.data.get(CTX_TG_DETAIL_LEVEL_SESSION)
+    if sess is None:
+        return f"{eff} (bot default)"
+    return f"{eff} (session override)"
+
+
+def _apply_detail_level(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
+    arg = arg.strip().lower()
+    if arg in ("reset", "default"):
+        ctx.data.pop(CTX_TG_DETAIL_LEVEL_SESSION, None)
+        eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
+        return f"Detail level: follow bot default ({eff})."
+    if arg in ("off", "info", "debug"):
+        ctx.data[CTX_TG_DETAIL_LEVEL_SESSION] = arg
+        return f"Detail level set to: {arg}."
+    return "Usage: /detail off|info|debug — or /detail reset"
 
 
 def _project_names_ordered() -> list[str]:
@@ -352,6 +388,8 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
                 ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
                 ctx.data.pop(CTX_TG_VOICE_TEXT, None)
+                ctx.data.pop(CTX_TG_DETAIL_LEVEL_SESSION, None)
+                ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
                 save_tmp_chat(ctx)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
@@ -470,6 +508,36 @@ async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
     save_tmp_chat(ctx)
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
+
+async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /detail — per-session tool status verbosity: off | info | debug."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message).lower().strip()
+    if not arg:
+        desc = _detail_session_description(ctx, bot_cfg)
+        reply = (
+            f"Tool detail: {desc}.\n"
+            "Tap a button or type /detail off|info|debug or /detail reset"
+        )
+        kb = _detail_inline_keyboard()
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
+        )
+        return
+
+    reply = _apply_detail_level(ctx, bot_cfg, arg)
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
 
 async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -598,6 +666,16 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         lines.append(
             f"✨ <b>Output optimize</b>\n{html.escape(str(opt_eff))} ({opt_note})"
         )
+        det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
+        det_sess = ctx.data.get(CTX_TG_DETAIL_LEVEL_SESSION)
+        det_note = (
+            "session unset → bot default"
+            if det_sess is None
+            else html.escape(f"session={det_sess!r}")
+        )
+        lines.append(
+            f"📋 <b>Tool detail</b>\n{html.escape(str(det_eff))} ({det_note})"
+        )
         job_s = "▶️ running" if ctx.is_running() else "⏹ idle"
         pause_s = "⏸ yes" if ctx.paused else "— no"
         lines.append(f"⚡ <b>Run state</b>\n{job_s}\nPaused: {pause_s}")
@@ -609,6 +687,10 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         lines.append(
             f"✨ <b>Output optimize (default)</b>\n"
             f"{html.escape(str(speech.optimize_output_default(bot_cfg)))}"
+        )
+        lines.append(
+            f"📋 <b>Tool detail (default)</b>\n"
+            f"{html.escape(str(detail_status.normalize_detail_level(bot_cfg.get('telegram_detail_level'))))}"
         )
 
     text = "\n".join(lines)
@@ -857,6 +939,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     # Store stop event so send_telegram_reply can cancel typing
     context.data[CTX_TG_TYPING_STOP] = typing_stop
+    context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
 
     # In group chats, if user replied to the bot's message, reply to the user's message
     reply_to_id = None
@@ -998,6 +1081,16 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 await query.answer("Unknown option.")
                 return
             reply = _apply_tts_setting(context, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "d":
+            if payload not in ("off", "info", "debug", "reset"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_detail_level(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
             await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
@@ -1252,6 +1345,30 @@ async def _download_attachments(bot, message: TgMessage, bot_name: str = "") -> 
             paths.append(path)
 
     return paths
+
+
+async def send_telegram_ephemeral_status(context: AgentContext, html_body: str) -> None:
+    """Send a short HTML line during tool runs (no TTS). Logs failures; does not raise."""
+    try:
+        bot_name = context.data.get(CTX_TG_BOT)
+        if not bot_name:
+            return
+        instance = get_bot(bot_name)
+        if not instance:
+            return
+        chat_id = context.data.get(CTX_TG_CHAT_ID)
+        if not chat_id:
+            return
+        async with _temp_bot(
+            instance.bot.token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        ) as bot:
+            await tc.send_text(
+                bot, int(chat_id), html_body, parse_mode=ParseMode.HTML
+            )
+    except Exception as e:
+        PrintStyle.warning(f"Telegram detail status send failed: {format_error(e)}")
+
 
 # Reply sending (called from process_chain_end extension)
 

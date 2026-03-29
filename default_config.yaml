@@ -15,6 +15,13 @@ bots: []
 #   default_project: ""          # Fallback project if user not in user_projects
 #   attachment_max_age_hours: 0  # Hours to keep downloaded attachments. 0 = keep forever.
 #   agent_instructions: ""       # Extra instructions for the agent in Telegram chats
+#   # Tool-run status in chat (tool names / labels only; never tool arguments)
+#   telegram_detail_level: off              # off | info | debug — /detail can override per session
+#   telegram_detail_info_min_interval_sec: 5
+#   telegram_detail_debug_min_interval_sec: 1.5
+#   telegram_detail_exclude_tools: []
+#   telegram_detail_tool_labels: {}        # e.g. { "code_execution": "Run code" }
+
 #
 #   # Voice/STT/TTS
 #   speech:

@@ -27,6 +27,12 @@ CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
 # "voice" | "text" | explicit "off" (no optimize snippet).
 CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
 
+# Per-session tool-status detail: missing = use bot telegram_detail_level; off | info | debug.
+CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"
+
+# Throttle for Telegram detail status lines (transient; reset on new user message).
+CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"
+
 # Last response tool: optional separate string for TTS only (transient, "_" prefix = not persisted).
 CTX_TG_VOICE_TEXT = "_telegram_response_voice_text"
 

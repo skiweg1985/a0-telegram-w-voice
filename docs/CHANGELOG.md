@@ -18,6 +18,17 @@
 - `handle_callback_query`: callbacks with prefix `tgx|` are handled locally (plugin UI); other `callback_data` still goes to the agent as before.
 - `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.
 
+## [0.10.4] - 2026-03-29
+
+### Added
+
+- `/detail` — tool-run status in chat: `off` (default, final answer only), `info` (throttled “Step: …” lines), `debug` (more frequent, still throttled). No argument shows current level plus inline buttons; `reset` clears the session override. Bot keys: `telegram_detail_level`, `telegram_detail_*_min_interval_sec`, optional `telegram_detail_exclude_tools` / `telegram_detail_tool_labels`. Status lines never include tool arguments.
+
+### Changed
+
+- `/status` includes **Tool detail** (effective level and session override).
+- `/clear` also clears the `/detail` session override and detail throttle state.
+
 ## [0.10.3] - 2026-03-29
 
 ### Fixed

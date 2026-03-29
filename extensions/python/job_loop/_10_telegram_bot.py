@@ -51,6 +51,7 @@ class TelegramBotManager(Extension):
         handle_newchat = _tg_handler.handle_newchat
         handle_help = _tg_handler.handle_help
         handle_tts = _tg_handler.handle_tts
+        handle_detail = _tg_handler.handle_detail
         handle_status = _tg_handler.handle_status
         handle_compact = _tg_handler.handle_compact
         handle_stop = _tg_handler.handle_stop
@@ -108,6 +109,7 @@ class TelegramBotManager(Extension):
                 _on_newchat = partial(_make_handler(handle_newchat), bot_name=name, bot_cfg=bot_cfg)
                 _on_help = partial(_make_handler(handle_help), bot_name=name, bot_cfg=bot_cfg)
                 _on_tts = partial(_make_handler(handle_tts), bot_name=name, bot_cfg=bot_cfg)
+                _on_detail = partial(_make_handler(handle_detail), bot_name=name, bot_cfg=bot_cfg)
                 _on_optimize = (
                     partial(_make_handler(handle_optimize_output), bot_name=name, bot_cfg=bot_cfg)
                     if handle_optimize_output
@@ -128,6 +130,7 @@ class TelegramBotManager(Extension):
                     ("help", _on_help),
                     ("newchat", _on_newchat),
                     ("tts", _on_tts),
+                    ("detail", _on_detail),
                 ]
                 if _on_optimize:
                     _extra_commands.extend(

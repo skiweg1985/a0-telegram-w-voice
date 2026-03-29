@@ -49,6 +49,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/speakstyle — same as voice optimize; /speakstyle off",
     ),
     (
+        "detail",
+        "Tool status detail",
+        "/detail off|info|debug|reset — no arg = status + buttons",
+    ),
+    (
         "tts",
         "Voice reply mode",
         "/tts [on|off|auto|force] — no arg = session + buttons",
