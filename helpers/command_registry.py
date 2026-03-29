@@ -1,0 +1,83 @@
+"""
+Telegram bot commands: single source for BotFather-style menu and /help text.
+Descriptions must stay short (Telegram menu limit).
+"""
+
+from __future__ import annotations
+
+from aiogram.types import BotCommand
+
+# (command, menu_description, help_line_for_users)
+COMMAND_ROWS: list[tuple[str, str, str]] = [
+    (
+        "help",
+        "Command list",
+        "/help — list commands",
+    ),
+    (
+        "start",
+        "Welcome and session",
+        "/start — welcome; ensures a session",
+    ),
+    (
+        "status",
+        "Agent status",
+        "/status — model, tokens, project, TTS/STT, run state",
+    ),
+    (
+        "clear",
+        "Reset chat",
+        "/clear — reset conversation (same as reset)",
+    ),
+    (
+        "tts",
+        "Voice reply mode",
+        "/tts [on|off|auto|force] — session voice; no arg toggles mute",
+    ),
+    (
+        "compact",
+        "Compress context",
+        "/compact — shrink history (utility LLM)",
+    ),
+    (
+        "stop",
+        "Stop task",
+        "/stop — abort the running agent task",
+    ),
+    (
+        "project",
+        "Show or switch project",
+        "/project [name] — active project or switch",
+    ),
+    (
+        "model",
+        "Show or switch preset",
+        "/model [preset] — needs chat override in _model_config",
+    ),
+    (
+        "pause",
+        "Pause agent",
+        "/pause — pause until /resume",
+    ),
+    (
+        "resume",
+        "Resume agent",
+        "/resume — continue after /pause",
+    ),
+]
+
+
+def get_bot_commands() -> list[BotCommand]:
+    """Commands shown in the Telegram command menu (order preserved)."""
+    return [
+        BotCommand(command=cmd, description=desc[:256])
+        for cmd, desc, _ in COMMAND_ROWS
+    ]
+
+
+def format_help_text() -> str:
+    """Plain-text body for /help replies."""
+    lines = ["Commands:"]
+    for _, _, help_line in COMMAND_ROWS:
+        lines.append(help_line)
+    return "\n".join(lines)

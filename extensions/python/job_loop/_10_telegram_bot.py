@@ -31,6 +31,7 @@ class TelegramBotManager(Extension):
             get_all_bots,
             create_bot,
             cache_bot_info,
+            register_bot_command_menu,
             start_polling,
             setup_webhook,
             stop_bot,
@@ -38,6 +39,15 @@ class TelegramBotManager(Extension):
         from usr.plugins.telegram_integration_voice.helpers.handler import (
             handle_start,
             handle_clear,
+            handle_help,
+            handle_tts,
+            handle_status,
+            handle_compact,
+            handle_stop,
+            handle_pause,
+            handle_resume,
+            handle_project,
+            handle_model,
             handle_message,
             handle_callback_query,
             handle_new_members,
@@ -77,9 +87,30 @@ class TelegramBotManager(Extension):
                 # Create handler closures that capture bot_name and config
                 _on_start = partial(_make_handler(handle_start), bot_name=name, bot_cfg=bot_cfg)
                 _on_clear = partial(_make_handler(handle_clear), bot_name=name, bot_cfg=bot_cfg)
+                _on_help = partial(_make_handler(handle_help), bot_name=name, bot_cfg=bot_cfg)
+                _on_tts = partial(_make_handler(handle_tts), bot_name=name, bot_cfg=bot_cfg)
+                _on_status = partial(_make_handler(handle_status), bot_name=name, bot_cfg=bot_cfg)
+                _on_compact = partial(_make_handler(handle_compact), bot_name=name, bot_cfg=bot_cfg)
+                _on_stop = partial(_make_handler(handle_stop), bot_name=name, bot_cfg=bot_cfg)
+                _on_pause = partial(_make_handler(handle_pause), bot_name=name, bot_cfg=bot_cfg)
+                _on_resume = partial(_make_handler(handle_resume), bot_name=name, bot_cfg=bot_cfg)
+                _on_project = partial(_make_handler(handle_project), bot_name=name, bot_cfg=bot_cfg)
+                _on_model = partial(_make_handler(handle_model), bot_name=name, bot_cfg=bot_cfg)
                 _on_message = partial(_make_handler(handle_message), bot_name=name, bot_cfg=bot_cfg)
                 _on_callback = partial(_make_handler(handle_callback_query), bot_name=name, bot_cfg=bot_cfg)
                 _on_new_members = partial(_make_handler(handle_new_members), bot_name=name, bot_cfg=bot_cfg)
+
+                _extra_commands = [
+                    ("help", _on_help),
+                    ("tts", _on_tts),
+                    ("status", _on_status),
+                    ("compact", _on_compact),
+                    ("stop", _on_stop),
+                    ("pause", _on_pause),
+                    ("resume", _on_resume),
+                    ("project", _on_project),
+                    ("model", _on_model),
+                ]
 
                 instance = create_bot(
                     name=name,
@@ -90,9 +121,11 @@ class TelegramBotManager(Extension):
                     on_callback_query=_on_callback,
                     on_new_members=_on_new_members,
                     group_mode=bot_cfg.get("group_mode", "mention"),
+                    extra_command_handlers=_extra_commands,
                 )
 
                 await cache_bot_info(instance)
+                await register_bot_command_menu(instance.bot)
 
                 mode = bot_cfg.get("mode", "polling")
                 if mode == "webhook":

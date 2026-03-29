@@ -62,6 +62,22 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 - STT for incoming Telegram voice/audio
 - TTS for outgoing Telegram voice replies
 - Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
+- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/tts`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Session `/tts` overrides plugin voice mode until `/clear`.
+
+## Slash commands (summary)
+
+| Command | Purpose |
+|--------|---------|
+| `/help` | List commands |
+| `/start` | Welcome; ensures session |
+| `/status` | Model, tokens, project, TTS/STT, run state |
+| `/clear` | Reset conversation |
+| `/tts` | `on` / `off` / `auto` / `force`, or no arg toggles mute |
+| `/compact` | Compress history (utility LLM) |
+| `/stop` | Abort running task |
+| `/project` | Show or `/project <name>` switch |
+| `/model` | Show or `/model <preset>` (needs `_model_config` + `allow_chat_override`) |
+| `/pause` / `/resume` | Pause or resume agent loop |
 
 ## Configuration example
 

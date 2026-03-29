@@ -55,14 +55,17 @@ def create_bot(
     on_callback_query: Callable[..., Awaitable] | None = None,
     on_new_members: Callable[..., Awaitable] | None = None,
     group_mode: str = "mention",
+    extra_command_handlers: list[tuple[str, Callable[..., Awaitable]]] | None = None,
 ) -> BotInstance:
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     router = Router()
 
-    # Register command handlers
+    # Register command handlers (before generic message handlers)
     router.message.register(on_command_start, CommandStart())
     router.message.register(on_command_clear, Command("clear"))
+    for cmd_name, cmd_handler in extra_command_handlers or []:
+        router.message.register(cmd_handler, Command(cmd_name))
 
     if on_callback_query:
         router.callback_query.register(on_callback_query)
@@ -103,6 +106,16 @@ async def cache_bot_info(instance: BotInstance):
     if not instance.bot_info:
         instance.bot_info = await instance.bot.get_me()
     return instance.bot_info
+
+
+async def register_bot_command_menu(bot: Bot) -> None:
+    """Register slash commands in the Telegram menu (BotCommand list)."""
+    from usr.plugins.telegram_integration_voice.helpers.command_registry import get_bot_commands
+
+    try:
+        await bot.set_my_commands(get_bot_commands())
+    except Exception as e:
+        PrintStyle.warning(f"Telegram set_my_commands failed: {format_error(e)}")
 
 
 def _make_group_mention_filter(handler: Callable, bot: Bot):

@@ -11,7 +11,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Message as TgMessage, CallbackQuery
 
-from agent import AgentContext, UserMessage
+from agent import Agent, AgentContext, UserMessage
 from helpers import plugins, files, projects
 from helpers import message_queue as mq
 from helpers.notification import NotificationManager, NotificationType, NotificationPriority
@@ -23,6 +23,7 @@ from initialize import initialize_agent
 from usr.plugins.telegram_integration_voice.helpers import telegram_client as tc
 from usr.plugins.telegram_integration_voice.helpers import speech
 from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
+from usr.plugins.telegram_integration_voice.helpers.command_registry import format_help_text
 from usr.plugins.telegram_integration_voice.helpers.constants import (
     PLUGIN_NAME,
     DOWNLOAD_FOLDER,
@@ -39,6 +40,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_FORCE_VOICE_REPLY,
     CTX_TG_LAST_INPUT_WAS_VOICE,
+    CTX_TG_TTS_OVERRIDE,
 )
 
 # Chat mapping: (bot_name, tg_user_id) → AgentContext ID
@@ -64,6 +66,30 @@ def _save_state(state: dict):
 
 def _map_key(bot_name: str, user_id: int, chat_id: int) -> str:
     return f"{bot_name}:{user_id}:{chat_id}"
+
+
+def _cmd_rest(message: TgMessage) -> str:
+    """Text after the first token of a command (preserves case for project names)."""
+    text = (message.text or "").strip()
+    if not text:
+        return ""
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
+def _get_existing_context(message: TgMessage, bot_name: str) -> AgentContext | None:
+    user = message.from_user
+    if not user:
+        return None
+    key = _map_key(bot_name, user.id, message.chat.id)
+    with _chat_map_lock:
+        state = _load_state()
+        ctx_id = state.get("chats", {}).get(key)
+    if not ctx_id:
+        return None
+    return AgentContext.get(ctx_id)
 
 
 def cleanup_old_attachments():
@@ -170,6 +196,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
             ctx = AgentContext.get(ctx_id)
             if ctx:
                 ctx.reset()
+                ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
     instance = get_bot(bot_name)
@@ -191,6 +218,319 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
             display_time=5,
             group="telegram",
         )
+
+
+async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /help — list commands."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        format_help_text(),
+        parse_mode=None,
+    )
+
+
+async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /tts — per-session voice reply override."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message).lower().strip()
+    if not arg:
+        cur = ctx.data.get(CTX_TG_TTS_OVERRIDE)
+        if cur == "off":
+            ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
+            reply = "Voice replies: follow plugin config (unmuted)."
+        else:
+            ctx.data[CTX_TG_TTS_OVERRIDE] = "off"
+            reply = "Voice replies: muted for this session."
+    elif arg in ("on", "enable"):
+        ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
+        reply = "Voice replies: follow plugin config."
+    elif arg in ("off", "disable"):
+        ctx.data[CTX_TG_TTS_OVERRIDE] = "off"
+        reply = "Voice replies: off for this session."
+    elif arg == "auto":
+        ctx.data[CTX_TG_TTS_OVERRIDE] = "auto"
+        reply = "Voice mode: auto (reply with voice only after voice input)."
+    elif arg == "force":
+        ctx.data[CTX_TG_TTS_OVERRIDE] = "force"
+        reply = "Voice mode: force (voice replies when TTS is enabled)."
+    else:
+        reply = "Usage: /tts or /tts on|off|auto|force"
+
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+
+
+async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /status — model, tokens, project, TTS/STT, run state."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    ctx = _get_existing_context(message, bot_name)
+    lines: list[str] = ["Agent status", ""]
+
+    chat_cfg: dict = {}
+    util_cfg: dict = {}
+    try:
+        from plugins._model_config.helpers import model_config as mc
+
+        ag = ctx.agent0 if ctx else None
+        chat_cfg = mc.get_chat_model_config(ag)
+        util_cfg = mc.get_utility_model_config(ag)
+    except Exception:
+        pass
+
+    chat_provider = str(chat_cfg.get("provider", "") or "?")
+    chat_name = str(chat_cfg.get("name", "") or "?")
+    util_provider = str(util_cfg.get("provider", "") or "?")
+    util_name = str(util_cfg.get("name", "") or "?")
+    ctx_len = int(chat_cfg.get("ctx_length", 0) or 0)
+    ctx_hist = float(chat_cfg.get("ctx_history", 0.7) or 0.7)
+    hist_limit = int(ctx_len * ctx_hist) if ctx_len else 0
+
+    lines.append(f"Model: {chat_provider} / {chat_name}")
+    lines.append(f"Utility: {util_provider} / {util_name}")
+
+    if ctx:
+        agent = ctx.agent0
+        hist_tokens = agent.history.get_tokens()
+        ctx_window = agent.get_data(Agent.DATA_NAME_CTX_WINDOW) or {}
+        win_tokens = int((ctx_window.get("tokens") or 0))
+        pct = (100.0 * hist_tokens / hist_limit) if hist_limit else 0.0
+        lines.append(
+            f"History: ~{hist_tokens} / ~{hist_limit} tokens ({pct:.1f}% of history budget)"
+        )
+        lines.append(f"Last prompt window: ~{win_tokens} tokens (approx.)")
+        lines.append(f"Messages (counter): {agent.history.counter}")
+        proj = projects.get_context_project_name(ctx)
+        lines.append(f"Project: {proj or '(none)'}")
+        sess = ctx.data.get(CTX_TG_TTS_OVERRIDE)
+        sess_lbl = "plugin default" if sess is None else str(sess)
+        lines.append(
+            f"TTS engine: {'on' if speech.tts_enabled(bot_cfg) else 'off'}; session voice: {sess_lbl}"
+        )
+        lines.append(f"STT: {'on' if speech.stt_enabled(bot_cfg) else 'off'}")
+        lines.append(f"Running: {ctx.is_running()}; Paused: {ctx.paused}")
+        lines.append(f"Context id: {ctx.id}")
+    else:
+        lines.append("No Telegram session yet — send a message or /start.")
+        lines.append(f"TTS engine: {'on' if speech.tts_enabled(bot_cfg) else 'off'}")
+        lines.append(f"STT: {'on' if speech.stt_enabled(bot_cfg) else 'off'}")
+
+    text = "\n".join(lines)
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, text, parse_mode=None)
+
+
+async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /compact — compress conversation history."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    try:
+        changed = await ctx.agent0.history.compress()
+        save_tmp_chat(ctx)
+        reply = (
+            "Context compressed (summaries/truncations applied)."
+            if changed
+            else "Nothing to compress right now."
+        )
+    except Exception as e:
+        reply = f"Compress failed: {format_error(e)}"
+        PrintStyle.error(f"Telegram /compact: {format_error(e)}")
+
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+
+
+async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /stop — kill running agent task."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = _get_existing_context(message, bot_name)
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    if not ctx:
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            "No active session.",
+            parse_mode=None,
+        )
+        return
+    ctx.kill_process()
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        "Stopped the running task (if any).",
+        parse_mode=None,
+    )
+
+
+async def handle_pause(message: TgMessage, bot_name: str, bot_cfg: dict):
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    ctx.paused = True
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        "Agent paused. Use /resume to continue.",
+        parse_mode=None,
+    )
+
+
+async def handle_resume(message: TgMessage, bot_name: str, bot_cfg: dict):
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = _get_existing_context(message, bot_name)
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    if not ctx:
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            "No active session.",
+            parse_mode=None,
+        )
+        return
+    ctx.paused = False
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        "Agent resumed.",
+        parse_mode=None,
+    )
+
+
+async def handle_project(message: TgMessage, bot_name: str, bot_cfg: dict):
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message).strip()
+    if not arg:
+        active = projects.get_context_project_name(ctx)
+        names = [p["name"] for p in projects.get_active_projects_list()]
+        reply = "\n".join(
+            [
+                f"Active project: {active or '(none)'}",
+                "Available: " + (", ".join(names) if names else "(none)"),
+                "Usage: /project <name>",
+            ]
+        )
+    else:
+        names = {p["name"] for p in projects.get_active_projects_list()}
+        if arg not in names:
+            reply = f"Unknown project: {arg}. Use /project to list."
+        else:
+            try:
+                projects.activate_project(ctx.id, arg)
+                save_tmp_chat(ctx)
+                reply = f"Switched project to: {arg}"
+            except Exception as e:
+                reply = f"Failed to switch project: {format_error(e)}"
+
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+
+
+async def handle_model(message: TgMessage, bot_name: str, bot_cfg: dict):
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    try:
+        from plugins._model_config.helpers import model_config as mc
+    except Exception:
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            "Model presets require the _model_config plugin.",
+            parse_mode=None,
+        )
+        return
+
+    arg = _cmd_rest(message).strip()
+    if not arg:
+        chat_cfg = mc.get_chat_model_config(ctx.agent0)
+        lines = [
+            f"Chat model: {chat_cfg.get('provider', '?')} / {chat_cfg.get('name', '?')}",
+            f"Override allowed: {mc.is_chat_override_allowed(ctx.agent0)}",
+        ]
+        presets = mc.get_presets()
+        if presets:
+            lines.append("Presets: " + ", ".join(str(p.get("name", "")) for p in presets if p.get("name")))
+        reply = "\n".join(lines)
+    else:
+        if not mc.is_chat_override_allowed(ctx.agent0):
+            reply = "Per-chat model override is disabled (allow_chat_override in _model_config)."
+        else:
+            arg_key = arg.strip().lower()
+            preset = None
+            for p in mc.get_presets():
+                pn = p.get("name")
+                if pn and str(pn).strip().lower() == arg_key:
+                    preset = p
+                    break
+            if not preset:
+                plist = [str(p.get("name", "")) for p in mc.get_presets() if p.get("name")]
+                reply = f"Unknown preset {arg!r}. Known: {', '.join(plist) or '(none)'}"
+            else:
+                pname = preset.get("name")
+                ctx.set_data("chat_model_override", {"preset_name": pname})
+                save_tmp_chat(ctx)
+                reply = f"Model preset set to: {pname}"
+
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
 
 async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -547,9 +887,17 @@ async def send_telegram_reply(
     override_mode = str(context.data.pop(CTX_TG_VOICE_REPLY_MODE, "") or "").lower()
     forced_flag = bool(context.data.pop(CTX_TG_FORCE_VOICE_REPLY, False))
 
-    mode = override_mode if override_mode in {"off", "auto", "force"} else reply_cfg["voice_mode"]
+    mode = str(override_mode if override_mode in {"off", "auto", "force"} else reply_cfg["voice_mode"]).lower()
     if forced_flag:
         mode = "force"
+
+    session_voice = context.data.get(CTX_TG_TTS_OVERRIDE)
+    if session_voice == "off":
+        mode = "off"
+    elif session_voice == "force":
+        mode = "force"
+    elif session_voice == "auto":
+        mode = "auto"
 
     last_input_was_voice = bool(context.data.get(CTX_TG_LAST_INPUT_WAS_VOICE, False))
     want_voice = mode == "force" or (mode == "auto" and last_input_was_voice)
