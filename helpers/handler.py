@@ -118,6 +118,75 @@ def _model_preset_button_label(name: str) -> str:
     return n[:57] + "…"
 
 
+def _tts_inline_keyboard() -> list[list[dict]]:
+    """Session voice: plugin default, muted, auto, force."""
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "Default", "callback_data": f"{p}t|on"},
+            {"text": "Muted", "callback_data": f"{p}t|off"},
+        ],
+        [
+            {"text": "Auto", "callback_data": f"{p}t|auto"},
+            {"text": "Force", "callback_data": f"{p}t|force"},
+        ],
+    ]
+
+
+def _tts_session_description(ctx: AgentContext) -> str:
+    cur = ctx.data.get(CTX_TG_TTS_OVERRIDE)
+    if cur is None:
+        return "following plugin config"
+    if cur == "off":
+        return "muted for this session"
+    if cur == "auto":
+        return "auto (voice after voice input)"
+    if cur == "force":
+        return "force (voice when TTS enabled)"
+    return str(cur)
+
+
+def _apply_tts_setting(ctx: AgentContext, mode: str) -> str:
+    """Apply on|off|auto|force (mutates ctx.data). Returns user-facing reply."""
+    mode = mode.strip().lower()
+    if mode in ("on", "enable"):
+        ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
+        return "Voice replies: follow plugin config."
+    if mode in ("off", "disable"):
+        ctx.data[CTX_TG_TTS_OVERRIDE] = "off"
+        return "Voice replies: off for this session."
+    if mode == "auto":
+        ctx.data[CTX_TG_TTS_OVERRIDE] = "auto"
+        return "Voice mode: auto (reply with voice only after voice input)."
+    if mode == "force":
+        ctx.data[CTX_TG_TTS_OVERRIDE] = "force"
+        return "Voice mode: force (voice replies when TTS is enabled)."
+    return "Usage: /tts on|off|auto|force"
+
+
+def _project_names_ordered() -> list[str]:
+    return [p["name"] for p in projects.get_active_projects_list()]
+
+
+def _project_inline_keyboard(names: list[str]) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    rows: list[list[dict]] = []
+    row: list[dict] = []
+    for i, name in enumerate(names):
+        row.append(
+            {
+                "text": _model_preset_button_label(name),
+                "callback_data": f"{p}p|{i}",
+            }
+        )
+        if len(row) >= 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return rows
+
+
 def _model_preset_inline_keyboard(preset_names: list[str]) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     rows: list[list[dict]] = []
@@ -336,27 +405,28 @@ async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     arg = _cmd_rest(message).lower().strip()
     if not arg:
-        cur = ctx.data.get(CTX_TG_TTS_OVERRIDE)
-        if cur == "off":
-            ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
-            reply = "Voice replies: follow plugin config (unmuted)."
-        else:
-            ctx.data[CTX_TG_TTS_OVERRIDE] = "off"
-            reply = "Voice replies: muted for this session."
-    elif arg in ("on", "enable"):
-        ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
-        reply = "Voice replies: follow plugin config."
+        desc = _tts_session_description(ctx)
+        reply = (
+            f"Voice replies: {desc}.\n"
+            "Tap a button or type /tts on|off|auto|force"
+        )
+        kb = _tts_inline_keyboard()
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
+        )
+        return
+
+    if arg in ("on", "enable"):
+        reply = _apply_tts_setting(ctx, "on")
     elif arg in ("off", "disable"):
-        ctx.data[CTX_TG_TTS_OVERRIDE] = "off"
-        reply = "Voice replies: off for this session."
+        reply = _apply_tts_setting(ctx, "off")
     elif arg == "auto":
-        ctx.data[CTX_TG_TTS_OVERRIDE] = "auto"
-        reply = "Voice mode: auto (reply with voice only after voice input)."
+        reply = _apply_tts_setting(ctx, "auto")
     elif arg == "force":
-        ctx.data[CTX_TG_TTS_OVERRIDE] = "force"
-        reply = "Voice mode: force (voice replies when TTS is enabled)."
+        reply = _apply_tts_setting(ctx, "force")
     else:
-        reply = "Usage: /tts or /tts on|off|auto|force"
+        reply = "Usage: /tts on|off|auto|force"
 
     save_tmp_chat(ctx)
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
@@ -620,27 +690,33 @@ async def handle_project(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     arg = _cmd_rest(message).strip()
+    names = _project_names_ordered()
     if not arg:
         active = projects.get_context_project_name(ctx)
-        names = [p["name"] for p in projects.get_active_projects_list()]
-        reply = "\n".join(
-            [
-                f"Active project: {active or '(none)'}",
-                "Available: " + (", ".join(names) if names else "(none)"),
-                "Usage: /project <name>",
-            ]
+        lines = [
+            f"Active project: {active or '(none)'}",
+            "Available: " + (", ".join(names) if names else "(none)"),
+        ]
+        kb = None
+        if names:
+            kb = _project_inline_keyboard(names)
+            lines.append("Tap a button to switch, or type /project <name>")
+        reply = "\n".join(lines)
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
         )
+        return
+
+    name_set = set(names)
+    if arg not in name_set:
+        reply = f"Unknown project: {arg}. Use /project to list."
     else:
-        names = {p["name"] for p in projects.get_active_projects_list()}
-        if arg not in names:
-            reply = f"Unknown project: {arg}. Use /project to list."
-        else:
-            try:
-                projects.activate_project(ctx.id, arg)
-                save_tmp_chat(ctx)
-                reply = f"Switched project to: {arg}"
-            except Exception as e:
-                reply = f"Failed to switch project: {format_error(e)}"
+        try:
+            projects.activate_project(ctx.id, arg)
+            save_tmp_chat(ctx)
+            reply = f"Switched project to: {arg}"
+        except Exception as e:
+            reply = f"Failed to switch project: {format_error(e)}"
 
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
@@ -874,6 +950,37 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             context.set_data("chat_model_override", {"preset_name": pname})
             save_tmp_chat(context)
             reply = f"Model preset set to: {pname}"
+            await query.answer("OK")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "t":
+            if payload not in ("on", "off", "auto", "force"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_tts_setting(context, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "p":
+            try:
+                idx = int(payload)
+            except ValueError:
+                await query.answer("Invalid project.")
+                return
+            pnames = _project_names_ordered()
+            if idx < 0 or idx >= len(pnames):
+                await query.answer("List changed — send /project again.")
+                return
+            pname = pnames[idx]
+            try:
+                projects.activate_project(context.id, pname)
+                save_tmp_chat(context)
+                reply = f"Switched project to: {pname}"
+            except Exception as e:
+                reply = f"Failed to switch project: {format_error(e)}"
             await query.answer("OK")
             await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
             return

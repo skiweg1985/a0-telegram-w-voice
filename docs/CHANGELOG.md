@@ -6,9 +6,12 @@
 
 - `/optimize_output` with no argument: inline keyboard (Voice / Text / Off / Reset) in addition to typed args.
 - `/model` with no argument: when per-chat override is allowed and presets exist, inline buttons to pick a preset by index (list changes → send `/model` again).
+- `/tts` with no argument: session voice summary + inline keyboard (Default / Muted / Auto / Force).
+- `/project` with no argument: when projects exist, inline buttons by index (list changes → send `/project` again).
 
 ### Changed
 
+- `/tts` with no argument no longer toggles mute; use the **Muted** or **Default** button (or `/tts off` / `/tts on`).
 - `handle_callback_query`: callbacks with prefix `tgx|` are handled locally (plugin UI); other `callback_data` still goes to the agent as before.
 - `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.
 

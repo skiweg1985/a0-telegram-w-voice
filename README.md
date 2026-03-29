@@ -62,7 +62,7 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 - STT for incoming Telegram voice/audio
 - TTS for outgoing Telegram voice replies
 - Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
-- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Session `/tts` overrides plugin voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies (voice vs text reading); see slash table below.
+- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/tts`, `/project`, `/optimize_output`, `/model` where applicable). Session `/tts` overrides plugin voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies (voice vs text reading); see slash table below.
 
 ## Slash commands (summary)
 
@@ -72,12 +72,12 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 | `/start` | Welcome; ensures session |
 | `/status` | Model, tokens, project, TTS/STT, run state |
 | `/clear` | Reset conversation |
-| `/tts` | `on` / `off` / `auto` / `force`, or no arg toggles mute |
+| `/tts` | `on` / `off` / `auto` / `force`, or no arg shows session + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode **with inline buttons** (typing still works) |
 | `/speakstyle` | Shortcut for voice-oriented output; `/speakstyle off` turns the extra prompt off |
 | `/compact` | Compress history (utility LLM) |
 | `/stop` | Abort running task |
-| `/project` | Show or `/project <name>` switch |
+| `/project` | Active + available projects + **buttons** when projects exist, or `/project <name>` |
 | `/model` | Show current model and **preset buttons** when override is allowed, or `/model <preset>` by name |
 | `/pause` / `/resume` | Pause or resume agent loop |
 

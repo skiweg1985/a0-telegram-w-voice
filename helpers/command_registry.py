@@ -46,7 +46,7 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "tts",
         "Voice reply mode",
-        "/tts [on|off|auto|force] — session voice; no arg toggles mute",
+        "/tts [on|off|auto|force] — no arg = session + buttons",
     ),
     (
         "compact",
@@ -61,7 +61,7 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "project",
         "Show or switch project",
-        "/project [name] — active project or switch",
+        "/project [name] — list + buttons or switch by name",
     ),
     (
         "model",
