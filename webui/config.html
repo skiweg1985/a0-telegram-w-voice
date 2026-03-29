@@ -90,7 +90,7 @@
               </button>
             </div>
 
-            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureSpeech(bot)">
+            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureProgress(bot); $store.telegramConfig.ensureSpeech(bot)">
 
               <div class="field">
                 <div class="field-label">
@@ -267,6 +267,44 @@
                 </div>
                 <div class="field-control">
                   <textarea x-model="bot.agent_instructions" rows="3" placeholder="e.g. Always respond concisely for mobile..."></textarea>
+                </div>
+              </div>
+
+              <div class="field-divider" style="margin-top:8px;font-weight:600;opacity:.85;">Progress Message Editing</div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Edit progress in place</div>
+                  <div class="field-description">Use Telegram message edits for break_loop=false updates</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.progress.edit_enabled" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Edit throttle (ms)</div>
+                  <div class="field-description">Minimum delay between progress edits</div>
+                </div>
+                <div class="field-control">
+                  <input type="number" x-model.number="bot.progress.edit_throttle_ms" min="0" step="100" />
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Final response in same message</div>
+                  <div class="field-description">Edit final answer into last progress message when possible</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.progress.final_in_place" />
+                    <span class="toggler"></span>
+                  </label>
                 </div>
               </div>
 

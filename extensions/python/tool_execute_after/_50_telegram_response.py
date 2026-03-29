@@ -61,7 +61,10 @@ class TelegramResponseIntercept(Extension):
 
     async def _send_inline(self, context, tool, response: Response):
         ensure_dependencies()
-        from usr.plugins.telegram_integration_voice.helpers.handler import send_telegram_reply
+        from usr.plugins.telegram_integration_voice.helpers.handler import (
+            send_telegram_reply,
+            send_telegram_progress_update,
+        )
 
         agent = self.agent
         assert agent is not None
@@ -71,9 +74,14 @@ class TelegramResponseIntercept(Extension):
         keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
         voice_for_tts = context.data.pop(CTX_TG_VOICE_TEXT, None)
 
-        error = await send_telegram_reply(
-            context, text, attachments or None, keyboard, voice_text=voice_for_tts,
-        )
+        # Inline progress updates use message editing when possible.
+        # If attachments are included, fallback to normal send flow.
+        if attachments:
+            error = await send_telegram_reply(
+                context, text, attachments or None, keyboard, voice_text=voice_for_tts,
+            )
+        else:
+            error = await send_telegram_progress_update(context, text, keyboard)
 
         if error:
             result = agent.read_prompt("fw.telegram.update_error.md", error=error)

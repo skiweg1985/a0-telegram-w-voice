@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import html
 import json
 import os
@@ -41,6 +42,9 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_FORCE_VOICE_REPLY,
     CTX_TG_LAST_INPUT_WAS_VOICE,
+    CTX_TG_PROGRESS_MESSAGE_ID,
+    CTX_TG_PROGRESS_LAST_HASH,
+    CTX_TG_PROGRESS_LAST_TS,
     CTX_TG_TTS_OVERRIDE,
     CTX_TG_OUTPUT_OPTIMIZE,
     CTX_TG_VOICE_TEXT,
@@ -390,6 +394,9 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_VOICE_TEXT, None)
                 ctx.data.pop(CTX_TG_DETAIL_LEVEL_SESSION, None)
                 ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
+                ctx.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
+                ctx.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
+                ctx.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
                 save_tmp_chat(ctx)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
@@ -937,6 +944,9 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
         return
 
+    # New user turn: clear stale progress message state
+    _clear_progress_state(context)
+
     # Store stop event so send_telegram_reply can cancel typing
     context.data[CTX_TG_TYPING_STOP] = typing_stop
     context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
@@ -1372,6 +1382,146 @@ async def send_telegram_ephemeral_status(context: AgentContext, html_body: str) 
 
 # Reply sending (called from process_chain_end extension)
 
+def _progress_settings(bot_cfg: dict) -> dict:
+    cfg = (bot_cfg or {}).get("progress") or {}
+    return {
+        "enabled": bool(cfg.get("edit_enabled", True)),
+        "throttle_ms": int(cfg.get("edit_throttle_ms", 1000) or 1000),
+        "final_in_place": bool(cfg.get("final_in_place", True)),
+    }
+
+
+def _clear_progress_state(context: AgentContext):
+    context.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
+    context.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
+    context.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
+
+
+def _progress_fingerprint(text: str, keyboard: list[list[dict]] | None) -> str:
+    payload = {
+        "text": text or "",
+        "keyboard": keyboard or [],
+    }
+    return hashlib.sha1(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+async def send_telegram_progress_update(
+    context: AgentContext,
+    response_text: str,
+    keyboard: list[list[dict]] | None = None,
+) -> str | None:
+    """Send or edit an in-progress Telegram status message. Returns error string or None."""
+    bot_name = context.data.get(CTX_TG_BOT)
+    if not bot_name:
+        return "No Telegram bot configured on context"
+
+    instance = get_bot(bot_name)
+    if not instance:
+        return f"Bot '{bot_name}' not running"
+
+    chat_id = context.data.get(CTX_TG_CHAT_ID)
+    if not chat_id:
+        return "No chat_id on context"
+
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    progress_cfg = _progress_settings(bot_cfg)
+    reply_to = context.data.get(CTX_TG_REPLY_TO)
+
+    if not response_text:
+        return None
+
+    html_text = tc.md_to_telegram_html(response_text)
+
+    # Compatibility mode: progress edits disabled -> always send a new message
+    if not progress_cfg["enabled"]:
+        try:
+            async with _temp_bot(
+                instance.bot.token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            ) as reply_bot:
+                if keyboard:
+                    await tc.send_text_with_keyboard(
+                        reply_bot,
+                        chat_id,
+                        html_text,
+                        keyboard,
+                        reply_to_message_id=reply_to,
+                    )
+                else:
+                    await tc.send_text(
+                        reply_bot,
+                        chat_id,
+                        html_text,
+                        reply_to_message_id=reply_to,
+                    )
+            return None
+        except Exception as e:
+            error = format_error(e)
+            PrintStyle.error(f"Telegram progress send failed: {error}")
+            return error
+
+    fp = _progress_fingerprint(response_text, keyboard)
+    if context.data.get(CTX_TG_PROGRESS_LAST_HASH) == fp:
+        return None
+
+    now_ms = int(time.time() * 1000)
+    last_ts = int(context.data.get(CTX_TG_PROGRESS_LAST_TS, 0) or 0)
+    throttle_ms = max(0, int(progress_cfg["throttle_ms"]))
+    if throttle_ms > 0 and (now_ms - last_ts) < throttle_ms:
+        return None
+
+    try:
+        async with _temp_bot(
+            instance.bot.token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        ) as reply_bot:
+            message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+            sent_or_edited = False
+
+            if message_id:
+                if keyboard:
+                    sent_or_edited = await tc.edit_text_with_keyboard(
+                        reply_bot, chat_id, int(message_id), html_text, keyboard
+                    )
+                else:
+                    sent_or_edited = await tc.edit_text(
+                        reply_bot, chat_id, int(message_id), html_text
+                    )
+
+            if not sent_or_edited:
+                if keyboard:
+                    new_id = await tc.send_text_with_keyboard(
+                        reply_bot,
+                        chat_id,
+                        html_text,
+                        keyboard,
+                        reply_to_message_id=reply_to,
+                    )
+                else:
+                    new_id = await tc.send_text(
+                        reply_bot,
+                        chat_id,
+                        html_text,
+                        reply_to_message_id=reply_to,
+                    )
+                if new_id:
+                    context.data[CTX_TG_PROGRESS_MESSAGE_ID] = int(new_id)
+                    sent_or_edited = True
+
+            if sent_or_edited:
+                context.data[CTX_TG_PROGRESS_LAST_HASH] = fp
+                context.data[CTX_TG_PROGRESS_LAST_TS] = now_ms
+
+        return None
+
+    except Exception as e:
+        error = format_error(e)
+        PrintStyle.error(f"Telegram progress update failed: {error}")
+        return error
+
+
 async def send_telegram_reply(
     context: AgentContext,
     response_text: str,
@@ -1394,6 +1544,7 @@ async def send_telegram_reply(
 
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     reply_cfg = speech.voice_reply_settings(bot_cfg)
+    progress_cfg = _progress_settings(bot_cfg)
 
     # Optional per-response overrides captured by tool_execute_after extension
     override_mode = str(context.data.pop(CTX_TG_VOICE_REPLY_MODE, "") or "").lower()
@@ -1470,10 +1621,32 @@ async def send_telegram_reply(
             should_send_text = bool(response_text) and (keyboard is not None or not sent_voice or reply_cfg["also_send_text"])
             if should_send_text:
                 html_text = tc.md_to_telegram_html(response_text)
-                if keyboard:
-                    await tc.send_text_with_keyboard(reply_bot, chat_id, html_text, keyboard, reply_to_message_id=reply_to)
-                else:
-                    await tc.send_text(reply_bot, chat_id, html_text, reply_to_message_id=reply_to)
+                progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+                use_final_edit = bool(
+                    progress_cfg["enabled"]
+                    and progress_cfg["final_in_place"]
+                    and progress_message_id
+                    and not attachments
+                )
+
+                edited = False
+                if use_final_edit:
+                    if keyboard:
+                        edited = await tc.edit_text_with_keyboard(
+                            reply_bot, chat_id, int(progress_message_id), html_text, keyboard,
+                        )
+                    else:
+                        edited = await tc.edit_text(
+                            reply_bot, chat_id, int(progress_message_id), html_text,
+                        )
+
+                if not edited:
+                    if keyboard:
+                        await tc.send_text_with_keyboard(reply_bot, chat_id, html_text, keyboard, reply_to_message_id=reply_to)
+                    else:
+                        await tc.send_text(reply_bot, chat_id, html_text, reply_to_message_id=reply_to)
+
+            _clear_progress_state(context)
 
         return None
 

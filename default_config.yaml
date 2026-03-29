@@ -24,6 +24,11 @@ bots: []
 
 #
 #   # Voice/STT/TTS
+#   progress:
+#     edit_enabled: true           # Use message edit for break_loop=false progress updates
+#     edit_throttle_ms: 1000       # Minimum delay between progress edits
+#     final_in_place: true         # Edit last progress message into final result when possible
+#
 #   speech:
 #     stt:
 #       enabled: true

@@ -60,6 +60,11 @@ export const store = createStore("telegramConfig", {
       telegram_detail_debug_min_interval_sec: 1.5,
       telegram_detail_exclude_tools: [],
       telegram_detail_tool_labels: {},
+      progress: {
+        edit_enabled: true,
+        edit_throttle_ms: 1000,
+        final_in_place: true,
+      },
       speech: {
         stt: {
           enabled: false,
@@ -103,10 +108,16 @@ export const store = createStore("telegramConfig", {
     bot.speech.reply = { ...d.reply, ...(bot.speech.reply || {}) };
   },
 
+  ensureProgress(bot) {
+    const d = this.defaultBot().progress;
+    bot.progress = { ...d, ...(bot.progress || {}) };
+  },
+
   addBot(config) {
     if (!config.bots) config.bots = [];
     const bot = this.defaultBot();
     bot.name = "bot_" + (config.bots.length + 1);
+    this.ensureProgress(bot);
     this.ensureSpeech(bot);
     config.bots.push(bot);
     this.expandedIdx = config.bots.length - 1;

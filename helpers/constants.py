@@ -17,6 +17,9 @@ CTX_TG_KEYBOARD = "_telegram_response_keyboard"
 CTX_TG_VOICE_REPLY_MODE = "_telegram_response_voice_mode"
 CTX_TG_FORCE_VOICE_REPLY = "_telegram_response_voice_force"
 CTX_TG_LAST_INPUT_WAS_VOICE = "_telegram_last_input_was_voice"
+CTX_TG_PROGRESS_MESSAGE_ID = "_telegram_progress_message_id"
+CTX_TG_PROGRESS_LAST_HASH = "_telegram_progress_last_hash"
+CTX_TG_PROGRESS_LAST_TS = "_telegram_progress_last_ts"
 
 # Per-session voice behaviour: None (missing) = use plugin config;
 # "off" = never send voice; "auto" / "force" = session voice_mode override.

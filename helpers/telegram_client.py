@@ -187,6 +187,97 @@ async def send_text_with_keyboard(
         PrintStyle.error(f"Telegram send_text_with_keyboard failed: {format_error(e)}")
         return None
 
+
+async def edit_text(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    parse_mode: object = _UNSET,
+) -> bool:
+    """Edit an existing bot message text. Returns True on success (or no-op), False on hard failure."""
+    try:
+        pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            **pm_kwargs,
+        )
+        return True
+    except TelegramBadRequest as e:
+        err = str(e).lower()
+        if "message is not modified" in err:
+            return True
+        try:
+            plain = re.sub(r"<[^>]+>", "", text)
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=plain,
+                parse_mode=None,
+            )
+            return True
+        except TelegramBadRequest as ee:
+            if "message is not modified" in str(ee).lower():
+                return True
+            PrintStyle.error(f"Telegram edit_text failed: {format_error(ee)}")
+            return False
+        except Exception as ee:
+            PrintStyle.error(f"Telegram edit_text failed: {format_error(ee)}")
+            return False
+    except Exception as e:
+        PrintStyle.error(f"Telegram edit_text failed: {format_error(e)}")
+        return False
+
+
+async def edit_text_with_keyboard(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    buttons: list[list[dict]],
+    parse_mode: object = _UNSET,
+) -> bool:
+    """Edit existing text + inline keyboard. Returns True on success (or no-op)."""
+    try:
+        keyboard = build_inline_keyboard(buttons)
+        pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=keyboard,
+            **pm_kwargs,
+        )
+        return True
+    except TelegramBadRequest as e:
+        err = str(e).lower()
+        if "message is not modified" in err:
+            return True
+        try:
+            plain = re.sub(r"<[^>]+>", "", text)
+            keyboard = build_inline_keyboard(buttons)
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=plain,
+                reply_markup=keyboard,
+                parse_mode=None,
+            )
+            return True
+        except TelegramBadRequest as ee:
+            if "message is not modified" in str(ee).lower():
+                return True
+            PrintStyle.error(f"Telegram edit_text_with_keyboard failed: {format_error(ee)}")
+            return False
+        except Exception as ee:
+            PrintStyle.error(f"Telegram edit_text_with_keyboard failed: {format_error(ee)}")
+            return False
+    except Exception as e:
+        PrintStyle.error(f"Telegram edit_text_with_keyboard failed: {format_error(e)}")
+        return False
+
 # Chat actions
 
 async def send_chat_action(bot: Bot, chat_id: int, action: str):
