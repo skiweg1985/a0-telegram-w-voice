@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 from typing import Any
 
 DETAIL_LEVELS = frozenset({"off", "info", "debug"})
@@ -59,9 +60,34 @@ def detail_tool_labels(bot_cfg: dict) -> dict[str, str]:
     return out
 
 
-def format_step_html(tool_name: str, bot_cfg: dict) -> str:
-    """Single-line HTML status: safe label only, no tool args."""
+def format_step_html(
+    tool_name: str,
+    bot_cfg: dict,
+    *,
+    level: str = "info",
+    tool_args: dict | None = None,
+) -> str:
+    """Format tool-step status.
+
+    - info: compact single line
+    - debug: full tool name + optional complete args payload
+    """
     labels = detail_tool_labels(bot_cfg)
     label = labels.get(tool_name, tool_name)
-    safe = html.escape(str(label))
-    return f"Step: {safe}"
+
+    if level != "debug":
+        safe = html.escape(str(label))
+        return f"Step: {safe}"
+
+    # Debug mode: always show full tool identifier (not shortened by label mapping)
+    safe_name = html.escape(str(tool_name))
+    parts = [f"Step: <b>{safe_name}</b>"]
+
+    if tool_args is not None:
+        try:
+            args_json = json.dumps(tool_args, ensure_ascii=False, sort_keys=True, indent=2)
+        except Exception:
+            args_json = str(tool_args)
+        parts.append(f"<blockquote><code>{html.escape(args_json)}</code></blockquote>")
+
+    return "\n".join(parts)

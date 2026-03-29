@@ -43,7 +43,16 @@ class TelegramDetailStatus(Extension):
                 send_telegram_progress_update,
             )
 
-            line = ds.format_step_html(name, bot_cfg)
+            tool_args = None
+            if level == "debug":
+                try:
+                    current_tool = self.agent.loop_data.current_tool if self.agent else None
+                    if current_tool is not None:
+                        tool_args = getattr(current_tool, "args", None)
+                except Exception:
+                    tool_args = None
+
+            line = ds.format_step_html(name, bot_cfg, level=level, tool_args=tool_args)
             await send_telegram_progress_update(context, line)
             context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now
         except Exception as e:
