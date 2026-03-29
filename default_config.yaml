@@ -21,6 +21,9 @@ bots: []
 #   telegram_detail_debug_min_interval_sec: 1.5
 #   telegram_detail_exclude_tools: []
 #   telegram_detail_tool_labels: {}        # e.g. { "code_execution": "Run code" }
+#   telegram_detail_icons_enabled: true    # Prefix each step with an emoji icon
+#   telegram_detail_tool_icons: {}         # Override icons, e.g. { "memory_load": "📌" }
+#   telegram_detail_max_body_chars: 3200   # Max chars for debug JSON body (truncated if longer)
 
 #
 #   # Voice/STT/TTS

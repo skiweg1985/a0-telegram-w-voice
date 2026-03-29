@@ -60,6 +60,9 @@ export const store = createStore("telegramConfig", {
       telegram_detail_debug_min_interval_sec: 1.5,
       telegram_detail_exclude_tools: [],
       telegram_detail_tool_labels: {},
+      telegram_detail_icons_enabled: true,
+      telegram_detail_tool_icons: {},
+      telegram_detail_max_body_chars: 3200,
       progress: {
         edit_enabled: true,
         edit_throttle_ms: 1000,

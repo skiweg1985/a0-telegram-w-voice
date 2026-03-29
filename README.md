@@ -96,6 +96,9 @@ bots:
     telegram_detail_level: off
     telegram_detail_info_min_interval_sec: 5
     telegram_detail_debug_min_interval_sec: 1.5
+    telegram_detail_icons_enabled: true          # emoji prefix per step
+    # telegram_detail_tool_icons: {}             # override icons, e.g. { "memory_load": "\U0001f4cc" }
+    # telegram_detail_max_body_chars: 3200       # debug JSON truncation limit
 
     speech:
       stt:

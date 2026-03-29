@@ -1491,6 +1491,13 @@ async def send_telegram_progress_update(
 
     html_text = response_text if text_is_html else tc.md_to_telegram_html(response_text)
 
+    if len(html_text) > tc.MAX_MESSAGE_LENGTH:
+        safe_cut = tc.MAX_MESSAGE_LENGTH - 30
+        cut_pos = html_text.rfind("\n", 0, safe_cut)
+        if cut_pos < safe_cut // 2:
+            cut_pos = safe_cut
+        html_text = html_text[:cut_pos] + "\n<i>… truncated</i>"
+
     # Compatibility mode: progress edits disabled -> always send a new message
     if not progress_cfg["enabled"]:
         try:
