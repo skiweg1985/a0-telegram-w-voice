@@ -20,4 +20,5 @@ CTX_TG_LAST_INPUT_WAS_VOICE = "_telegram_last_input_was_voice"
 
 # Per-session voice behaviour: None (missing) = use plugin config;
 # "off" = never send voice; "auto" / "force" = session voice_mode override.
-CTX_TG_TTS_OVERRIDE = "_telegram_tts_voice_session"
+# Key must not start with "_" so persist_chat includes it in chat.json.
+CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
