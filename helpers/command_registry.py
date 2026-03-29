@@ -5,7 +5,11 @@ Descriptions must stay short (Telegram menu limit).
 
 from __future__ import annotations
 
+from aiogram import Bot
 from aiogram.types import BotCommand
+
+from helpers.errors import format_error
+from helpers.print_style import PrintStyle
 
 # (command, menu_description, help_line_for_users)
 COMMAND_ROWS: list[tuple[str, str, str]] = [
@@ -73,6 +77,14 @@ def get_bot_commands() -> list[BotCommand]:
         BotCommand(command=cmd, description=desc[:256])
         for cmd, desc, _ in COMMAND_ROWS
     ]
+
+
+async def register_bot_command_menu(bot: Bot) -> None:
+    """Call Telegram setMyCommands so the client shows the command menu."""
+    try:
+        await bot.set_my_commands(get_bot_commands())
+    except Exception as e:
+        PrintStyle.warning(f"Telegram set_my_commands failed: {format_error(e)}")
 
 
 def format_help_text() -> str:

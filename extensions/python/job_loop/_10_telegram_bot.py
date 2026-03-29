@@ -31,10 +31,12 @@ class TelegramBotManager(Extension):
             get_all_bots,
             create_bot,
             cache_bot_info,
-            register_bot_command_menu,
             start_polling,
             setup_webhook,
             stop_bot,
+        )
+        from usr.plugins.telegram_integration_voice.helpers.command_registry import (
+            register_bot_command_menu,
         )
         from usr.plugins.telegram_integration_voice.helpers.handler import (
             handle_start,
