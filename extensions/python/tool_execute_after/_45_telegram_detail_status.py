@@ -40,11 +40,11 @@ class TelegramDetailStatus(Extension):
             return
         try:
             from usr.plugins.telegram_integration_voice.helpers.handler import (
-                send_telegram_ephemeral_status,
+                send_telegram_progress_update,
             )
 
-            html_line = ds.format_step_html(name, bot_cfg)
-            await send_telegram_ephemeral_status(context, html_line)
+            line = ds.format_step_html(name, bot_cfg)
+            await send_telegram_progress_update(context, line)
             context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now
         except Exception as e:
             PrintStyle.warning(f"Telegram detail status: {format_error(e)}")
