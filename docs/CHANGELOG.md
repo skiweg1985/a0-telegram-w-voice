@@ -13,6 +13,7 @@
 
 ### Changed
 
+- `response.break_loop` parsing is now tolerant (`false`, `0`, `off`, etc.) so inline progress updates trigger more reliably instead of being skipped when providers serialize booleans as strings.
 - `/clear` now persists the reset state immediately (`save_tmp_chat`) so the browser UI reflects the cleared history without delay.
 - `/tts` with no argument no longer toggles mute; use the **Muted** or **Default** button (or `/tts off` / `/tts on`).
 - `handle_callback_query`: callbacks with prefix `tgx|` are handled locally (plugin UI); other `callback_data` still goes to the agent as before.

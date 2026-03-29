@@ -54,9 +54,22 @@ class TelegramResponseIntercept(Extension):
             v_bool = bool(v) if isinstance(v, bool) else str(v).strip().lower() in {"1", "true", "yes", "on"}
             context.data[CTX_TG_FORCE_VOICE_REPLY] = v_bool
 
-        # Check break_loop arg from agent
-        agent_break = tool.args.get("break_loop", True)
-        if agent_break is False and response:
+        # Check break_loop arg from agent (accept bool + common string/int variants)
+        agent_break_raw = tool.args.get("break_loop", True)
+        if isinstance(agent_break_raw, bool):
+            agent_break = agent_break_raw
+        elif isinstance(agent_break_raw, (int, float)):
+            agent_break = bool(agent_break_raw)
+        else:
+            v = str(agent_break_raw).strip().lower()
+            if v in {"false", "0", "no", "off"}:
+                agent_break = False
+            elif v in {"true", "1", "yes", "on"}:
+                agent_break = True
+            else:
+                agent_break = True
+
+        if (not agent_break) and response:
             await self._send_inline(context, tool, response)
 
     async def _send_inline(self, context, tool, response: Response):
