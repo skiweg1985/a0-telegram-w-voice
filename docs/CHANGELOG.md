@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
+
 ### Added
 
 - `/newchat` — start a fresh AgentContext for the same Telegram chat; the previous conversation stays in the Agent Zero browser UI as a separate chat entry. `/clear` still resets history within the same context.

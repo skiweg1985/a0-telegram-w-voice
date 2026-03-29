@@ -1411,8 +1411,15 @@ async def send_telegram_progress_update(
     context: AgentContext,
     response_text: str,
     keyboard: list[list[dict]] | None = None,
+    *,
+    text_is_html: bool = False,
 ) -> str | None:
-    """Send or edit an in-progress Telegram status message. Returns error string or None."""
+    """Send or edit an in-progress Telegram status message. Returns error string or None.
+
+    When ``text_is_html`` is True, ``response_text`` is already Telegram HTML (e.g. from
+    ``detail_status.format_step_html``) and must not be passed through ``md_to_telegram_html``,
+    which would escape ``<b>``, ``<code>``, etc. and show raw tags/entities in the client.
+    """
     bot_name = context.data.get(CTX_TG_BOT)
     if not bot_name:
         return "No Telegram bot configured on context"
@@ -1432,7 +1439,7 @@ async def send_telegram_progress_update(
     if not response_text:
         return None
 
-    html_text = tc.md_to_telegram_html(response_text)
+    html_text = response_text if text_is_html else tc.md_to_telegram_html(response_text)
 
     # Compatibility mode: progress edits disabled -> always send a new message
     if not progress_cfg["enabled"]:

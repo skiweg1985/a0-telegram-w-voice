@@ -53,7 +53,7 @@ class TelegramDetailStatus(Extension):
                     tool_args = None
 
             line = ds.format_step_html(name, bot_cfg, level=level, tool_args=tool_args)
-            await send_telegram_progress_update(context, line)
+            await send_telegram_progress_update(context, line, text_is_html=True)
             context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now
         except Exception as e:
             PrintStyle.warning(f"Telegram detail status: {format_error(e)}")
