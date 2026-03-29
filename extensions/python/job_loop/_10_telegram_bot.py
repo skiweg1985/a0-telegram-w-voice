@@ -9,11 +9,13 @@ from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_d
 
 
 PLUGIN_NAME: str = "telegram_integration_voice"
+_MISSING_OPTIMIZE_HANDLER_WARNED: bool = False
 
 
 class TelegramBotManager(Extension):
 
     async def execute(self, **kwargs: Any) -> None:
+        global _MISSING_OPTIMIZE_HANDLER_WARNED
         config = plugins.get_plugin_config(PLUGIN_NAME) or {}
         bots_cfg = config.get("bots", [])
         enabled_names = {
@@ -42,24 +44,32 @@ class TelegramBotManager(Extension):
         except ImportError:
             register_bot_command_menu = None  # graceful: old command_registry without this function
 
-        from usr.plugins.telegram_integration_voice.helpers.handler import (
-            handle_start,
-            handle_clear,
-            handle_help,
-            handle_tts,
-            handle_optimize_output,
-            handle_status,
-            handle_compact,
-            handle_stop,
-            handle_pause,
-            handle_resume,
-            handle_project,
-            handle_model,
-            handle_message,
-            handle_callback_query,
-            handle_new_members,
-            cleanup_old_attachments,
-        )
+        from usr.plugins.telegram_integration_voice.helpers import handler as _tg_handler
+
+        handle_start = _tg_handler.handle_start
+        handle_clear = _tg_handler.handle_clear
+        handle_help = _tg_handler.handle_help
+        handle_tts = _tg_handler.handle_tts
+        handle_status = _tg_handler.handle_status
+        handle_compact = _tg_handler.handle_compact
+        handle_stop = _tg_handler.handle_stop
+        handle_pause = _tg_handler.handle_pause
+        handle_resume = _tg_handler.handle_resume
+        handle_project = _tg_handler.handle_project
+        handle_model = _tg_handler.handle_model
+        handle_message = _tg_handler.handle_message
+        handle_callback_query = _tg_handler.handle_callback_query
+        handle_new_members = _tg_handler.handle_new_members
+        cleanup_old_attachments = _tg_handler.cleanup_old_attachments
+
+        handle_optimize_output = getattr(_tg_handler, "handle_optimize_output", None)
+        if handle_optimize_output is None and not _MISSING_OPTIMIZE_HANDLER_WARNED:
+            _MISSING_OPTIMIZE_HANDLER_WARNED = True
+            PrintStyle.warning(
+                "Telegram plugin: handler.handle_optimize_output is missing — "
+                "deploy a full plugin update (same version for all files). "
+                "Commands /optimize_output and /speakstyle are disabled until then."
+            )
 
         cleanup_old_attachments()
 
@@ -96,7 +106,11 @@ class TelegramBotManager(Extension):
                 _on_clear = partial(_make_handler(handle_clear), bot_name=name, bot_cfg=bot_cfg)
                 _on_help = partial(_make_handler(handle_help), bot_name=name, bot_cfg=bot_cfg)
                 _on_tts = partial(_make_handler(handle_tts), bot_name=name, bot_cfg=bot_cfg)
-                _on_optimize = partial(_make_handler(handle_optimize_output), bot_name=name, bot_cfg=bot_cfg)
+                _on_optimize = (
+                    partial(_make_handler(handle_optimize_output), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_optimize_output
+                    else None
+                )
                 _on_status = partial(_make_handler(handle_status), bot_name=name, bot_cfg=bot_cfg)
                 _on_compact = partial(_make_handler(handle_compact), bot_name=name, bot_cfg=bot_cfg)
                 _on_stop = partial(_make_handler(handle_stop), bot_name=name, bot_cfg=bot_cfg)
@@ -111,16 +125,25 @@ class TelegramBotManager(Extension):
                 _extra_commands = [
                     ("help", _on_help),
                     ("tts", _on_tts),
-                    ("optimize_output", _on_optimize),
-                    ("speakstyle", _on_optimize),
-                    ("status", _on_status),
-                    ("compact", _on_compact),
-                    ("stop", _on_stop),
-                    ("pause", _on_pause),
-                    ("resume", _on_resume),
-                    ("project", _on_project),
-                    ("model", _on_model),
                 ]
+                if _on_optimize:
+                    _extra_commands.extend(
+                        [
+                            ("optimize_output", _on_optimize),
+                            ("speakstyle", _on_optimize),
+                        ]
+                    )
+                _extra_commands.extend(
+                    [
+                        ("status", _on_status),
+                        ("compact", _on_compact),
+                        ("stop", _on_stop),
+                        ("pause", _on_pause),
+                        ("resume", _on_resume),
+                        ("project", _on_project),
+                        ("model", _on_model),
+                    ]
+                )
 
                 instance = create_bot(
                     name=name,

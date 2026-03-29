@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-03-29
+
+### Fixed
+
+- Job loop no longer hard-imports `handle_optimize_output`: if `handler.py` is an older copy (mixed deploy), the bot starts and logs a warning; `/optimize_output` and `/speakstyle` are omitted until all plugin files match.
+
 ## [0.10.2] - 2026-03-29
 
 ### Added
