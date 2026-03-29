@@ -34,6 +34,16 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/clear — reset conversation (same as reset)",
     ),
     (
+        "optimize_output",
+        "Answer style (voice/text)",
+        "/optimize_output voice|text|off|reset — prompt style; no arg = status",
+    ),
+    (
+        "speakstyle",
+        "Shortcut: voice style",
+        "/speakstyle — same as voice optimize; /speakstyle off",
+    ),
+    (
         "tts",
         "Voice reply mode",
         "/tts [on|off|auto|force] — session voice; no arg toggles mute",

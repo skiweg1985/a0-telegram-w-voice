@@ -22,3 +22,10 @@ CTX_TG_LAST_INPUT_WAS_VOICE = "_telegram_last_input_was_voice"
 # "off" = never send voice; "auto" / "force" = session voice_mode override.
 # Key must not start with "_" so persist_chat includes it in chat.json.
 CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
+
+# Per-session response style for system prompt: missing = use speech.reply.optimize_output_default;
+# "voice" | "text" | explicit "off" (no optimize snippet).
+CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
+
+# Last response tool: optional separate string for TTS only (transient, "_" prefix = not persisted).
+CTX_TG_VOICE_TEXT = "_telegram_response_voice_text"

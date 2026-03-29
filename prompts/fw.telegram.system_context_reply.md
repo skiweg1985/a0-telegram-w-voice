@@ -9,6 +9,20 @@ for multiple files zip first then attach single archive
 optionally set keyboard array for inline buttons
 optionally control voice reply per message with voice_mode (off|auto|force) or voice (true|false)
 
+optionally set voice_text to a shorter spoken-only string for TTS when text is long or markdown-heavy (TTS uses voice_text when set, else text)
+
+~~~json
+{
+    ...
+    "tool_name": "response",
+    "tool_args": {
+        "text": "Full **formatted** reply for the chat",
+        "voice_text": "Short version for the voice message only.",
+        "break_loop": true
+    }
+}
+~~~
+
 # formatting rules
 use Telegram-friendly markdown only:
   allowed: **bold**, *italic*, ~~strikethrough~~, `inline code`, ```code blocks```, [links](url), > blockquotes, bullet lists (- item), numbered lists (1. item)

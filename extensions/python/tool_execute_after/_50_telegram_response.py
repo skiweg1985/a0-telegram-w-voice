@@ -6,6 +6,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_KEYBOARD,
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_FORCE_VOICE_REPLY,
+    CTX_TG_VOICE_TEXT,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
@@ -37,6 +38,11 @@ class TelegramResponseIntercept(Extension):
         if keyboard:
             context.data[CTX_TG_KEYBOARD] = keyboard
 
+
+        vt = tool.args.get("voice_text")
+        if vt is not None and str(vt).strip():
+            context.data[CTX_TG_VOICE_TEXT] = str(vt).strip()
+
         # Optional voice behavior override from agent response tool
         # supported args: voice_mode = off|auto|force, voice = true|false
         voice_mode = str(tool.args.get("voice_mode", "")).strip().lower()
@@ -63,8 +69,11 @@ class TelegramResponseIntercept(Extension):
         text = tool.args.get("text", tool.args.get("message", ""))
         attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])
         keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
+        voice_for_tts = context.data.pop(CTX_TG_VOICE_TEXT, None)
 
-        error = await send_telegram_reply(context, text, attachments or None, keyboard)
+        error = await send_telegram_reply(
+            context, text, attachments or None, keyboard, voice_text=voice_for_tts,
+        )
 
         if error:
             result = agent.read_prompt("fw.telegram.update_error.md", error=error)

@@ -62,7 +62,7 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 - STT for incoming Telegram voice/audio
 - TTS for outgoing Telegram voice replies
 - Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
-- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/tts`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Session `/tts` overrides plugin voice mode until `/clear`.
+- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Session `/tts` overrides plugin voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies (voice vs text reading); see slash table below.
 
 ## Slash commands (summary)
 
@@ -73,6 +73,8 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 | `/status` | Model, tokens, project, TTS/STT, run state |
 | `/clear` | Reset conversation |
 | `/tts` | `on` / `off` / `auto` / `force`, or no arg toggles mute |
+| `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode (see `/status`) |
+| `/speakstyle` | Shortcut for voice-oriented output; `/speakstyle off` turns the extra prompt off |
 | `/compact` | Compress history (utility LLM) |
 | `/stop` | Abort running task |
 | `/project` | Show or `/project <name>` switch |
@@ -110,6 +112,7 @@ bots:
         timeout_sec: 60
 
       reply:
+        optimize_output_default: off   # off | voice | text — new sessions; /optimize_output overrides
         voice_mode: auto
         also_send_text: true
         max_chars: 700

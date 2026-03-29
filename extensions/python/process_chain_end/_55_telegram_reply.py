@@ -8,6 +8,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_KEYBOARD,
     CTX_TG_TYPING_STOP,
     CTX_TG_REPLY_TO,
+    CTX_TG_VOICE_TEXT,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
@@ -40,9 +41,10 @@ class TelegramAutoReply(Extension):
 
         attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])
         keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
+        voice_text = context.data.pop(CTX_TG_VOICE_TEXT, None)
 
         try:
-            await self._send_reply(context, response_text, attachments, keyboard)
+            await self._send_reply(context, response_text, attachments, keyboard, voice_text)
         except Exception as e:
             PrintStyle.error(f"Telegram auto-reply error: {format_error(e)}")
         finally:
@@ -58,12 +60,13 @@ class TelegramAutoReply(Extension):
         response_text: str,
         attachments: list[str],
         keyboard: list[list[dict]] | None,
+        voice_text: str | None = None,
     ):
         ensure_dependencies()
         from usr.plugins.telegram_integration_voice.helpers.handler import send_telegram_reply
 
         error = await send_telegram_reply(
-            context, response_text, attachments or None, keyboard,
+            context, response_text, attachments or None, keyboard, voice_text=voice_text,
         )
         if not error:
             context.data[CTX_SEND_FAILURES] = 0

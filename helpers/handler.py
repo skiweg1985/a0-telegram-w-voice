@@ -41,6 +41,8 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_FORCE_VOICE_REPLY,
     CTX_TG_LAST_INPUT_WAS_VOICE,
     CTX_TG_TTS_OVERRIDE,
+    CTX_TG_OUTPUT_OPTIMIZE,
+    CTX_TG_VOICE_TEXT,
 )
 
 # Chat mapping: (bot_name, tg_user_id) → AgentContext ID
@@ -77,6 +79,13 @@ def _cmd_rest(message: TgMessage) -> str:
     if len(parts) < 2:
         return ""
     return parts[1].strip()
+
+
+def _telegram_command_base(message: TgMessage) -> str:
+    t = (message.text or "").strip()
+    if not t:
+        return ""
+    return t.split(maxsplit=1)[0].split("@", 1)[0].lower()
 
 
 def _get_existing_context(message: TgMessage, bot_name: str) -> AgentContext | None:
@@ -197,6 +206,8 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
             if ctx:
                 ctx.reset()
                 ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
+                ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
+                ctx.data.pop(CTX_TG_VOICE_TEXT, None)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
     instance = get_bot(bot_name)
@@ -276,6 +287,64 @@ async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
 
+
+async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /optimize_output and /speakstyle — session prompt style for voice vs text."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    base = _telegram_command_base(message)
+    raw = (message.text or "").strip()
+    parts = raw.split(maxsplit=1)
+    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+
+    if base == "/speakstyle":
+        if not arg:
+            arg = "voice"
+        elif arg in ("off", "disable"):
+            arg = "off"
+        elif arg in ("on", "voice", "enable"):
+            arg = "voice"
+
+    if base == "/optimize_output" and not arg:
+        eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
+        stored = ctx.data.get(CTX_TG_OUTPUT_OPTIMIZE)
+        if stored is None:
+            src = "bot default"
+        else:
+            src = f"session={stored!r}"
+        reply = (
+            f"Output optimize: {eff} ({src}).\n"
+            "Usage: /optimize_output voice|text|off|reset\n"
+            "/speakstyle — shortcut for voice; /speakstyle off"
+        )
+    elif arg in ("reset", "default"):
+        ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
+        eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
+        reply = f"Output optimize: reset to bot default ({eff})."
+    elif arg == "off":
+        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "off"
+        reply = "Output optimize: off (no extra style snippet)."
+    elif arg == "voice":
+        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "voice"
+        reply = "Output optimize: voice (TTS-friendly)."
+    elif arg == "text":
+        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "text"
+        reply = "Output optimize: text (Telegram reading)."
+    else:
+        reply = "Usage: /optimize_output voice|text|off|reset — or /speakstyle (/speakstyle off)"
+
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+
+
 async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /status — model, tokens, project, TTS/STT, run state."""
     user = message.from_user
@@ -329,12 +398,19 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
             f"TTS engine: {'on' if speech.tts_enabled(bot_cfg) else 'off'}; session voice: {sess_lbl}"
         )
         lines.append(f"STT: {'on' if speech.stt_enabled(bot_cfg) else 'off'}")
+        opt_eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
+        opt_raw = ctx.data.get(CTX_TG_OUTPUT_OPTIMIZE)
+        opt_note = "session unset (bot default)" if opt_raw is None else f"session={opt_raw!r}"
+        lines.append(f"Output optimize: {opt_eff} ({opt_note})")
         lines.append(f"Running: {ctx.is_running()}; Paused: {ctx.paused}")
         lines.append(f"Context id: {ctx.id}")
     else:
         lines.append("No Telegram session yet — send a message or /start.")
         lines.append(f"TTS engine: {'on' if speech.tts_enabled(bot_cfg) else 'off'}")
         lines.append(f"STT: {'on' if speech.stt_enabled(bot_cfg) else 'off'}")
+        lines.append(
+            f"Output optimize (default): {speech.optimize_output_default(bot_cfg)}"
+        )
 
     text = "\n".join(lines)
     await _send_with_temp_bot(instance.bot.token, message.chat.id, text, parse_mode=None)
@@ -738,6 +814,10 @@ async def _get_or_create_context_from_user(
             ctx.data[CTX_TG_USER_ID] = user_id
             ctx.data[CTX_TG_USERNAME] = username or ""
 
+            d_opt = speech.optimize_output_default(bot_cfg)
+            if d_opt in ("voice", "text"):
+                ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = d_opt
+
             project = _get_project(bot_cfg, user_id)
             if project:
                 projects.activate_project(ctx.id, project)
@@ -866,6 +946,7 @@ async def send_telegram_reply(
     response_text: str,
     attachments: list[str] | None = None,
     keyboard: list[list[dict]] | None = None,
+    voice_text: str | None = None,
 ) -> str | None:
     """Send reply to Telegram user. Returns error string or None on success."""
     bot_name = context.data.get(CTX_TG_BOT)
@@ -904,13 +985,15 @@ async def send_telegram_reply(
 
     reply_to = context.data.get(CTX_TG_REPLY_TO)
 
+    tts_raw = ((voice_text or "").strip() or (response_text or "").strip())
+
     tts_on = speech.tts_enabled(bot_cfg)
-    if want_voice and response_text and not tts_on:
+    if want_voice and tts_raw and not tts_on:
         PrintStyle.info(
             "Telegram TTS skipped: speech.tts.enabled is false for this bot (check plugin config / project scope)."
         )
-    elif want_voice and not response_text:
-        PrintStyle.info("Telegram TTS skipped: empty response text.")
+    elif want_voice and not tts_raw:
+        PrintStyle.info("Telegram TTS skipped: empty text for TTS.")
     elif (
         not want_voice
         and mode == "auto"
@@ -934,12 +1017,12 @@ async def send_telegram_reply(
 
             sent_voice = False
             voice_file: str | None = None
-            if want_voice and response_text and tts_on:
+            if want_voice and tts_raw and tts_on:
                 try:
                     max_chars = max(100, int(reply_cfg["max_chars"]))
-                    voice_text = response_text[:max_chars]
+                    tts_payload = tts_raw[:max_chars]
                     await tc.send_record_voice(reply_bot, chat_id)
-                    voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, voice_text)
+                    voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
                     msg_id = await tc.send_voice(reply_bot, chat_id, voice_file, reply_to_message_id=reply_to)
                     sent_voice = bool(msg_id)
                     if sent_voice:

@@ -49,6 +49,25 @@ def voice_reply_settings(bot_cfg: dict) -> dict:
     }
 
 
+def optimize_output_default(bot_cfg: dict) -> str:
+    """Bot default for /optimize_output when session has no override: off | voice | text."""
+    reply = (bot_cfg.get("speech") or {}).get("reply") or {}
+    raw = str(reply.get("optimize_output_default", "off")).strip().lower()
+    return raw if raw in ("off", "voice", "text") else "off"
+
+
+def effective_output_optimize_mode(bot_cfg: dict, ctx_data: dict) -> str:
+    """Resolved optimize mode: explicit session off/voice/text, else bot default."""
+    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_OUTPUT_OPTIMIZE
+
+    v = ctx_data.get(CTX_TG_OUTPUT_OPTIMIZE)
+    if v == "off":
+        return "off"
+    if v in ("voice", "text"):
+        return v
+    return optimize_output_default(bot_cfg)
+
+
 def transcribe_audio_file(bot_cfg: dict, audio_path: str) -> dict:
     cfg = _speech_cfg(bot_cfg, "stt")
     provider = str(cfg.get("provider", "openai_compatible")).lower()

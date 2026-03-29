@@ -40,6 +40,7 @@ bots: []
 #       timeout_sec: 60
 #
 #     reply:
+#       optimize_output_default: off    # off | voice | text — system prompt hint; /optimize_output overrides per session
 #       voice_mode: auto              # off | auto | force
 #       also_send_text: true          # send text in addition to voice
 #       max_chars: 700                # cap text length for TTS

@@ -47,6 +47,7 @@ class TelegramBotManager(Extension):
             handle_clear,
             handle_help,
             handle_tts,
+            handle_optimize_output,
             handle_status,
             handle_compact,
             handle_stop,
@@ -95,6 +96,7 @@ class TelegramBotManager(Extension):
                 _on_clear = partial(_make_handler(handle_clear), bot_name=name, bot_cfg=bot_cfg)
                 _on_help = partial(_make_handler(handle_help), bot_name=name, bot_cfg=bot_cfg)
                 _on_tts = partial(_make_handler(handle_tts), bot_name=name, bot_cfg=bot_cfg)
+                _on_optimize = partial(_make_handler(handle_optimize_output), bot_name=name, bot_cfg=bot_cfg)
                 _on_status = partial(_make_handler(handle_status), bot_name=name, bot_cfg=bot_cfg)
                 _on_compact = partial(_make_handler(handle_compact), bot_name=name, bot_cfg=bot_cfg)
                 _on_stop = partial(_make_handler(handle_stop), bot_name=name, bot_cfg=bot_cfg)
@@ -109,6 +111,8 @@ class TelegramBotManager(Extension):
                 _extra_commands = [
                     ("help", _on_help),
                     ("tts", _on_tts),
+                    ("optimize_output", _on_optimize),
+                    ("speakstyle", _on_optimize),
                     ("status", _on_status),
                     ("compact", _on_compact),
                     ("stop", _on_stop),
