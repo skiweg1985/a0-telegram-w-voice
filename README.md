@@ -62,7 +62,7 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 - STT for incoming Telegram voice/audio
 - TTS for outgoing Telegram voice replies
 - Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
-- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/tts`, `/project`, `/optimize_output`, `/model` where applicable). Session `/tts` overrides plugin voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies (voice vs text reading); see slash table below.
+- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/tts`, `/project`, `/optimize_output`, `/model` where applicable). Session `/tts` overrides plugin voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies (voice vs text reading); see slash table below.
 
 ## Slash commands (summary)
 
@@ -71,7 +71,8 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 | `/help` | List commands |
 | `/start` | Welcome; ensures session |
 | `/status` | Model, tokens, project, TTS/STT, run state |
-| `/clear` | Reset conversation |
+| `/clear` | Reset conversation (same context) |
+| `/newchat` | New session; old chat stays in browser UI |
 | `/tts` | `on` / `off` / `auto` / `force`, or no arg shows session + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode **with inline buttons** (typing still works) |
 | `/speakstyle` | Shortcut for voice-oriented output; `/speakstyle off` turns the extra prompt off |

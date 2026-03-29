@@ -34,6 +34,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/clear — reset conversation (same as reset)",
     ),
     (
+        "newchat",
+        "New chat session",
+        "/newchat — new session; old chat stays in browser UI",
+    ),
+    (
         "optimize_output",
         "Answer style (voice/text)",
         "/optimize_output voice|text|off|reset — no arg = status + buttons",

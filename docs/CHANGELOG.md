@@ -4,6 +4,8 @@
 
 ### Added
 
+- `/newchat` — start a fresh AgentContext for the same Telegram chat; the previous conversation stays in the Agent Zero browser UI as a separate chat entry. `/clear` still resets history within the same context.
+- New contexts created via Telegram are now immediately persisted (`save_tmp_chat`), so they appear in the browser UI right after `/start` or the first message — no longer delayed until the first agent reply.
 - `/optimize_output` with no argument: inline keyboard (Voice / Text / Off / Reset) in addition to typed args.
 - `/model` with no argument: when per-chat override is allowed and presets exist, inline buttons to pick a preset by index (list changes → send `/model` again).
 - `/tts` with no argument: session voice summary + inline keyboard (Default / Muted / Auto / Force).
@@ -11,6 +13,7 @@
 
 ### Changed
 
+- `/clear` now persists the reset state immediately (`save_tmp_chat`) so the browser UI reflects the cleared history without delay.
 - `/tts` with no argument no longer toggles mute; use the **Muted** or **Default** button (or `/tts off` / `/tts on`).
 - `handle_callback_query`: callbacks with prefix `tgx|` are handled locally (plugin UI); other `callback_data` still goes to the agent as before.
 - `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.

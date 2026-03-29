@@ -352,6 +352,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
                 ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
                 ctx.data.pop(CTX_TG_VOICE_TEXT, None)
+                save_tmp_chat(ctx)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
     instance = get_bot(bot_name)
@@ -373,6 +374,44 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
             display_time=5,
             group="telegram",
         )
+
+
+async def handle_newchat(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /newchat — start a fresh AgentContext; the old chat stays in the browser UI."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    key = _map_key(bot_name, user.id, message.chat.id)
+
+    with _chat_map_lock:
+        state = _load_state()
+        chats = state.setdefault("chats", {})
+        old_ctx_id = chats.pop(key, None)
+        if old_ctx_id:
+            old_ctx = AgentContext.get(old_ctx_id)
+            if old_ctx:
+                old_ctx.kill_process()
+                save_tmp_chat(old_ctx)
+            _save_state(state)
+
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id,
+            "Failed to create a new session.",
+            parse_mode=None,
+        )
+        return
+
+    await _send_with_temp_bot(
+        instance.bot.token, message.chat.id,
+        "New chat started. Previous conversation is still available in the browser UI.",
+        parse_mode=None,
+    )
 
 
 async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1100,6 +1139,8 @@ async def _get_or_create_context_from_user(
 
             chats[key] = ctx.id
             _save_state(state)
+
+            save_tmp_chat(ctx)
 
             PrintStyle.success(
                 f"Telegram ({bot_name}): new chat {ctx.id} for user {display_name}"
