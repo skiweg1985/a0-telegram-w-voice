@@ -29,3 +29,6 @@ CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
 
 # Last response tool: optional separate string for TTS only (transient, "_" prefix = not persisted).
 CTX_TG_VOICE_TEXT = "_telegram_response_voice_text"
+
+# Inline keyboard callbacks from plugin slash UI (do not use this prefix in agent response tool keyboards).
+TG_UI_CALLBACK_PREFIX = "tgx|"

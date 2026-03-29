@@ -6,7 +6,7 @@ break_loop true > stop working and wait for user reply
 break_loop false > only for mid-task progress updates then keep working
 include file paths in attachments array to send files/images
 for multiple files zip first then attach single archive
-optionally set keyboard array for inline buttons
+optionally set keyboard array for inline buttons (do not use callback_data starting with `tgx|` — reserved for plugin slash-command UI)
 optionally control voice reply per message with voice_mode (off|auto|force) or voice (true|false)
 
 optionally set voice_text to a shorter spoken-only string for TTS when text is long or markdown-heavy (TTS uses voice_text when set, else text)

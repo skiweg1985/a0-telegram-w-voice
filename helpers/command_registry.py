@@ -36,7 +36,7 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "optimize_output",
         "Answer style (voice/text)",
-        "/optimize_output voice|text|off|reset — prompt style; no arg = status",
+        "/optimize_output voice|text|off|reset — no arg = status + buttons",
     ),
     (
         "speakstyle",
@@ -66,7 +66,7 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "model",
         "Show or switch preset",
-        "/model [preset] — needs chat override in _model_config",
+        "/model [preset] — no arg: info + preset buttons if allowed",
     ),
     (
         "pause",

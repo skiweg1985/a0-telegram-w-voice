@@ -73,12 +73,12 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 | `/status` | Model, tokens, project, TTS/STT, run state |
 | `/clear` | Reset conversation |
 | `/tts` | `on` / `off` / `auto` / `force`, or no arg toggles mute |
-| `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode (see `/status`) |
+| `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode **with inline buttons** (typing still works) |
 | `/speakstyle` | Shortcut for voice-oriented output; `/speakstyle off` turns the extra prompt off |
 | `/compact` | Compress history (utility LLM) |
 | `/stop` | Abort running task |
 | `/project` | Show or `/project <name>` switch |
-| `/model` | Show or `/model <preset>` (needs `_model_config` + `allow_chat_override`) |
+| `/model` | Show current model and **preset buttons** when override is allowed, or `/model <preset>` by name |
 | `/pause` / `/resume` | Pause or resume agent loop |
 
 ## Configuration example

@@ -44,6 +44,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_TTS_OVERRIDE,
     CTX_TG_OUTPUT_OPTIMIZE,
     CTX_TG_VOICE_TEXT,
+    TG_UI_CALLBACK_PREFIX,
 )
 
 # Chat mapping: (bot_name, tg_user_id) → AgentContext ID
@@ -80,6 +81,79 @@ def _cmd_rest(message: TgMessage) -> str:
     if len(parts) < 2:
         return ""
     return parts[1].strip()
+
+
+def _parse_plugin_ui_callback(data: str) -> tuple[str, str] | None:
+    """Parse tgx|<kind>|<payload> (plugin UI). Returns (kind, payload) or None."""
+    if not data or not data.startswith(TG_UI_CALLBACK_PREFIX):
+        return None
+    rest = data[len(TG_UI_CALLBACK_PREFIX) :]
+    if "|" not in rest:
+        return None
+    kind, payload = rest.split("|", 1)
+    if not kind or not payload:
+        return None
+    return kind, payload
+
+
+def _optimize_output_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "Voice", "callback_data": f"{p}o|voice"},
+            {"text": "Text", "callback_data": f"{p}o|text"},
+        ],
+        [
+            {"text": "Off", "callback_data": f"{p}o|off"},
+            {"text": "Reset", "callback_data": f"{p}o|reset"},
+        ],
+    ]
+
+
+def _model_preset_button_label(name: str) -> str:
+    """Telegram inline button text limit 64 chars."""
+    n = str(name).strip()
+    if len(n) <= 60:
+        return n
+    return n[:57] + "…"
+
+
+def _model_preset_inline_keyboard(preset_names: list[str]) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    rows: list[list[dict]] = []
+    row: list[dict] = []
+    for i, pname in enumerate(preset_names):
+        row.append(
+            {
+                "text": _model_preset_button_label(pname),
+                "callback_data": f"{p}m|{i}",
+            }
+        )
+        if len(row) >= 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return rows
+
+
+def _apply_output_optimize_mode(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
+    """Apply voice/text/off/reset; returns user-facing reply (mutates ctx.data)."""
+    arg = arg.strip().lower()
+    if arg in ("reset", "default"):
+        ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
+        eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
+        return f"Output optimize: reset to bot default ({eff})."
+    if arg == "off":
+        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "off"
+        return "Output optimize: off (no extra style snippet)."
+    if arg == "voice":
+        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "voice"
+        return "Output optimize: voice (TTS-friendly)."
+    if arg == "text":
+        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "text"
+        return "Output optimize: text (Telegram reading)."
+    return "Usage: /optimize_output voice|text|off|reset — or /speakstyle (/speakstyle off)"
 
 
 def _telegram_command_base(message: TgMessage) -> str:
@@ -323,22 +397,18 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
             src = f"session={stored!r}"
         reply = (
             f"Output optimize: {eff} ({src}).\n"
-            "Usage: /optimize_output voice|text|off|reset\n"
+            "Tap a button or type: voice | text | off | reset\n"
             "/speakstyle — shortcut for voice; /speakstyle off"
         )
-    elif arg in ("reset", "default"):
-        ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
-        eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
-        reply = f"Output optimize: reset to bot default ({eff})."
-    elif arg == "off":
-        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "off"
-        reply = "Output optimize: off (no extra style snippet)."
-    elif arg == "voice":
-        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "voice"
-        reply = "Output optimize: voice (TTS-friendly)."
-    elif arg == "text":
-        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "text"
-        reply = "Output optimize: text (Telegram reading)."
+        kb = _optimize_output_inline_keyboard()
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
+        )
+        return
+
+    if arg in ("reset", "default", "off", "voice", "text"):
+        reply = _apply_output_optimize_mode(ctx, bot_cfg, arg)
     else:
         reply = "Usage: /optimize_output voice|text|off|reset — or /speakstyle (/speakstyle off)"
 
@@ -604,29 +674,41 @@ async def handle_model(message: TgMessage, bot_name: str, bot_cfg: dict):
             f"Chat model: {chat_cfg.get('provider', '?')} / {chat_cfg.get('name', '?')}",
             f"Override allowed: {mc.is_chat_override_allowed(ctx.agent0)}",
         ]
-        presets = mc.get_presets()
-        if presets:
-            lines.append("Presets: " + ", ".join(str(p.get("name", "")) for p in presets if p.get("name")))
+        preset_names = [
+            str(p.get("name", "")).strip()
+            for p in mc.get_presets()
+            if p.get("name")
+        ]
+        if preset_names:
+            lines.append("Presets: " + ", ".join(preset_names))
+        kb = None
+        if mc.is_chat_override_allowed(ctx.agent0) and preset_names:
+            kb = _model_preset_inline_keyboard(preset_names)
+            lines.append("Tap a button to switch preset, or type /model <name>")
         reply = "\n".join(lines)
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
+        )
+        return
+
+    if not mc.is_chat_override_allowed(ctx.agent0):
+        reply = "Per-chat model override is disabled (allow_chat_override in _model_config)."
     else:
-        if not mc.is_chat_override_allowed(ctx.agent0):
-            reply = "Per-chat model override is disabled (allow_chat_override in _model_config)."
+        arg_key = arg.strip().lower()
+        preset = None
+        for p in mc.get_presets():
+            pn = p.get("name")
+            if pn and str(pn).strip().lower() == arg_key:
+                preset = p
+                break
+        if not preset:
+            plist = [str(p.get("name", "")) for p in mc.get_presets() if p.get("name")]
+            reply = f"Unknown preset {arg!r}. Known: {', '.join(plist) or '(none)'}"
         else:
-            arg_key = arg.strip().lower()
-            preset = None
-            for p in mc.get_presets():
-                pn = p.get("name")
-                if pn and str(pn).strip().lower() == arg_key:
-                    preset = p
-                    break
-            if not preset:
-                plist = [str(p.get("name", "")) for p in mc.get_presets() if p.get("name")]
-                reply = f"Unknown preset {arg!r}. Known: {', '.join(plist) or '(none)'}"
-            else:
-                pname = preset.get("name")
-                ctx.set_data("chat_model_override", {"preset_name": pname})
-                save_tmp_chat(ctx)
-                reply = f"Model preset set to: {pname}"
+            pname = preset.get("name")
+            ctx.set_data("chat_model_override", {"preset_name": pname})
+            save_tmp_chat(ctx)
+            reply = f"Model preset set to: {pname}"
 
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
@@ -737,10 +819,72 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
         await query.answer("Not authorized.")
         return
 
+    raw_data = query.data or ""
+    parsed = _parse_plugin_ui_callback(raw_data)
+
+    if parsed:
+        kind, payload = parsed
+        instance = get_bot(bot_name)
+        if not instance:
+            await query.answer("Bot unavailable.")
+            return
+        token = instance.bot.token
+        chat_id = query.message.chat.id
+
+        context = await _get_or_create_context_from_user(
+            bot_name, bot_cfg, user.id, user.username, chat_id,
+        )
+        if not context:
+            await query.answer("No session. Use /start first.")
+            return
+
+        if kind == "o":
+            if payload not in ("voice", "text", "off", "reset"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_output_optimize_mode(context, bot_cfg, payload)
+            save_tmp_chat(context)
+            await query.answer("Updated")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "m":
+            try:
+                from plugins._model_config.helpers import model_config as mc
+            except Exception:
+                await query.answer("Model plugin missing.")
+                return
+            if not mc.is_chat_override_allowed(context.agent0):
+                await query.answer("Override disabled.")
+                return
+            try:
+                idx = int(payload)
+            except ValueError:
+                await query.answer("Invalid preset.")
+                return
+            preset_names = [
+                str(p.get("name", "")).strip()
+                for p in mc.get_presets()
+                if p.get("name")
+            ]
+            if idx < 0 or idx >= len(preset_names):
+                await query.answer("List changed — send /model again.")
+                return
+            pname = preset_names[idx]
+            context.set_data("chat_model_override", {"preset_name": pname})
+            save_tmp_chat(context)
+            reply = f"Model preset set to: {pname}"
+            await query.answer("OK")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        await query.answer("Unknown action.")
+        return
+
     await query.answer()
 
-    # Treat callback data as a user message
-    text = query.data or ""
+    # Treat callback data as a user message (agent / response-tool keyboards)
+    text = raw_data
     if not text:
         return
 
@@ -1086,10 +1230,21 @@ async def _temp_bot(token: str, **kwargs):
             await bot.session.close()
 
 
-async def _send_with_temp_bot(token: str, chat_id: int, text: str, parse_mode: str | None = None):
+async def _send_with_temp_bot(
+    token: str,
+    chat_id: int,
+    text: str,
+    parse_mode: str | ParseMode | None = None,
+    keyboard: list[list[dict]] | None = None,
+):
     """Send text using a temporary Bot to avoid cross-event-loop session issues."""
     async with _temp_bot(token) as bot:
-        await tc.send_text(bot, chat_id, text, parse_mode=parse_mode)
+        if keyboard:
+            await tc.send_text_with_keyboard(
+                bot, chat_id, text, keyboard, parse_mode=parse_mode
+            )
+        else:
+            await tc.send_text(bot, chat_id, text, parse_mode=parse_mode)
 
 
 def _start_typing(token: str, chat_id: int) -> threading.Event:
