@@ -11,7 +11,7 @@
 ### Fixed
 
 - **`also_send_text`**: If the model only fills `voice_text` (TTS) and leaves `text` empty, Telegram now still sends a text bubble when **Also send text** is enabled (uses `voice_text` as fallback). Config value `also_send_text` is parsed robustly (strings like `"false"` no longer behave like Python `bool("false") == True`).
-- Voice reply mode **auto** (`speech.reply.voice_mode` or `/tts auto`): the `response` tool flag `voice=true` no longer upgrades the effective mode to **force**, so `/status` (`replies auto`) matches actual TTS behaviour. Agent can still force voice when the configured mode is **off** (single-reply override) or when `voice_mode` is set to **force** on the tool.
+- **Voice reply mode enforcement**: The effective user/admin mode (config `speech.reply.voice_mode` + session `/tts`) is now the authority. When it resolves to **off**, the agent's per-response `voice_mode: force` or `voice: true` cannot escalate it back to force. Previously the agent tool override bypassed the config entirely — `/status` showed `replies off` while TTS was sent with `mode='force'`. Within `auto` or `force`, the agent can still de-escalate (e.g. `voice_mode: off` for a single reply).
 - `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
 
 ### Changed

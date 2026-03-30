@@ -1,5 +1,28 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – agent voice_mode override darf Config off nicht umgehen
+
+- Done:
+  - `send_telegram_reply`: Modus-Ermittlung umgebaut. `effective_voice_reply_mode()` (Config + Session = /status) ist jetzt die Autorität. Wenn effective = "off", kann der Agent per `voice_mode: force` oder `voice: true` nicht hochstufen. Alter Code ließ `override_mode` komplett an Config vorbei.
+  - `docs/CHANGELOG.md` [Unreleased] / Fixed aktualisiert.
+- Next:
+  - Smoke: Config `voice_mode: off`, Agent antwortet mit `voice_mode: force` → TTS darf **nicht** gesendet werden. Dann Config `voice_mode: auto` → nur bei Voice-Input TTS.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py`
+- Changelog updated:
+  - yes (Unreleased / Fixed)
+- Follow-ups:
+  - Agent-Memory/Instructions prüfen: Agent hat "Per remembered Telegram preference, I should force voice mode" — das sollte bereinigt werden (ist aber ein Agent-Prompt-Thema, nicht Code).
+
 ## 2026-03-30 – Cursor – also_send_text + voice_text fallback
 
 - Done:
