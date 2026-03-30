@@ -1664,9 +1664,18 @@ async def send_telegram_reply(
                         with suppress(Exception):
                             os.remove(voice_file)
 
-            should_send_text = bool(response_text) and (keyboard is not None or not sent_voice or reply_cfg["also_send_text"])
+            also = reply_cfg["also_send_text"]
+            # If the agent only set voice_text (TTS) and left text empty, response_text is
+            # empty but users still expect a text bubble when also_send_text is on.
+            text_body = (response_text or "").strip()
+            if not text_body and also and (voice_text or "").strip():
+                text_body = (voice_text or "").strip()
+
+            should_send_text = bool(text_body) and (
+                keyboard is not None or not sent_voice or also
+            )
             if should_send_text:
-                html_text = tc.md_to_telegram_html(response_text)
+                html_text = tc.md_to_telegram_html(text_body)
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 use_final_edit = bool(
                     progress_cfg["enabled"]

@@ -40,11 +40,27 @@ def tts_enabled(bot_cfg: dict) -> bool:
     return bool(cfg.get("enabled", False))
 
 
+def _coerce_bool(value: Any, default: bool = True) -> bool:
+    """YAML/JSON/UI may use strings; bool('false') is True in Python — normalize."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ("true", "1", "yes", "on"):
+        return True
+    if s in ("false", "0", "no", "off", ""):
+        return False
+    return default
+
+
 def voice_reply_settings(bot_cfg: dict) -> dict:
     reply = (bot_cfg.get("speech") or {}).get("reply") or {}
     return {
         "voice_mode": str(reply.get("voice_mode", "off")).lower(),  # off|auto|force
-        "also_send_text": bool(reply.get("also_send_text", True)),
+        "also_send_text": _coerce_bool(reply.get("also_send_text"), True),
         "max_chars": int(reply.get("max_chars", 700) or 700),
     }
 

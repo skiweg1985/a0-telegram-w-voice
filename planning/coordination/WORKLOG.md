@@ -1,5 +1,29 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – also_send_text + voice_text fallback
+
+- Done:
+  - `send_telegram_reply`: bei `also_send_text` und leerem `text` Fallback auf `voice_text` für die Textnachricht; `speech._coerce_bool` für `speech.reply.also_send_text`.
+  - `docs/CHANGELOG.md` [Unreleased] / Fixed ergänzt.
+- Next:
+  - Smoke: Voice-Antwort mit nur `voice_text`, Config also_send_text an.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - helpers/speech.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py helpers/speech.py`
+- Changelog updated:
+  - yes (Unreleased / Fixed)
+- Follow-ups:
+  - none
+
 ## 2026-03-30 – Cursor – voice_mode auto vs response voice=true
 
 - Done:
