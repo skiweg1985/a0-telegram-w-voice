@@ -1568,24 +1568,18 @@ async def send_telegram_reply(
     progress_cfg = _progress_settings(bot_cfg)
 
     # Per-response overrides set by the response-tool (tool_execute_after extension).
-    # These are transient and popped here; they must NOT override user/admin intent.
+    # Transient — popped here. The agent may only DE-ESCALATE (force→auto→off),
+    # never escalate above the effective user/admin mode.
     override_mode = str(context.data.pop(CTX_TG_VOICE_REPLY_MODE, "") or "").lower()
-    forced_flag = bool(context.data.pop(CTX_TG_FORCE_VOICE_REPLY, False))
+    context.data.pop(CTX_TG_FORCE_VOICE_REPLY, None)
 
-    # Effective user-facing mode (config + session /tts) — matches /status output.
     effective = speech.effective_voice_reply_mode(bot_cfg, context.data)
 
-    if effective == "off":
-        # User or admin disabled voice; agent per-response override cannot escalate.
-        mode = "off"
+    _MODE_RANK = {"off": 0, "auto": 1, "force": 2}
+    if override_mode in _MODE_RANK and _MODE_RANK[override_mode] < _MODE_RANK.get(effective, 0):
+        mode = override_mode
     else:
-        if override_mode in {"off", "auto", "force"}:
-            mode = override_mode
-        else:
-            mode = effective
-        # voice=true must not upgrade "auto" to "force" (auto depends on input type).
-        if forced_flag and mode not in ("auto", "off"):
-            mode = "force"
+        mode = effective
 
     last_input_was_voice = bool(context.data.get(CTX_TG_LAST_INPUT_WAS_VOICE, False))
     want_voice = mode == "force" or (mode == "auto" and last_input_was_voice)

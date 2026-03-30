@@ -5,7 +5,6 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_ATTACHMENTS,
     CTX_TG_KEYBOARD,
     CTX_TG_VOICE_REPLY_MODE,
-    CTX_TG_FORCE_VOICE_REPLY,
     CTX_TG_VOICE_TEXT,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
@@ -43,16 +42,10 @@ class TelegramResponseIntercept(Extension):
         if vt is not None and str(vt).strip():
             context.data[CTX_TG_VOICE_TEXT] = str(vt).strip()
 
-        # Optional voice behavior override from agent response tool
-        # supported args: voice_mode = off|auto|force, voice = true|false
+        # voice_mode from agent response (handler enforces de-escalation only)
         voice_mode = str(tool.args.get("voice_mode", "")).strip().lower()
         if voice_mode in {"off", "auto", "force"}:
             context.data[CTX_TG_VOICE_REPLY_MODE] = voice_mode
-
-        if "voice" in tool.args:
-            v = tool.args.get("voice")
-            v_bool = bool(v) if isinstance(v, bool) else str(v).strip().lower() in {"1", "true", "yes", "on"}
-            context.data[CTX_TG_FORCE_VOICE_REPLY] = v_bool
 
         # Check break_loop arg from agent (accept bool + common string/int variants)
         agent_break_raw = tool.args.get("break_loop", True)

@@ -1,5 +1,33 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – voice_mode Agent-Override nur noch de-escalation
+
+- Done:
+  - `send_telegram_reply` (handler.py): Override-Logik auf striktes De-Escalation-Prinzip umgebaut. Agent kann `voice_mode` nur noch *senken* (force→auto→off), nie über den effektiven User/Admin-Modus hinaus hochstufen. Rank-basierter Vergleich statt Sonderfälle. `voice: true/false` (`forced_flag`) komplett entfernt — war nur für Eskalation nützlich und durch Memory-Drift anfällig.
+  - `_50_telegram_response.py` (Extension): `CTX_TG_FORCE_VOICE_REPLY`-Handling und -Import entfernt.
+  - `fw.telegram.system_context_reply.md` (Prompt): `voice_mode (off|auto|force)` und `voice (true|false)` durch reine `voice_mode "off"` Dokumentation ersetzt. Force-Beispiel durch Off-Beispiel (Code-Reply) ersetzt. LLM wird nicht mehr zum Hochstufen inspiriert.
+  - `docs/CHANGELOG.md` [Unreleased] / Fixed aktualisiert.
+- Next:
+  - Smoke: Config `voice_mode: auto`, Agent antwortet mit `voice_mode: force` in tool_args → darf NICHT als Voice kommen (bleibt auto). Agent mit `voice_mode: off` → kein Voice (de-escalation funktioniert).
+  - Agent-Memory bereinigen: gespeicherte "prefers voice_mode force" Präferenz löschen.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - extensions/python/tool_execute_after/_50_telegram_response.py
+  - prompts/fw.telegram.system_context_reply.md
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py extensions/python/tool_execute_after/_50_telegram_response.py`
+- Changelog updated:
+  - yes (Unreleased / Fixed)
+- Follow-ups:
+  - Agent-Memory/Instructions bereinigen: "Per remembered Telegram preference, I should force voice mode" Eintrag löschen.
+
 ## 2026-03-30 – Cursor – /status Reply-Zeile ohne Meta-Extras
 
 - Done:

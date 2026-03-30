@@ -7,7 +7,7 @@ break_loop false > only for mid-task progress updates then keep working
 include file paths in attachments array to send files/images
 for multiple files zip first then attach single archive
 optionally set keyboard array for inline buttons (do not use callback_data starting with `tgx|` — reserved for plugin slash-command UI)
-optionally control voice reply per message with voice_mode (off|auto|force) or voice (true|false)
+optionally suppress voice for a single reply with voice_mode "off" (useful for code/tables where TTS adds no value; you cannot escalate voice beyond the user's setting)
 
 optionally set voice_text to a shorter spoken-only string for TTS when text is long or markdown-heavy (TTS uses voice_text when set, else text)
 
@@ -73,8 +73,8 @@ usage:
     ...
     "tool_name": "response",
     "tool_args": {
-        "text": "Kurz als Sprachnachricht:",
-        "voice_mode": "force",
+        "text": "```\nsome_function(arg1, arg2)\n```",
+        "voice_mode": "off",
         "break_loop": true
     }
 }
