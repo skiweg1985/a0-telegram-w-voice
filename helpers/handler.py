@@ -606,25 +606,6 @@ def _status_model_code(provider: str, name: str, esc) -> str:
     return f"<code>{p}</code>/<code>{n}</code>"
 
 
-def _status_reply_chat_extras(
-    opt_raw: object,
-    det_sess: object,
-    esc,
-) -> str:
-    has_opt = opt_raw is not None
-    has_det = det_sess is not None
-    if not has_opt and not has_det:
-        return "<i>none</i>"
-    parts: list[str] = []
-    if has_opt:
-        parts.append(f"shaping <code>{esc(opt_raw)}</code>")
-    if has_det:
-        parts.append(
-            f"detail <code>{esc(detail_status.detail_level_display(str(det_sess)))}</code>"
-        )
-    return " · ".join(parts)
-
-
 async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /status — model, tokens, project, TTS/STT, run state."""
     user = message.from_user
@@ -693,14 +674,11 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
 
         opt_eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
-        opt_raw = ctx.data.get(CTX_TG_OUTPUT_OPTIMIZE)
         det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
         det_eff_disp = detail_status.detail_level_display(det_eff)
-        det_sess = ctx.data.get(CTX_TG_DETAIL_LEVEL_SESSION)
-        ov = _status_reply_chat_extras(opt_raw, det_sess, esc)
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(opt_eff)}</code> · "
-            f"tool detail <code>{esc(det_eff_disp)}</code> · chat {ov}"
+            f"tool detail <code>{esc(det_eff_disp)}</code>"
         )
 
         proj = projects.get_context_project_name(ctx)

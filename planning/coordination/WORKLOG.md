@@ -1,5 +1,28 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – /status Reply-Zeile ohne Meta-Extras
+
+- Done:
+  - `/status` Reply-Zeile: redundante `chat`-Extras entfernt (shaping/detail Session-Overrides steckten bereits in den effektiven Werten). Tote Hilfsfunktion `_status_reply_chat_extras` entfernt.
+  - `docs/CHANGELOG.md` [Unreleased] / Changed ergänzt.
+- Next:
+  - Smoke: `/tts auto` → `/status` zeigt `replies auto`; `/optimize_output voice` → `/status` zeigt `shaping voice`, ohne „chat …"-Suffix.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py`
+- Changelog updated:
+  - yes (Unreleased / Changed)
+- Follow-ups:
+  - none
+
 ## 2026-03-30 – Cursor – agent voice_mode override darf Config off nicht umgehen
 
 - Done:
