@@ -1,5 +1,24 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – Release 0.11.1 (plugin.yaml + Changelog)
+
+- Done:
+  - `plugin.yaml` Version `0.11.0` → `0.11.1` (Patch für voice_mode De-Escalation).
+  - `docs/CHANGELOG.md`: Abschnitt `[0.11.1] - 2026-03-30` mit Fixed-Eintrag; Duplikat aus [Unreleased] entfernt.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - plugin.yaml
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Changelog updated:
+  - yes ([0.11.1])
+
 ## 2026-03-30 – Cursor – voice_mode Agent-Override nur noch de-escalation
 
 - Done:

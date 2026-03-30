@@ -11,7 +11,6 @@
 ### Fixed
 
 - **`also_send_text`**: If the model only fills `voice_text` (TTS) and leaves `text` empty, Telegram now still sends a text bubble when **Also send text** is enabled (uses `voice_text` as fallback). Config value `also_send_text` is parsed robustly (strings like `"false"` no longer behave like Python `bool("false") == True`).
-- **Voice reply mode enforcement (de-escalation only)**: The agent's per-response `voice_mode` can now only *lower* the effective mode (e.g. suppress voice for a code-heavy reply), never escalate it. Previously the agent could set `voice_mode: "force"` and override `auto` or even `off` — especially problematic when the LLM stored a "prefers force" preference in memory and applied it to every response. The deprecated `voice: true/false` parameter is ignored; the system prompt no longer advertises `force` as an option.
 - `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
 
 ### Changed
@@ -44,6 +43,12 @@
 - `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.
 - `/status` layout: grouped blocks (Models, Tokens &amp; history, Project, Voice, Reply options, Activity, Session ID) with blank lines between sections; one line per metric where possible; clearer labels (e.g. tool-step lines, output shaping, override bullets).
 - Tool detail status lines (`/detail info|debug`) now go through progress message editing, so the chat can update one message in place instead of posting a new line per step.
+
+## [0.11.1] - 2026-03-30
+
+### Fixed
+
+- **Voice reply mode (de-escalation only)**: The agent's per-response `voice_mode` can only *lower* the effective mode (e.g. `voice_mode: "off"` for a code-heavy reply), never escalate above config/session. The deprecated `voice: true/false` response parameter is ignored; the Telegram system prompt documents `voice_mode: "off"` only.
 
 ## [0.10.4] - 2026-03-29
 
