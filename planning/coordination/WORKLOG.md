@@ -1,5 +1,33 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – Status-/Detail-/TTS-Copy
+
+- Done:
+  - `speech.effective_voice_reply_mode`, `detail_status.detail_level_display` (debug → verbose in UI); `/status` Voice/Reply-Zeilen (`replies`, `chat`, keine „default“-Meta).
+  - `/detail` Button Verbose, Slash-Alias `verbose`, Kurztexte ohne bot/session-Override-Klammern; `/tts` und `/optimize_output` ohne Meta-Klammern.
+  - `helpers/command_registry.py`, `README.md`, `docs/CHANGELOG.md` angepasst.
+- Next:
+  - Telegram smoke: `/status`, `/detail`, `/tts`, `/optimize_output`.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - helpers/speech.py
+  - helpers/detail_status.py
+  - helpers/command_registry.py
+  - README.md
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py helpers/speech.py helpers/detail_status.py`
+- Changelog updated:
+  - yes (Unreleased / Changed)
+- Follow-ups:
+  - none
+
 ## 2026-03-30 – Cursor – /status OpenClaw-style layout
 
 - Done:

@@ -51,7 +51,7 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "detail",
         "Tool status detail",
-        "/detail off|info|debug|reset — no arg = status + buttons",
+        "/detail off|info|verbose|reset — no arg = status + buttons (debug = verbose)",
     ),
     (
         "tts",

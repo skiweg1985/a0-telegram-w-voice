@@ -68,6 +68,21 @@ def effective_output_optimize_mode(bot_cfg: dict, ctx_data: dict) -> str:
     return optimize_output_default(bot_cfg)
 
 
+def effective_voice_reply_mode(bot_cfg: dict, ctx_data: dict) -> str:
+    """Resolved voice reply mode: session /tts value wins, else speech.reply.voice_mode."""
+    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_TTS_OVERRIDE
+
+    base = voice_reply_settings(bot_cfg)["voice_mode"]
+    sess = ctx_data.get(CTX_TG_TTS_OVERRIDE)
+    if sess == "off":
+        return "off"
+    if sess == "force":
+        return "force"
+    if sess == "auto":
+        return "auto"
+    return base
+
+
 def transcribe_audio_file(bot_cfg: dict, audio_path: str) -> dict:
     cfg = _speech_cfg(bot_cfg, "stt")
     provider = str(cfg.get("provider", "openai_compatible")).lower()

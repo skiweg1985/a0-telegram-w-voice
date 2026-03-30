@@ -14,7 +14,12 @@
 
 ### Changed
 
-- `/status`: flat one-line-per-topic layout (OpenClaw-style scan pattern); header with bot name; order Activity → models → context → voice → reply → project → session; combined reply overrides; friendlier `unknown` / `other (custom)` model fields.
+- `/status`: Voice line shows effective reply mode (`replies`) instead of `voice default`; Reply line uses `chat` instead of `overrides`, with concise extras. Tool detail is labeled **verbose** when the internal level is `debug`.
+- `/detail`: user-facing name **verbose** for the highest level (config value and slash `debug` still work); inline button **Verbose**.
+- `/tts` and `/optimize_output` (no argument): status text without “plugin default” / `session=` meta; short confirmations for `/tts`.
+- `speech.effective_voice_reply_mode()` and `detail_status.detail_level_display()` for consistent effective/display values.
+
+- `/status`: flat one-line-per-topic layout (OpenClaw-style scan pattern); header with bot name; order Activity → models → context → voice → reply → project → session; combined reply chat extras; friendlier `unknown` / `other (custom)` model fields.
 - `/detail info` no longer shows a bare `Step: tool_name` line; it now displays an emoji prefix followed by the configured label (same visual treatment as debug, minus the JSON block).
 
 ### Added (previous)

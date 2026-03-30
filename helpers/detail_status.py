@@ -39,7 +39,17 @@ _DEFAULT_MAX_BODY_CHARS = 3200
 
 def normalize_detail_level(value: Any) -> str:
     s = str(value if value is not None else "off").strip().lower()
+    if s == "verbose":
+        return "debug"
     return s if s in DETAIL_LEVELS else "off"
+
+
+def detail_level_display(level: str) -> str:
+    """User-facing label: internal level ``debug`` is shown as ``verbose``."""
+    s = normalize_detail_level(level)
+    if s == "debug":
+        return "verbose"
+    return s
 
 
 def effective_detail_level(bot_cfg: dict, ctx_data: dict) -> str:

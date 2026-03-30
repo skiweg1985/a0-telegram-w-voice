@@ -139,34 +139,26 @@ def _tts_inline_keyboard() -> list[list[dict]]:
     ]
 
 
-def _tts_session_description(ctx: AgentContext) -> str:
-    cur = ctx.data.get(CTX_TG_TTS_OVERRIDE)
-    if cur is None:
-        return "following plugin config"
-    if cur == "off":
-        return "muted for this session"
-    if cur == "auto":
-        return "auto (voice after voice input)"
-    if cur == "force":
-        return "force (voice when TTS enabled)"
-    return str(cur)
+def _tts_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
+    return speech.effective_voice_reply_mode(bot_cfg, ctx.data)
 
 
-def _apply_tts_setting(ctx: AgentContext, mode: str) -> str:
+def _apply_tts_setting(ctx: AgentContext, mode: str, bot_cfg: dict) -> str:
     """Apply on|off|auto|force (mutates ctx.data). Returns user-facing reply."""
     mode = mode.strip().lower()
     if mode in ("on", "enable"):
         ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
-        return "Voice replies: follow plugin config."
+        eff = speech.effective_voice_reply_mode(bot_cfg, ctx.data)
+        return f"Voice replies: {eff}."
     if mode in ("off", "disable"):
         ctx.data[CTX_TG_TTS_OVERRIDE] = "off"
-        return "Voice replies: off for this session."
+        return "Voice replies: off."
     if mode == "auto":
         ctx.data[CTX_TG_TTS_OVERRIDE] = "auto"
-        return "Voice mode: auto (reply with voice only after voice input)."
+        return "Voice replies: auto."
     if mode == "force":
         ctx.data[CTX_TG_TTS_OVERRIDE] = "force"
-        return "Voice mode: force (voice replies when TTS is enabled)."
+        return "Voice replies: force."
     return "Usage: /tts on|off|auto|force"
 
 
@@ -178,7 +170,7 @@ def _detail_inline_keyboard() -> list[list[dict]]:
             {"text": "Info", "callback_data": f"{p}d|info"},
         ],
         [
-            {"text": "Debug", "callback_data": f"{p}d|debug"},
+            {"text": "Verbose", "callback_data": f"{p}d|debug"},
             {"text": "Reset", "callback_data": f"{p}d|reset"},
         ],
     ]
@@ -186,22 +178,21 @@ def _detail_inline_keyboard() -> list[list[dict]]:
 
 def _detail_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
     eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
-    sess = ctx.data.get(CTX_TG_DETAIL_LEVEL_SESSION)
-    if sess is None:
-        return f"{eff} (bot default)"
-    return f"{eff} (session override)"
+    return detail_status.detail_level_display(eff)
 
 
 def _apply_detail_level(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
     arg = arg.strip().lower()
+    if arg == "verbose":
+        arg = "debug"
     if arg in ("reset", "default"):
         ctx.data.pop(CTX_TG_DETAIL_LEVEL_SESSION, None)
         eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
-        return f"Detail level: follow bot default ({eff})."
+        return f"Detail level: {detail_status.detail_level_display(eff)}."
     if arg in ("off", "info", "debug"):
         ctx.data[CTX_TG_DETAIL_LEVEL_SESSION] = arg
-        return f"Detail level set to: {arg}."
-    return "Usage: /detail off|info|debug — or /detail reset"
+        return f"Detail level: {detail_status.detail_level_display(arg)}."
+    return "Usage: /detail off|info|verbose or /detail reset — alias: debug"
 
 
 def _project_names_ordered() -> list[str]:
@@ -252,7 +243,7 @@ def _apply_output_optimize_mode(ctx: AgentContext, bot_cfg: dict, arg: str) -> s
     if arg in ("reset", "default"):
         ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
         eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
-        return f"Output optimize: reset to bot default ({eff})."
+        return f"Output optimize: {eff}."
     if arg == "off":
         ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "off"
         return "Output optimize: off (no extra style snippet)."
@@ -476,7 +467,7 @@ async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
 
 
 async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
-    """Handle /tts — per-session voice reply override."""
+    """Handle /tts — per-session voice reply mode."""
     user = message.from_user
     if not user or not _is_allowed(bot_cfg, user.id, user.username):
         return
@@ -489,7 +480,7 @@ async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     arg = _cmd_rest(message).lower().strip()
     if not arg:
-        desc = _tts_session_description(ctx)
+        desc = _tts_session_description(ctx, bot_cfg)
         reply = (
             f"Voice replies: {desc}.\n"
             "Tap a button or type /tts on|off|auto|force"
@@ -502,13 +493,13 @@ async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     if arg in ("on", "enable"):
-        reply = _apply_tts_setting(ctx, "on")
+        reply = _apply_tts_setting(ctx, "on", bot_cfg)
     elif arg in ("off", "disable"):
-        reply = _apply_tts_setting(ctx, "off")
+        reply = _apply_tts_setting(ctx, "off", bot_cfg)
     elif arg == "auto":
-        reply = _apply_tts_setting(ctx, "auto")
+        reply = _apply_tts_setting(ctx, "auto", bot_cfg)
     elif arg == "force":
-        reply = _apply_tts_setting(ctx, "force")
+        reply = _apply_tts_setting(ctx, "force", bot_cfg)
     else:
         reply = "Usage: /tts on|off|auto|force"
 
@@ -517,7 +508,7 @@ async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
 
 
 async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
-    """Handle /detail — per-session tool status verbosity: off | info | debug."""
+    """Handle /detail — per-session tool status verbosity: off | info | verbose (internal: debug)."""
     user = message.from_user
     if not user or not _is_allowed(bot_cfg, user.id, user.username):
         return
@@ -533,7 +524,7 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
         desc = _detail_session_description(ctx, bot_cfg)
         reply = (
             f"Tool detail: {desc}.\n"
-            "Tap a button or type /detail off|info|debug or /detail reset"
+            "Tap a button or type /detail off|info|verbose or /detail reset"
         )
         kb = _detail_inline_keyboard()
         save_tmp_chat(ctx)
@@ -574,13 +565,8 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
 
     if base == "/optimize_output" and not arg:
         eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
-        stored = ctx.data.get(CTX_TG_OUTPUT_OPTIMIZE)
-        if stored is None:
-            src = "bot default"
-        else:
-            src = f"session={stored!r}"
         reply = (
-            f"Output optimize: {eff} ({src}).\n"
+            f"Output optimize: {eff}.\n"
             "Tap a button or type: voice | text | off | reset\n"
             "/speakstyle — shortcut for voice; /speakstyle off"
         )
@@ -620,7 +606,7 @@ def _status_model_code(provider: str, name: str, esc) -> str:
     return f"<code>{p}</code>/<code>{n}</code>"
 
 
-def _status_reply_overrides_summary(
+def _status_reply_chat_extras(
     opt_raw: object,
     det_sess: object,
     esc,
@@ -628,12 +614,14 @@ def _status_reply_overrides_summary(
     has_opt = opt_raw is not None
     has_det = det_sess is not None
     if not has_opt and not has_det:
-        return "<i>none (bot default)</i>"
+        return "<i>none</i>"
     parts: list[str] = []
     if has_opt:
         parts.append(f"shaping <code>{esc(opt_raw)}</code>")
     if has_det:
-        parts.append(f"detail <code>{esc(det_sess)}</code>")
+        parts.append(
+            f"detail <code>{esc(detail_status.detail_level_display(str(det_sess)))}</code>"
+        )
     return " · ".join(parts)
 
 
@@ -695,23 +683,24 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
             f"~{win_tokens} prompt (est.) · {agent.history.counter} msgs"
         )
 
-        sess = ctx.data.get(CTX_TG_TTS_OVERRIDE)
-        sess_disp = "default" if sess is None else esc(str(sess))
+        vm = speech.effective_voice_reply_mode(bot_cfg, ctx.data)
         tts_ic = "✅" if speech.tts_enabled(bot_cfg) else "❌"
         stt_ic = "✅" if speech.stt_enabled(bot_cfg) else "❌"
         lines.append(
             f"🔊 <b>Voice</b>: TTS {tts_ic} {_status_on_off(speech.tts_enabled(bot_cfg))} · "
-            f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))} · voice {sess_disp}"
+            f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))} · "
+            f"replies <code>{esc(vm)}</code>"
         )
 
         opt_eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
         opt_raw = ctx.data.get(CTX_TG_OUTPUT_OPTIMIZE)
         det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
+        det_eff_disp = detail_status.detail_level_display(det_eff)
         det_sess = ctx.data.get(CTX_TG_DETAIL_LEVEL_SESSION)
-        ov = _status_reply_overrides_summary(opt_raw, det_sess, esc)
+        ov = _status_reply_chat_extras(opt_raw, det_sess, esc)
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(opt_eff)}</code> · "
-            f"tool detail <code>{esc(det_eff)}</code> · overrides {ov}"
+            f"tool detail <code>{esc(det_eff_disp)}</code> · chat {ov}"
         )
 
         proj = projects.get_context_project_name(ctx)
@@ -727,14 +716,17 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
         tts_ic = "✅" if speech.tts_enabled(bot_cfg) else "❌"
         stt_ic = "✅" if speech.stt_enabled(bot_cfg) else "❌"
+        vm = speech.effective_voice_reply_mode(bot_cfg, {})
         lines.append(
-            f"🔊 <b>Voice</b> (defaults): TTS {tts_ic} {_status_on_off(speech.tts_enabled(bot_cfg))} · "
-            f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))}"
+            f"🔊 <b>Voice</b>: TTS {tts_ic} {_status_on_off(speech.tts_enabled(bot_cfg))} · "
+            f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))} · "
+            f"replies <code>{esc(vm)}</code>"
         )
         def_det = detail_status.normalize_detail_level(bot_cfg.get("telegram_detail_level"))
+        def_det_disp = detail_status.detail_level_display(def_det)
         lines.append(
-            f"⚙️ <b>Reply</b> (defaults): shaping <code>{esc(speech.optimize_output_default(bot_cfg))}</code> · "
-            f"tool detail <code>{esc(def_det)}</code>"
+            f"⚙️ <b>Reply</b>: shaping <code>{esc(speech.optimize_output_default(bot_cfg))}</code> · "
+            f"tool detail <code>{esc(def_det_disp)}</code>"
         )
 
     text = header + "\n\n" + "\n".join(lines)
@@ -1127,7 +1119,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             if payload not in ("on", "off", "auto", "force"):
                 await query.answer("Unknown option.")
                 return
-            reply = _apply_tts_setting(context, payload)
+            reply = _apply_tts_setting(context, payload, bot_cfg)
             save_tmp_chat(context)
             await query.answer("OK")
             await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
