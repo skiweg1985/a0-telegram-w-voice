@@ -1,5 +1,28 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – voice_mode auto vs response voice=true
+
+- Done:
+  - `send_telegram_reply`: `forced_flag` (response tool `voice=true`) setzt bei Basis-Modus **auto** kein **force** mehr; Abgleich mit `effective_voice_reply_mode` / `/status`.
+  - `docs/CHANGELOG.md` [Unreleased] / Fixed ergänzt.
+- Next:
+  - Smoke: `speech.reply.voice_mode: auto`, Antwort mit `voice: true` → TTS nur bei Voice-Input (auto), nicht immer.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py`
+- Changelog updated:
+  - yes (Unreleased / Fixed)
+- Follow-ups:
+  - none
+
 ## 2026-03-30 – Cursor – Status-/Detail-/TTS-Copy
 
 - Done:

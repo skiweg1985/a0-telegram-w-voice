@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Voice reply mode **auto** (`speech.reply.voice_mode` or `/tts auto`): the `response` tool flag `voice=true` no longer upgrades the effective mode to **force**, so `/status` (`replies auto`) matches actual TTS behaviour. Agent can still force voice when the configured mode is **off** (single-reply override) or when `voice_mode` is set to **force** on the tool.
 - `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
 
 ### Changed

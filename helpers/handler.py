@@ -1594,7 +1594,10 @@ async def send_telegram_reply(
     forced_flag = bool(context.data.pop(CTX_TG_FORCE_VOICE_REPLY, False))
 
     mode = str(override_mode if override_mode in {"off", "auto", "force"} else reply_cfg["voice_mode"]).lower()
-    if forced_flag:
+    # response-tool arg voice=true sets forced_flag. That must not upgrade bot/session
+    # voice_mode "auto" to "force", or /status (effective_voice_reply_mode) and actual
+    # TTS disagree. Still allow voice=true to override explicit "off" for a single reply.
+    if forced_flag and mode != "auto":
         mode = "force"
 
     session_voice = context.data.get(CTX_TG_TTS_OVERRIDE)
