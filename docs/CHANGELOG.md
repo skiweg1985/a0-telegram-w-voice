@@ -10,7 +10,6 @@
 
 ### Fixed
 
-- **Plugin external config vs. existing Telegram chats**: `telegram_bot_cfg` on the agent context was only set when the chat was first created, so changes under Plugin settings (STT/TTS URLs, `voice_mode` defaults, progress, detail defaults, etc.) had no effect until `/newchat` or a new user. Existing sessions now refresh the stored bot config on every message or callback so UI changes apply without losing the conversation.
 - **`also_send_text`**: If the model only fills `voice_text` (TTS) and leaves `text` empty, Telegram now still sends a text bubble when **Also send text** is enabled (uses `voice_text` as fallback). Config value `also_send_text` is parsed robustly (strings like `"false"` no longer behave like Python `bool("false") == True`).
 - `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
 
@@ -44,6 +43,12 @@
 - `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.
 - `/status` layout: grouped blocks (Models, Tokens &amp; history, Project, Voice, Reply options, Activity, Session ID) with blank lines between sections; one line per metric where possible; clearer labels (e.g. tool-step lines, output shaping, override bullets).
 - Tool detail status lines (`/detail info|debug`) now go through progress message editing, so the chat can update one message in place instead of posting a new line per step.
+
+## [0.11.2] - 2026-03-30
+
+### Fixed
+
+- **Plugin external config vs. existing Telegram chats**: `telegram_bot_cfg` on the agent context was only set when the chat was first created, so changes under Plugin settings (STT/TTS URLs, `voice_mode` defaults, progress, detail defaults, etc.) had no effect until `/newchat` or a new user. Existing sessions now refresh the stored bot config on every message or callback so UI changes apply without losing the conversation.
 
 ## [0.11.1] - 2026-03-30
 

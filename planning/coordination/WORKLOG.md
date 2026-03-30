@@ -1,5 +1,25 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – Release 0.11.2 (plugin.yaml + Changelog)
+
+- Done:
+  - `plugin.yaml` Version `0.11.1` → `0.11.2` (Patch: `telegram_bot_cfg` Refresh).
+  - `docs/CHANGELOG.md`: Abschnitt `[0.11.2] - 2026-03-30`; Eintrag aus [Unreleased] Fixed nach unten verschoben.
+  - `git push origin main` (Commit mit Fix + Release-Metadaten).
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - plugin.yaml
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Changelog updated:
+  - yes ([0.11.2])
+
 ## 2026-03-30 12:00 – Cursor – Plugin-Settings: telegram_bot_cfg bei bestehenden Chats aktualisieren
 
 - Done:

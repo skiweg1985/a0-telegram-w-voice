@@ -1,7 +1,7 @@
 name: telegram_integration_voice
 title: Telegram Integration (Voice)
 description: Telegram integration for Agent Zero with polling/webhook, per-user sessions, and pluggable STT/TTS (OpenAI-compatible, LiteLLM, ElevenLabs, custom endpoints).
-version: 0.11.1
+version: 0.11.2
 settings_sections:
   - external
 per_project_config: false
