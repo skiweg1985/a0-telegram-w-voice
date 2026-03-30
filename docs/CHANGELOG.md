@@ -14,6 +14,7 @@
 
 ### Changed
 
+- `/status`: flat one-line-per-topic layout (OpenClaw-style scan pattern); header with bot name; order Activity → models → context → voice → reply → project → session; combined reply overrides; friendlier `unknown` / `other (custom)` model fields.
 - `/detail info` no longer shows a bare `Step: tool_name` line; it now displays an emoji prefix followed by the configured label (same visual treatment as debug, minus the JSON block).
 
 ### Added (previous)

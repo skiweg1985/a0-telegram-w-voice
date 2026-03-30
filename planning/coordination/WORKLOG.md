@@ -1,5 +1,30 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 – Cursor – /status OpenClaw-style layout
+
+- Done:
+  - `handle_status` in `helpers/handler.py`: flache Zeilenliste (ein Thema pro Zeile), Header mit Bot-Name, Reihenfolge Activity → Chat/Utility → Context → Voice → Reply → Project → Session; Overrides in einer Zeile; Hilfsfunktionen für Modell-Anzeige und Overrides.
+  - `docs/CHANGELOG.md` [Unreleased] / Changed ergänzt.
+- Next:
+  - Manuelles `/status` in Telegram nach Deploy.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py`
+  - endpoints: none
+  - UI path: Telegram `/status` mit und ohne Session
+- Changelog updated:
+  - yes (Unreleased / Changed)
+- Follow-ups:
+  - none
+
 ## 2026-03-29 – Cursor – Step icons, labels, 4096 guard
 
 - Done:

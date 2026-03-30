@@ -601,7 +601,40 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
 
 
 def _status_on_off(enabled: bool) -> str:
-    return "✅ on" if enabled else "❌ off"
+    return "on" if enabled else "off"
+
+
+def _status_humanize_model_field(raw: object) -> str:
+    s = str(raw or "").strip()
+    low = s.lower()
+    if low in ("?", ""):
+        return "unknown"
+    if low == "other":
+        return "other (custom)"
+    return s
+
+
+def _status_model_code(provider: str, name: str, esc) -> str:
+    p = esc(_status_humanize_model_field(provider))
+    n = esc(_status_humanize_model_field(name))
+    return f"<code>{p}</code>/<code>{n}</code>"
+
+
+def _status_reply_overrides_summary(
+    opt_raw: object,
+    det_sess: object,
+    esc,
+) -> str:
+    has_opt = opt_raw is not None
+    has_det = det_sess is not None
+    if not has_opt and not has_det:
+        return "<i>none (bot default)</i>"
+    parts: list[str] = []
+    if has_opt:
+        parts.append(f"shaping <code>{esc(opt_raw)}</code>")
+    if has_det:
+        parts.append(f"detail <code>{esc(det_sess)}</code>")
+    return " · ".join(parts)
 
 
 async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -617,8 +650,6 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     def esc(s: object) -> str:
         return html.escape(str(s))
-
-    sections: list[str] = []
 
     chat_cfg: dict = {}
     util_cfg: dict = {}
@@ -639,16 +670,13 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
     ctx_hist = float(chat_cfg.get("ctx_history", 0.7) or 0.7)
     hist_limit = int(ctx_len * ctx_hist) if ctx_len else 0
 
-    sections.append("🤖 <b>Agent status</b>")
-    sections.append(
-        "\n".join(
-            [
-                "<b>Models</b>",
-                f"🧠 Chat · <code>{esc(chat_provider)}</code> · <code>{esc(chat_name)}</code>",
-                f"🔧 Utility · <code>{esc(util_provider)}</code> · <code>{esc(util_name)}</code>",
-            ]
-        )
-    )
+    header = f"🤖 <b>Agent status</b>\n<code>{esc(bot_name)}</code>"
+    lines: list[str] = []
+
+    chat_m = _status_model_code(chat_provider, chat_name, esc)
+    util_m = _status_model_code(util_provider, util_name, esc)
+    lines.append(f"🧠 <b>Chat</b>: {chat_m}")
+    lines.append(f"🔧 <b>Utility</b>: {util_m}")
 
     if ctx:
         agent = ctx.agent0
@@ -656,101 +684,60 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         ctx_window = agent.get_data(Agent.DATA_NAME_CTX_WINDOW) or {}
         win_tokens = int((ctx_window.get("tokens") or 0))
         pct = (100.0 * hist_tokens / hist_limit) if hist_limit else 0.0
-        sections.append(
-            "\n".join(
-                [
-                    "<b>Tokens &amp; history</b>",
-                    f"📊 In history · ~{hist_tokens} / ~{hist_limit} tok ({pct:.1f}% of limit)",
-                    f"📐 Prompt window · ~{win_tokens} tok (approx.)",
-                    f"💬 Messages · {agent.history.counter}",
-                ]
-            )
+        hist_pct = f"{pct:.1f}%" if hist_limit else "n/a"
+        lines.insert(
+            0,
+            f"⚡ <b>Activity</b>: {'running' if ctx.is_running() else 'idle'} · paused "
+            f"{'yes' if ctx.paused else 'no'}",
         )
-        proj = projects.get_context_project_name(ctx)
-        proj_line = f"<code>{esc(proj)}</code>" if proj else "<i>none</i>"
-        sections.append("\n".join(["<b>Project</b>", f"📁 {proj_line}"]))
+        lines.append(
+            f"📚 <b>Context</b>: ~{hist_tokens} / ~{hist_limit} tok ({hist_pct}) · "
+            f"~{win_tokens} prompt (est.) · {agent.history.counter} msgs"
+        )
 
         sess = ctx.data.get(CTX_TG_TTS_OVERRIDE)
-        sess_disp = "<code>plugin default</code>" if sess is None else f"<code>{esc(sess)}</code>"
-        sections.append(
-            "\n".join(
-                [
-                    "<b>Voice</b>",
-                    f"🔊 TTS · {_status_on_off(speech.tts_enabled(bot_cfg))} · voice {sess_disp}",
-                    f"🎙 STT · {_status_on_off(speech.stt_enabled(bot_cfg))}",
-                ]
-            )
+        sess_disp = "default" if sess is None else esc(str(sess))
+        tts_ic = "✅" if speech.tts_enabled(bot_cfg) else "❌"
+        stt_ic = "✅" if speech.stt_enabled(bot_cfg) else "❌"
+        lines.append(
+            f"🔊 <b>Voice</b>: TTS {tts_ic} {_status_on_off(speech.tts_enabled(bot_cfg))} · "
+            f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))} · voice {sess_disp}"
         )
 
         opt_eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
         opt_raw = ctx.data.get(CTX_TG_OUTPUT_OPTIMIZE)
-        opt_override = (
-            "• Override · <i>none</i> (uses bot default)"
-            if opt_raw is None
-            else f"• Override · <code>{esc(opt_raw)}</code>"
-        )
         det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
         det_sess = ctx.data.get(CTX_TG_DETAIL_LEVEL_SESSION)
-        det_override = (
-            "• Override · <i>none</i> (uses bot default)"
-            if det_sess is None
-            else f"• Override · <code>{esc(det_sess)}</code>"
-        )
-        sections.append(
-            "\n".join(
-                [
-                    "<b>Reply options</b>",
-                    f"✨ Output shaping · <code>{esc(opt_eff)}</code>",
-                    opt_override,
-                    f"📋 Tool-step lines · <code>{esc(det_eff)}</code>",
-                    det_override,
-                ]
-            )
+        ov = _status_reply_overrides_summary(opt_raw, det_sess, esc)
+        lines.append(
+            f"⚙️ <b>Reply</b>: shaping <code>{esc(opt_eff)}</code> · "
+            f"tool detail <code>{esc(det_eff)}</code> · overrides {ov}"
         )
 
-        job_s = "▶️ running" if ctx.is_running() else "⏹ idle"
-        pause_s = "yes" if ctx.paused else "no"
-        sections.append(
-            "\n".join(
-                [
-                    "<b>Activity</b>",
-                    f"⚡ {job_s}",
-                    f"⏸ Paused · {pause_s}",
-                ]
-            )
-        )
-        sections.append("\n".join(["<b>Session ID</b>", f"🆔 <code>{esc(ctx.id)}</code>"]))
+        proj = projects.get_context_project_name(ctx)
+        proj_disp = f"<code>{esc(proj)}</code>" if proj else "<i>none</i>"
+        lines.append(f"📁 <b>Project</b>: {proj_disp}")
+
+        proj_hint = f" · <code>{esc(proj)}</code>" if proj else ""
+        lines.append(f"🧵 <b>Session</b>: <code>{esc(ctx.id)}</code>{proj_hint}")
     else:
-        sections.append(
-            "\n".join(
-                [
-                    "<b>Session</b>",
-                    "💤 <i>No active session.</i>",
-                    "Send a message or use /start.",
-                ]
-            )
+        lines.insert(
+            0,
+            "💤 <b>Session</b>: <i>no active session</i> — send a message or use /start",
         )
-        sections.append(
-            "\n".join(
-                [
-                    "<b>Voice (bot defaults)</b>",
-                    f"🔊 TTS · {_status_on_off(speech.tts_enabled(bot_cfg))}",
-                    f"🎙 STT · {_status_on_off(speech.stt_enabled(bot_cfg))}",
-                ]
-            )
+        tts_ic = "✅" if speech.tts_enabled(bot_cfg) else "❌"
+        stt_ic = "✅" if speech.stt_enabled(bot_cfg) else "❌"
+        lines.append(
+            f"🔊 <b>Voice</b> (defaults): TTS {tts_ic} {_status_on_off(speech.tts_enabled(bot_cfg))} · "
+            f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))}"
         )
-        sections.append(
-            "\n".join(
-                [
-                    "<b>Defaults (no session yet)</b>",
-                    f"✨ Output shaping · <code>{esc(speech.optimize_output_default(bot_cfg))}</code>",
-                    f"📋 Tool-step lines · "
-                    f"<code>{esc(detail_status.normalize_detail_level(bot_cfg.get('telegram_detail_level')))}</code>",
-                ]
-            )
+        def_det = detail_status.normalize_detail_level(bot_cfg.get("telegram_detail_level"))
+        lines.append(
+            f"⚙️ <b>Reply</b> (defaults): shaping <code>{esc(speech.optimize_output_default(bot_cfg))}</code> · "
+            f"tool detail <code>{esc(def_det)}</code>"
         )
 
-    text = "\n\n".join(sections)
+    text = header + "\n\n" + "\n".join(lines)
     await _send_with_temp_bot(
         instance.bot.token, message.chat.id, text, parse_mode=ParseMode.HTML
     )
