@@ -7,7 +7,6 @@
 - Emoji icons and human-readable labels for `/detail info` and `/detail debug` steps (e.g. memory tools show a brain icon, code execution a laptop). Icons are resolved by exact match, prefix-before-colon, then prefix rules with a built-in map and configurable overrides.
 - New bot config keys: `telegram_detail_icons_enabled` (default true), `telegram_detail_tool_icons` (override map), `telegram_detail_max_body_chars` (debug JSON truncation limit, default 3200).
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
-- New slash command `/alsotext [on|off|reset]` with inline buttons to toggle `also_send_text` per chat session without editing YAML.
 
 ### Fixed
 
@@ -21,10 +20,6 @@
 - `/detail`: user-facing name **verbose** for the highest level (config value and slash `debug` still work); inline button **Verbose**.
 - `/tts` and `/optimize_output` (no argument): status text without “plugin default” / `session=` meta; short confirmations for `/tts`.
 - `speech.effective_voice_reply_mode()` and `detail_status.detail_level_display()` for consistent effective/display values.
-- `optimize_output` now supports `auto` (`/optimize_output auto` and config default), which resolves per turn to `voice` or `text` based on effective voice-reply behavior (`force` always voice; `auto` follows last input type).
-- Telegram system-prompt shaping is now dynamic: voice/text optimize snippets receive the resolved `also_send_text` status, so the model can intentionally separate `text` (readable) and `voice_text` (speakable summary).
-- `/status` Reply line now includes effective `also text` (`on`/`off`) in addition to shaping and tool-detail mode.
-- When sending replies, `also_send_text` now uses effective session-aware behavior (config plus `/alsotext` override), not only static YAML.
 
 - `/status`: flat one-line-per-topic layout (OpenClaw-style scan pattern); header with bot name; order Activity → models → context → voice → reply → project → session; combined reply chat extras; friendlier `unknown` / `other (custom)` model fields.
 - `/detail info` no longer shows a bare `Step: tool_name` line; it now displays an emoji prefix followed by the configured label (same visual treatment as debug, minus the JSON block).
@@ -48,6 +43,19 @@
 - `/status` reply: section icons (model, utility, history, TTS/STT, …), bold labels via HTML, monospace for IDs/models, clearer run/pause line; dynamic values HTML-escaped.
 - `/status` layout: grouped blocks (Models, Tokens &amp; history, Project, Voice, Reply options, Activity, Session ID) with blank lines between sections; one line per metric where possible; clearer labels (e.g. tool-step lines, output shaping, override bullets).
 - Tool detail status lines (`/detail info|debug`) now go through progress message editing, so the chat can update one message in place instead of posting a new line per step.
+
+## [0.11.3] - 2026-03-30
+
+### Added
+
+- New slash command `/alsotext [on|off|reset]` with inline buttons to toggle `also_send_text` per chat session without editing YAML.
+
+### Changed
+
+- `optimize_output` now supports `auto` (`/optimize_output auto` and config default), which resolves per turn to `voice` or `text` based on effective voice-reply behavior (`force` always voice; `auto` follows last input type).
+- Telegram system-prompt shaping is now dynamic: voice/text optimize snippets receive the resolved `also_send_text` status, so the model can intentionally separate `text` (readable) and `voice_text` (speakable summary).
+- `/status` Reply line now includes effective `also text` (`on`/`off`) in addition to shaping and tool-detail mode.
+- When sending replies, `also_send_text` now uses effective session-aware behavior (config plus `/alsotext` override), not only static YAML.
 
 ## [0.11.2] - 2026-03-30
 

@@ -332,3 +332,29 @@
   - yes ([Unreleased] Added/Changed)
 - Follow-ups:
   - Optional: WebUI-Dropdown fuer `optimize_output=auto` und Session-`alsotext` Sichtbarkeit in Config-UI.
+
+## 2026-03-30 09:44 – Cursor – Release 0.11.3 (plugin.yaml + Changelog)
+
+- Done:
+  - `plugin.yaml` Version `0.11.2` → `0.11.3` angehoben.
+  - `docs/CHANGELOG.md`: neuer Abschnitt `[0.11.3] - 2026-03-30` (Added/Changed) erstellt und die zugehoerigen Punkte aus `[Unreleased]` verschoben.
+  - Push auf `origin/main`.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - plugin.yaml
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: none (release metadata only)
+  - endpoints: none
+  - UI path: none
+- Changelog updated:
+  - yes ([0.11.3])
+- Follow-ups:
+  - none
