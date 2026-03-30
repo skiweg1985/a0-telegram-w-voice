@@ -24,16 +24,25 @@ class TelegramContextPrompt(Extension):
             )
 
             bot_cfg = self.agent.context.data.get(CTX_TG_BOT_CFG, {}) or {}
-            mode = speech.effective_output_optimize_mode(
+            mode = speech.resolve_auto_optimize_mode(
+                bot_cfg, self.agent.context.data,
+            )
+            also_text = speech.effective_also_send_text(
                 bot_cfg, self.agent.context.data,
             )
             if mode == "voice":
                 system_prompt.append(
-                    self.agent.read_prompt("fw.telegram.optimize_output_voice.md")
+                    self.agent.read_prompt(
+                        "fw.telegram.optimize_output_voice.md",
+                        also_send_text=also_text,
+                    )
                 )
             elif mode == "text":
                 system_prompt.append(
-                    self.agent.read_prompt("fw.telegram.optimize_output_text.md")
+                    self.agent.read_prompt(
+                        "fw.telegram.optimize_output_text.md",
+                        also_send_text=also_text,
+                    )
                 )
 
             # Inject per-bot agent instructions (once in system prompt)

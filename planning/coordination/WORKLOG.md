@@ -294,3 +294,41 @@
   - yes (Unreleased / Changed)
 - Follow-ups:
   - none
+
+## 2026-03-30 09:40 – Cursor – Voice/Text Auto + /alsotext Session Toggle
+
+- Done:
+  - `optimize_output` um `auto` erweitert (`speech.py`, `handler.py`, Prompt-Injection): pro Turn automatische Aufloesung in voice/text anhand effektivem Voice-Modus und Input-Typ.
+  - Neuer Session-Override fuer `also_send_text` mit Key `telegram_also_send_text_session` und Resolver `effective_also_send_text`.
+  - Neuer Slash-Command `/alsotext [on|off|reset]` inkl. Inline-Buttons und Callback-Handling.
+  - `send_telegram_reply` auf session-aware `also_send_text` umgestellt.
+  - Prompts `fw.telegram.optimize_output_voice.md` und `fw.telegram.optimize_output_text.md` auf klare Trennung `text` vs `voice_text` angepasst (inkl. `also_send_text`-Kontext).
+  - `/status` Reply-Zeile zeigt jetzt `also text on/off`.
+  - `default_config.yaml` Kommentar aktualisiert (empfohlener Default `optimize_output_default: auto`).
+- Next:
+  - Telegram Smoke-Test: `/optimize_output auto`, `/tts auto|force`, `/alsotext on|off|reset`, danach Voice/Text-Ausgabe vergleichen.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/constants.py
+  - helpers/speech.py
+  - helpers/handler.py
+  - helpers/command_registry.py
+  - extensions/python/system_prompt/_20_telegram_context.py
+  - extensions/python/job_loop/_10_telegram_bot.py
+  - prompts/fw.telegram.optimize_output_voice.md
+  - prompts/fw.telegram.optimize_output_text.md
+  - default_config.yaml
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py helpers/speech.py extensions/python/system_prompt/_20_telegram_context.py extensions/python/job_loop/_10_telegram_bot.py`
+  - endpoints: none
+  - UI path: Telegram Chat (`/status`, `/optimize_output`, `/tts`, `/alsotext`)
+- Changelog updated:
+  - yes ([Unreleased] Added/Changed)
+- Follow-ups:
+  - Optional: WebUI-Dropdown fuer `optimize_output=auto` und Session-`alsotext` Sichtbarkeit in Config-UI.

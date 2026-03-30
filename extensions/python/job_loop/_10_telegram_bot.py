@@ -65,6 +65,7 @@ class TelegramBotManager(Extension):
         cleanup_old_attachments = _tg_handler.cleanup_old_attachments
 
         handle_optimize_output = getattr(_tg_handler, "handle_optimize_output", None)
+        handle_also_text = getattr(_tg_handler, "handle_also_text", None)
         if handle_optimize_output is None and not _MISSING_OPTIMIZE_HANDLER_WARNED:
             _MISSING_OPTIMIZE_HANDLER_WARNED = True
             PrintStyle.warning(
@@ -115,6 +116,11 @@ class TelegramBotManager(Extension):
                     if handle_optimize_output
                     else None
                 )
+                _on_also_text = (
+                    partial(_make_handler(handle_also_text), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_also_text
+                    else None
+                )
                 _on_status = partial(_make_handler(handle_status), bot_name=name, bot_cfg=bot_cfg)
                 _on_compact = partial(_make_handler(handle_compact), bot_name=name, bot_cfg=bot_cfg)
                 _on_stop = partial(_make_handler(handle_stop), bot_name=name, bot_cfg=bot_cfg)
@@ -139,6 +145,8 @@ class TelegramBotManager(Extension):
                             ("speakstyle", _on_optimize),
                         ]
                     )
+                if _on_also_text:
+                    _extra_commands.append(("alsotext", _on_also_text))
                 _extra_commands.extend(
                     [
                         ("status", _on_status),

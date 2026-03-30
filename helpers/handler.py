@@ -50,6 +50,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_VOICE_TEXT,
     CTX_TG_DETAIL_LEVEL_SESSION,
     CTX_TG_DETAIL_LAST_SENT_TS,
+    CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     TG_UI_CALLBACK_PREFIX,
 )
 
@@ -106,6 +107,7 @@ def _optimize_output_inline_keyboard() -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     return [
         [
+            {"text": "Auto", "callback_data": f"{p}o|auto"},
             {"text": "Voice", "callback_data": f"{p}o|voice"},
             {"text": "Text", "callback_data": f"{p}o|text"},
         ],
@@ -237,8 +239,35 @@ def _model_preset_inline_keyboard(preset_names: list[str]) -> list[list[dict]]:
     return rows
 
 
+def _also_text_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "On", "callback_data": f"{p}a|on"},
+            {"text": "Off", "callback_data": f"{p}a|off"},
+            {"text": "Reset", "callback_data": f"{p}a|reset"},
+        ],
+    ]
+
+
+def _apply_also_text_setting(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
+    """Apply on|off|reset for also_send_text session override. Returns user-facing reply."""
+    arg = arg.strip().lower()
+    if arg in ("reset", "default"):
+        ctx.data.pop(CTX_TG_ALSO_SEND_TEXT_OVERRIDE, None)
+        eff = speech.effective_also_send_text(bot_cfg, ctx.data)
+        return f"Also send text: {'on' if eff else 'off'}."
+    if arg in ("on", "enable", "yes"):
+        ctx.data[CTX_TG_ALSO_SEND_TEXT_OVERRIDE] = "on"
+        return "Also send text: on."
+    if arg in ("off", "disable", "no"):
+        ctx.data[CTX_TG_ALSO_SEND_TEXT_OVERRIDE] = "off"
+        return "Also send text: off."
+    return "Usage: /alsotext on|off|reset"
+
+
 def _apply_output_optimize_mode(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
-    """Apply voice/text/off/reset; returns user-facing reply (mutates ctx.data)."""
+    """Apply auto/voice/text/off/reset; returns user-facing reply (mutates ctx.data)."""
     arg = arg.strip().lower()
     if arg in ("reset", "default"):
         ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
@@ -247,13 +276,16 @@ def _apply_output_optimize_mode(ctx: AgentContext, bot_cfg: dict, arg: str) -> s
     if arg == "off":
         ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "off"
         return "Output optimize: off (no extra style snippet)."
+    if arg == "auto":
+        ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "auto"
+        return "Output optimize: auto (follows voice mode per turn)."
     if arg == "voice":
         ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "voice"
         return "Output optimize: voice (TTS-friendly)."
     if arg == "text":
         ctx.data[CTX_TG_OUTPUT_OPTIMIZE] = "text"
         return "Output optimize: text (Telegram reading)."
-    return "Usage: /optimize_output voice|text|off|reset — or /speakstyle (/speakstyle off)"
+    return "Usage: /optimize_output auto|voice|text|off|reset — or /speakstyle (/speakstyle off)"
 
 
 def _telegram_command_base(message: TgMessage) -> str:
@@ -567,7 +599,7 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
         eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
         reply = (
             f"Output optimize: {eff}.\n"
-            "Tap a button or type: voice | text | off | reset\n"
+            "Tap a button or type: auto | voice | text | off | reset\n"
             "/speakstyle — shortcut for voice; /speakstyle off"
         )
         kb = _optimize_output_inline_keyboard()
@@ -577,10 +609,46 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
         )
         return
 
-    if arg in ("reset", "default", "off", "voice", "text"):
+    if arg in ("reset", "default", "off", "auto", "voice", "text"):
         reply = _apply_output_optimize_mode(ctx, bot_cfg, arg)
     else:
-        reply = "Usage: /optimize_output voice|text|off|reset — or /speakstyle (/speakstyle off)"
+        reply = "Usage: /optimize_output auto|voice|text|off|reset — or /speakstyle (/speakstyle off)"
+
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+
+
+async def handle_also_text(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /alsotext — toggle also_send_text per session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message).lower()
+
+    if not arg:
+        eff = speech.effective_also_send_text(bot_cfg, ctx.data)
+        reply = (
+            f"Also send text: {'on' if eff else 'off'}.\n"
+            "Tap a button or type: on | off | reset"
+        )
+        kb = _also_text_inline_keyboard()
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
+        )
+        return
+
+    if arg in ("reset", "default", "on", "enable", "yes", "off", "disable", "no"):
+        reply = _apply_also_text_setting(ctx, bot_cfg, arg)
+    else:
+        reply = "Usage: /alsotext on|off|reset"
 
     save_tmp_chat(ctx)
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
@@ -674,10 +742,12 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
 
         opt_eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
+        also_eff = speech.effective_also_send_text(bot_cfg, ctx.data)
         det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
         det_eff_disp = detail_status.detail_level_display(det_eff)
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(opt_eff)}</code> · "
+            f"also text <code>{'on' if also_eff else 'off'}</code> · "
             f"tool detail <code>{esc(det_eff_disp)}</code>"
         )
 
@@ -1054,12 +1124,22 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
 
         if kind == "o":
-            if payload not in ("voice", "text", "off", "reset"):
+            if payload not in ("auto", "voice", "text", "off", "reset"):
                 await query.answer("Unknown option.")
                 return
             reply = _apply_output_optimize_mode(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("Updated")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "a":
+            if payload not in ("on", "off", "reset"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_also_text_setting(context, bot_cfg, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
             await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
             return
 
@@ -1640,7 +1720,7 @@ async def send_telegram_reply(
                         with suppress(Exception):
                             os.remove(voice_file)
 
-            also = reply_cfg["also_send_text"]
+            also = speech.effective_also_send_text(bot_cfg, context.data)
             # If the agent only set voice_text (TTS) and left text empty, response_text is
             # empty but users still expect a text bubble when also_send_text is on.
             text_body = (response_text or "").strip()

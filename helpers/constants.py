@@ -27,8 +27,12 @@ CTX_TG_PROGRESS_LAST_TS = "_telegram_progress_last_ts"
 CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
 
 # Per-session response style for system prompt: missing = use speech.reply.optimize_output_default;
-# "voice" | "text" | explicit "off" (no optimize snippet).
+# "auto" | "voice" | "text" | explicit "off" (no optimize snippet).
 CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
+
+# Per-session also_send_text override: None = use plugin config; "on" / "off".
+# Key without "_" prefix so persist_chat includes it in chat.json.
+CTX_TG_ALSO_SEND_TEXT_OVERRIDE = "telegram_also_send_text_session"
 
 # Per-session tool-status detail: missing = use bot telegram_detail_level; off | info | debug.
 CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"

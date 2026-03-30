@@ -66,22 +66,53 @@ def voice_reply_settings(bot_cfg: dict) -> dict:
 
 
 def optimize_output_default(bot_cfg: dict) -> str:
-    """Bot default for /optimize_output when session has no override: off | voice | text."""
+    """Bot default for /optimize_output when session has no override: off | voice | text | auto."""
     reply = (bot_cfg.get("speech") or {}).get("reply") or {}
     raw = str(reply.get("optimize_output_default", "off")).strip().lower()
-    return raw if raw in ("off", "voice", "text") else "off"
+    return raw if raw in ("off", "voice", "text", "auto") else "off"
 
 
 def effective_output_optimize_mode(bot_cfg: dict, ctx_data: dict) -> str:
-    """Resolved optimize mode: explicit session off/voice/text, else bot default."""
+    """Resolved optimize mode: explicit session value, else bot default.
+
+    May return ``"auto"`` -- callers that need a concrete voice/text decision
+    should pass the result through :func:`resolve_auto_optimize_mode`.
+    """
     from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_OUTPUT_OPTIMIZE
 
     v = ctx_data.get(CTX_TG_OUTPUT_OPTIMIZE)
     if v == "off":
         return "off"
-    if v in ("voice", "text"):
+    if v in ("voice", "text", "auto"):
         return v
     return optimize_output_default(bot_cfg)
+
+
+def resolve_auto_optimize_mode(bot_cfg: dict, ctx_data: dict) -> str:
+    """Resolve ``"auto"`` into ``"voice"`` or ``"text"`` based on whether
+    a voice reply is expected for the current turn.  Non-auto values pass through."""
+    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_LAST_INPUT_WAS_VOICE
+
+    mode = effective_output_optimize_mode(bot_cfg, ctx_data)
+    if mode != "auto":
+        return mode
+
+    eff_voice = effective_voice_reply_mode(bot_cfg, ctx_data)
+    last_was_voice = bool(ctx_data.get(CTX_TG_LAST_INPUT_WAS_VOICE, False))
+    will_voice = eff_voice == "force" or (eff_voice == "auto" and last_was_voice)
+    return "voice" if will_voice else "text"
+
+
+def effective_also_send_text(bot_cfg: dict, ctx_data: dict) -> bool:
+    """Resolved also_send_text: session override wins, else config default."""
+    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_ALSO_SEND_TEXT_OVERRIDE
+
+    sess = ctx_data.get(CTX_TG_ALSO_SEND_TEXT_OVERRIDE)
+    if sess == "on":
+        return True
+    if sess == "off":
+        return False
+    return voice_reply_settings(bot_cfg)["also_send_text"]
 
 
 def effective_voice_reply_mode(bot_cfg: dict, ctx_data: dict) -> str:

@@ -59,6 +59,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/tts [on|off|auto|force] — no arg = session + buttons",
     ),
     (
+        "alsotext",
+        "Text alongside voice",
+        "/alsotext [on|off|reset] — send text with voice reply",
+    ),
+    (
         "compact",
         "Compress context",
         "/compact — shrink history (utility LLM)",
