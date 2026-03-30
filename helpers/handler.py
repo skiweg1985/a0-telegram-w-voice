@@ -1220,6 +1220,9 @@ async def _get_or_create_context_from_user(
         if ctx_id:
             ctx = AgentContext.get(ctx_id)
             if ctx:
+                # Keep snapshot in sync with current plugin external config (handlers pass fresh bot_cfg).
+                # Without this, TTS/STT/progress/system prompt keep using values from first session creation.
+                ctx.data[CTX_TG_BOT_CFG] = bot_cfg
                 return ctx
             # Context was garbage collected, remove stale mapping
             chats.pop(key, None)

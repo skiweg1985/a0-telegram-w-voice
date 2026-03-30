@@ -1,5 +1,30 @@
 # Worklog (Telegram voice plugin)
 
+## 2026-03-30 12:00 – Cursor – Plugin-Settings: telegram_bot_cfg bei bestehenden Chats aktualisieren
+
+- Done:
+  - Ursache erklärt: Slash-Kommandos schreiben Session-Keys in `ctx.data` und wirken sofort; gespeicherte `telegram_bot_cfg` war nur bei neuer Session gesetzt — TTS/STT/Progress nutzten veraltete Plugin-YAML.
+  - Fix: Bei Wiederverwendung eines bestehenden `AgentContext` wird `ctx.data[CTX_TG_BOT_CFG]` mit dem aktuellen `bot_cfg` überschrieben (`handler.py` `_get_or_create_context_from_user`).
+  - `docs/CHANGELOG.md` [Unreleased] Fixed ergänzt.
+- Next:
+  - Optional: Version bump nach Release-Entscheid.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m py_compile helpers/handler.py`
+  - UI path: Plugin External YAML ändern → ohne `/newchat` nächste Telegram-Nachricht soll neue STT/TTS/Defaults nutzen
+- Changelog updated:
+  - yes ([Unreleased] Fixed)
+- Follow-ups:
+  - none
+
 ## 2026-03-30 – Cursor – Release 0.11.1 (plugin.yaml + Changelog)
 
 - Done:

@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- **Plugin external config vs. existing Telegram chats**: `telegram_bot_cfg` on the agent context was only set when the chat was first created, so changes under Plugin settings (STT/TTS URLs, `voice_mode` defaults, progress, detail defaults, etc.) had no effect until `/newchat` or a new user. Existing sessions now refresh the stored bot config on every message or callback so UI changes apply without losing the conversation.
 - **`also_send_text`**: If the model only fills `voice_text` (TTS) and leaves `text` empty, Telegram now still sends a text bubble when **Also send text** is enabled (uses `voice_text` as fallback). Config value `also_send_text` is parsed robustly (strings like `"false"` no longer behave like Python `bool("false") == True`).
 - `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
 
