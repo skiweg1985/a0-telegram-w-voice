@@ -62,7 +62,7 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 - STT for incoming Telegram voice/audio
 - TTS for outgoing Telegram voice replies
 - Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
-- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/session`, `/detail`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/detail`, `/tts`, `/project`, `/optimize_output`, `/model` where applicable). Session `/tts` adjusts voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies (voice vs text reading); see slash table below.
+- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/session`, `/detail`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/detail`, `/tts`, `/project`, `/optimize_output`, `/model` where applicable). Session `/tts` adjusts voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies. `/session` opens a paginated session picker with inline navigation, details view, and search support.
 
 ## Slash commands (summary)
 
@@ -73,7 +73,7 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 | `/status` | Model, tokens, project, TTS/STT, run state |
 | `/clear` | Reset conversation (same context) |
 | `/newchat` | New session; old chat stays in browser UI |
-| `/session` | List recent saved sessions for this Telegram chat, or switch with `/session <number|id>` |
+| `/session` | Open the paginated session picker, search with `/session search <term>`, or switch directly with `/session <id>` |
 | `/detail` | `off` / `info` / `verbose` / `reset` (`debug` accepted as alias), or no arg shows level + **inline buttons** |
 | `/tts` | `on` / `off` / `auto` / `force`, or no arg shows session + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode **with inline buttons** (typing still works) |
@@ -132,7 +132,7 @@ bots:
 
 - `/clear` resets the currently active session history.
 - `/newchat` creates a fresh session and keeps older sessions available in Agent Zero/browser history.
-- `/session` lists recent saved sessions for the same Telegram bot + user + chat and lets you switch back to one.
+- `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat, supports inline details navigation, and accepts `/session search <term>` for filtering.
 - Session switching is scoped to the same Telegram bot, Telegram user, and Telegram chat for safety.
 
 ## Notes

@@ -40,8 +40,8 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     ),
     (
         "session",
-        "Switch saved session",
-        "/session [n|id] — list or switch saved sessions for this Telegram chat",
+        "Browse saved sessions",
+        "/session [id|search …] — browse, search, or switch saved sessions for this Telegram chat",
     ),
     (
         "optimize_output",
