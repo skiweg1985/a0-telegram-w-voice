@@ -118,10 +118,6 @@ bots:
         model: "gpt-4o-mini-tts"
         voice: "alloy"
         format: "opus"
-        telegram_voice_convert: true
-        pcm_format: "s16le"
-        pcm_sample_rate_hz: 24000
-        pcm_channels: 1
         timeout_sec: 60
 
       reply:
@@ -134,7 +130,7 @@ bots:
 ## Notes
 
 - Voice notes are converted to `.ogg/opus` when possible (`ffmpeg` if available). If TTS fails, the plugin falls back to text.
-- For OpenAI-compatible Gemini PCM (`format: "pcm"`), set `pcm_format`, `pcm_sample_rate_hz`, and `pcm_channels` so raw PCM can be converted before sending to Telegram.
+- For OpenAI-compatible Gemini PCM (`format: "pcm"`), the plugin assumes raw PCM `s16le`, `24000 Hz`, mono and converts it automatically before sending to Telegram.
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
 - Publishing to the Plugin Index: use `name` without a leading underscore; see `packaging/plugin-index/index.yaml.example` for an `a0-plugins` PR template.

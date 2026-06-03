@@ -456,7 +456,7 @@
               <div class="field" x-show="bot.speech.tts.provider !== 'kokoro_local'">
                 <div class="field-label">
                   <div class="field-title">TTS Response Format</div>
-                  <div class="field-description">Examples: opus, ogg, mp3, wav, flac, pcm. Gemini/OpenAI-compatible PCM needs the PCM fields below.</div>
+                  <div class="field-description">Examples: opus, ogg, mp3, wav, flac, pcm. For PCM responses the plugin auto-converts to Telegram voice format.</div>
                 </div>
                 <div class="field-control">
                   <input type="text" x-model="bot.speech.tts.format" list="tg-tts-format-options" placeholder="opus" />
@@ -469,51 +469,6 @@
                     <option value="pcm"></option>
                     <option value="mp3_44100_128"></option>
                   </datalist>
-                </div>
-              </div>
-
-              <div class="field">
-                <div class="field-label">
-                  <div class="field-title">Convert to Telegram voice</div>
-                  <div class="field-description">If enabled, TTS audio is converted to Telegram-friendly OGG/Opus before send.</div>
-                </div>
-                <div class="field-control">
-                  <label class="toggle">
-                    <input type="checkbox" x-model="bot.speech.tts.telegram_voice_convert" />
-                    <span class="toggler"></span>
-                  </label>
-                </div>
-              </div>
-
-              <div class="field-divider"
-                   x-show="String(bot.speech.tts.format || '').toLowerCase() === 'pcm'"
-                   style="margin-top:8px;font-weight:600;opacity:.85;">PCM Input Settings</div>
-
-              <div class="field" x-show="String(bot.speech.tts.format || '').toLowerCase() === 'pcm'">
-                <div class="field-label">
-                  <div class="field-title">PCM Format</div>
-                  <div class="field-description">Raw PCM codec for ffmpeg input, e.g. s16le</div>
-                </div>
-                <div class="field-control">
-                  <input type="text" x-model="bot.speech.tts.pcm_format" placeholder="s16le" />
-                </div>
-              </div>
-
-              <div class="field" x-show="String(bot.speech.tts.format || '').toLowerCase() === 'pcm'">
-                <div class="field-label">
-                  <div class="field-title">PCM Sample Rate (Hz)</div>
-                </div>
-                <div class="field-control">
-                  <input type="number" x-model.number="bot.speech.tts.pcm_sample_rate_hz" min="8000" step="1000" placeholder="24000" />
-                </div>
-              </div>
-
-              <div class="field" x-show="String(bot.speech.tts.format || '').toLowerCase() === 'pcm'">
-                <div class="field-label">
-                  <div class="field-title">PCM Channels</div>
-                </div>
-                <div class="field-control">
-                  <input type="number" x-model.number="bot.speech.tts.pcm_channels" min="1" step="1" placeholder="1" />
                 </div>
               </div>
 

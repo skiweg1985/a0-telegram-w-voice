@@ -389,19 +389,12 @@ def _convert_to_telegram_voice(audio_bytes: bytes, mime_hint: str, cfg: dict | N
     ext = _ext_from_mime(mime_hint, requested_format)
     input_path = tmp_dir / f"tts_{uuid.uuid4().hex}{ext}"
     output_path = tmp_dir / f"tts_{uuid.uuid4().hex}.ogg"
-    convert_for_telegram = _coerce_bool(cfg.get("telegram_voice_convert"), True)
 
     input_path.write_bytes(audio_bytes)
 
     # Already OGG? keep as-is.
     if ext == ".ogg":
         return str(input_path), {"mime_type": mime_hint or "audio/ogg", "converted": False}
-
-    if not convert_for_telegram:
-        return str(input_path), {
-            "mime_type": mime_hint or _content_type_for_format(requested_format),
-            "converted": False,
-        }
 
     ffmpeg = _find_ffmpeg()
     if not ffmpeg:
