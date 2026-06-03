@@ -88,6 +88,10 @@ export const store = createStore("telegramConfig", {
           model: "gpt-4o-mini-tts",
           voice: "alloy",
           format: "opus",
+          telegram_voice_convert: true,
+          pcm_format: "s16le",
+          pcm_sample_rate_hz: 24000,
+          pcm_channels: 1,
           timeout_sec: 60,
         },
         reply: {

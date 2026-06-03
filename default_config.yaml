@@ -51,7 +51,11 @@ bots: []
 #       api_key: "${LITELLM_API_KEY}"
 #       model: "gpt-4o-mini-tts"
 #       voice: "alloy"               # for elevenlabs set voice_id here
-#       format: "opus"               # openai: opus/mp3/wav... | elevenlabs: mp3_44100_128 etc.
+#       format: "opus"               # openai: opus/mp3/wav/flac/pcm... | elevenlabs: mp3_44100_128 etc.
+#       telegram_voice_convert: true  # convert TTS output to Telegram-friendly ogg/opus before send
+#       pcm_format: "s16le"          # raw PCM codec for ffmpeg when format=pcm
+#       pcm_sample_rate_hz: 24000     # required for raw PCM input
+#       pcm_channels: 1               # required for raw PCM input
 #       timeout_sec: 60
 #
 #     reply:

@@ -161,7 +161,7 @@ def synthesize_to_voice_file(bot_cfg: dict, text: str) -> tuple[str, dict]:
     else:
         raise RuntimeError(f"Unsupported TTS provider: {provider}")
 
-    return _convert_to_telegram_voice(audio, mime_hint)
+    return _convert_to_telegram_voice(audio, mime_hint, cfg)
 
 
 # ---------- STT providers ----------
@@ -280,7 +280,7 @@ def _tts_openai_compatible(cfg: dict, text: str) -> tuple[bytes, str]:
     api_key = _resolve_secret(cfg.get("api_key"))
     model = cfg.get("model") or "gpt-4o-mini-tts"
     voice = cfg.get("voice") or "alloy"
-    response_format = cfg.get("format") or "opus"
+    response_format = _normalize_tts_format(cfg.get("format") or "opus")
     timeout_sec = int(cfg.get("timeout_sec", 60) or 60)
 
     payload = {
@@ -380,19 +380,28 @@ def _tts_kokoro_local(text: str) -> tuple[bytes, str]:
 
 # ---------- Conversion / HTTP helpers ----------
 
-def _convert_to_telegram_voice(audio_bytes: bytes, mime_hint: str) -> tuple[str, dict]:
+def _convert_to_telegram_voice(audio_bytes: bytes, mime_hint: str, cfg: dict | None = None) -> tuple[str, dict]:
+    cfg = cfg or {}
     tmp_dir = Path(tempfile.gettempdir()) / "a0_telegram_voice"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    ext = _ext_from_mime(mime_hint)
+    requested_format = _normalize_tts_format(cfg.get("format") or "")
+    ext = _ext_from_mime(mime_hint, requested_format)
     input_path = tmp_dir / f"tts_{uuid.uuid4().hex}{ext}"
     output_path = tmp_dir / f"tts_{uuid.uuid4().hex}.ogg"
+    convert_for_telegram = _coerce_bool(cfg.get("telegram_voice_convert"), True)
 
     input_path.write_bytes(audio_bytes)
 
     # Already OGG? keep as-is.
     if ext == ".ogg":
         return str(input_path), {"mime_type": mime_hint or "audio/ogg", "converted": False}
+
+    if not convert_for_telegram:
+        return str(input_path), {
+            "mime_type": mime_hint or _content_type_for_format(requested_format),
+            "converted": False,
+        }
 
     ffmpeg = _find_ffmpeg()
     if not ffmpeg:
@@ -402,6 +411,7 @@ def _convert_to_telegram_voice(audio_bytes: bytes, mime_hint: str) -> tuple[str,
     cmd = [
         ffmpeg,
         "-y",
+        *_ffmpeg_input_args(mime_hint, requested_format, cfg),
         "-i",
         str(input_path),
         "-vn",
@@ -409,6 +419,10 @@ def _convert_to_telegram_voice(audio_bytes: bytes, mime_hint: str) -> tuple[str,
         "libopus",
         "-b:a",
         "48k",
+        "-ar",
+        "48000",
+        "-ac",
+        "1",
         str(output_path),
     ]
 
@@ -488,8 +502,11 @@ def _multipart_form_data(fields: dict[str, str], file_field: str, file_path: str
     return body, content_type
 
 
-def _ext_from_mime(mime_type: str) -> str:
+def _ext_from_mime(mime_type: str, requested_format: str = "") -> str:
     mime_type = (mime_type or "").lower()
+    requested_format = _normalize_tts_format(requested_format)
+    if requested_format == "pcm" or any(token in mime_type for token in ("audio/pcm", "audio/raw", "audio/l16")):
+        return ".pcm"
     if "ogg" in mime_type:
         return ".ogg"
     if "wav" in mime_type:
@@ -502,7 +519,7 @@ def _ext_from_mime(mime_type: str) -> str:
 
 
 def _content_type_for_format(fmt: str) -> str:
-    fmt = str(fmt or "").lower()
+    fmt = _normalize_tts_format(fmt)
     return {
         "mp3": "audio/mpeg",
         "wav": "audio/wav",
@@ -510,8 +527,30 @@ def _content_type_for_format(fmt: str) -> str:
         "ogg": "audio/ogg",
         "aac": "audio/aac",
         "flac": "audio/flac",
-        "pcm": "audio/wav",
+        "pcm": "audio/pcm",
     }.get(fmt, "application/octet-stream")
+
+
+def _normalize_tts_format(fmt: Any) -> str:
+    return str(fmt or "").strip().lower()
+
+
+def _ffmpeg_input_args(mime_hint: str, requested_format: str, cfg: dict) -> list[str]:
+    mime_hint = (mime_hint or "").lower()
+    requested_format = _normalize_tts_format(requested_format)
+    if requested_format == "pcm" or any(token in mime_hint for token in ("audio/pcm", "audio/raw", "audio/l16")):
+        pcm_format = str(cfg.get("pcm_format") or "s16le").strip().lower()
+        sample_rate = int(cfg.get("pcm_sample_rate_hz") or 24000)
+        channels = int(cfg.get("pcm_channels") or 1)
+        return [
+            "-f",
+            pcm_format,
+            "-ar",
+            str(sample_rate),
+            "-ac",
+            str(channels),
+        ]
+    return []
 
 
 def _run_async_sync(coro):
