@@ -39,6 +39,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/newchat — new session; old chat stays in browser UI",
     ),
     (
+        "session",
+        "Switch saved session",
+        "/session [n|id] — list or switch saved sessions for this Telegram chat",
+    ),
+    (
         "optimize_output",
         "Answer style (voice/text)",
         "/optimize_output voice|text|off|reset — no arg = status + buttons",
