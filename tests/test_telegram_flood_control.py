@@ -29,6 +29,39 @@ CLIENT_PATH = REPO_ROOT / "helpers" / "telegram_client.py"
 
 
 def _install_stub_helpers():
+    aiogram = types.ModuleType("aiogram")
+    aiogram.Bot = object
+    sys.modules["aiogram"] = aiogram
+
+    aiogram_exceptions = types.ModuleType("aiogram.exceptions")
+
+    class TelegramBadRequest(Exception):
+        def __init__(self, method=None, message=""):
+            super().__init__(message)
+            self.method = method
+
+    class TelegramRetryAfter(Exception):
+        def __init__(self, method=None, message="", retry_after=0):
+            super().__init__(message)
+            self.method = method
+            self.retry_after = retry_after
+
+    aiogram_exceptions.TelegramBadRequest = TelegramBadRequest
+    aiogram_exceptions.TelegramRetryAfter = TelegramRetryAfter
+    sys.modules["aiogram.exceptions"] = aiogram_exceptions
+
+    aiogram_types = types.ModuleType("aiogram.types")
+
+    class _DummyInline:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    aiogram_types.FSInputFile = _DummyInline
+    aiogram_types.InlineKeyboardButton = _DummyInline
+    aiogram_types.InlineKeyboardMarkup = _DummyInline
+    sys.modules["aiogram.types"] = aiogram_types
+
     helpers = sys.modules.get("helpers")
     if helpers is None:
         helpers = types.ModuleType("helpers")
@@ -250,7 +283,10 @@ class ProgressUpdateNoSpamTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Re-use the session-picker stub harness to load handler.py.
-        from tests.test_telegram_session_picker import _load_handler_module
+        try:
+            from tests.test_telegram_session_picker import _load_handler_module
+        except ModuleNotFoundError:
+            from test_telegram_session_picker import _load_handler_module
         cls.handler = _load_handler_module()
 
     def _make_context(self, with_progress_id=True):
@@ -364,4 +400,3 @@ class ProgressUpdateNoSpamTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

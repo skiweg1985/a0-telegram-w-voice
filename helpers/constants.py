@@ -32,6 +32,7 @@ CTX_TG_STREAM_DRAFT_LAST_TS = "_telegram_stream_draft_last_ts"
 CTX_TG_STREAM_DRAFT_ACTIVE = "_telegram_stream_draft_active"
 CTX_TG_STREAM_DRAFT_USED = "_telegram_stream_draft_used"
 CTX_TG_STREAM_DRAFT_DISABLED = "_telegram_stream_draft_disabled"
+CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 CTX_TG_LAST_TEXT_RESPONSE = "_telegram_last_text_response"
 CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "_telegram_last_text_response_token"
 

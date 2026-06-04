@@ -59,6 +59,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_STREAM_DRAFT_ACTIVE,
     CTX_TG_STREAM_DRAFT_USED,
     CTX_TG_STREAM_DRAFT_DISABLED,
+    CTX_TG_FINAL_REPLY_SENT,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
     CTX_TG_TTS_OVERRIDE,
@@ -2494,10 +2495,14 @@ def _progress_settings(bot_cfg: dict) -> dict:
         preview_chars = int(cfg.get("live_response_preview_chars", 1200) or 1200)
     except (TypeError, ValueError):
         preview_chars = 1200
+    completed_mode = str(cfg.get("completed_mode", "delete") or "delete").strip().lower()
+    if completed_mode not in {"delete", "none", "edit"}:
+        completed_mode = "delete"
     return {
         "enabled": bool(cfg.get("edit_enabled", True)),
         "throttle_ms": int(cfg.get("edit_throttle_ms", 200) or 200),
         "final_in_place": bool(cfg.get("final_in_place", True)),
+        "completed_mode": completed_mode,
         "live_response_preview": bool(cfg.get("live_response_preview", True)),
         "native_draft_preview": bool(cfg.get("native_draft_preview", True)),
         "live_response_preview_chars": max(160, min(preview_chars, 4000)),
@@ -2517,6 +2522,7 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_USED, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_DISABLED, None)
+    context.data.pop(CTX_TG_FINAL_REPLY_SENT, None)
 
 
 def _progress_history_limit(bot_cfg: dict, level: str) -> int:
@@ -2532,7 +2538,7 @@ def _progress_history_limit(bot_cfg: dict, level: str) -> int:
 
 def _progress_status_title(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
     if done:
-        return "✅ Completed"
+        return "Done"
     level = detail_status.effective_detail_level(bot_cfg, context.data)
     if level == "off":
         return "🧠 Working…"
@@ -2718,30 +2724,6 @@ def _supports_native_draft_preview(context: AgentContext, bot) -> bool:
     return tc.supports_message_draft(bot)
 
 
-def _prefer_native_draft_preview(context: AgentContext) -> bool:
-    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
-    progress_cfg = _progress_settings(bot_cfg)
-    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
-        return False
-    if not progress_cfg["native_draft_preview"]:
-        return False
-    if context.data.get(CTX_TG_STREAM_DRAFT_DISABLED):
-        return False
-    try:
-        chat_id = int(context.data.get(CTX_TG_CHAT_ID) or 0)
-    except (TypeError, ValueError):
-        return False
-    if chat_id <= 0:
-        return False
-    bot_name = context.data.get(CTX_TG_BOT)
-    if bot_name:
-        instance = get_bot(bot_name)
-        if not instance:
-            return False
-        return tc.supports_message_draft(instance.bot)
-    return True
-
-
 async def _send_telegram_live_draft_preview(
     context: AgentContext,
     preview_text: str,
@@ -2826,10 +2808,10 @@ async def handle_telegram_response_stream_chunk(context: AgentContext, stream_da
 
     context.data[CTX_TG_STREAM_PREVIEW] = next_preview
     context.data[CTX_TG_STREAM_ACTIVE] = True
-    prefer_native_draft = _prefer_native_draft_preview(context)
     if await _send_telegram_live_draft_preview(context, next_preview):
         return
-    if prefer_native_draft:
+    level = detail_status.effective_detail_level(bot_cfg, context.data)
+    if level == "off":
         return
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)
@@ -2841,21 +2823,21 @@ def handle_telegram_response_stream_end(context: AgentContext):
     context.data.pop(CTX_TG_STREAM_PREVIEW, None)
 
 
-async def _finalize_progress_message_done(
+async def _cleanup_progress_message_after_final(
     reply_bot: Bot,
     context: AgentContext,
     bot_cfg: dict,
-    final_keyboard: list[list[dict]] | None = None,
 ):
     progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
     chat_id = context.data.get(CTX_TG_CHAT_ID)
     if not progress_message_id or not chat_id:
         return
-    done_html = _render_progress_status_html(context, bot_cfg, done=True)
-    if final_keyboard:
-        await tc.edit_text_with_keyboard(reply_bot, int(chat_id), int(progress_message_id), done_html, final_keyboard)
-    else:
-        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), done_html)
+    progress_cfg = _progress_settings(bot_cfg)
+    mode = progress_cfg["completed_mode"]
+    if mode == "delete":
+        await tc.delete_message(reply_bot, int(chat_id), int(progress_message_id))
+    elif mode == "edit":
+        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), "Done")
 
 
 def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
@@ -2871,6 +2853,8 @@ def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
 
 async def _send_initial_progress_status(context: AgentContext):
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    if detail_status.effective_detail_level(bot_cfg, context.data) == "off":
+        return
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)
 
@@ -3142,6 +3126,7 @@ async def send_telegram_reply(
             should_send_text = bool(text_body) and (
                 final_keyboard is not None or not sent_voice or also
             )
+            progress_message_became_final = False
             if should_send_text:
                 html_text = tc.md_to_telegram_html(text_body)
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
@@ -3163,18 +3148,16 @@ async def send_telegram_reply(
                         edited = await tc.edit_text(
                             reply_bot, chat_id, int(progress_message_id), html_text,
                         )
+                    progress_message_became_final = bool(edited)
 
                 if not edited:
                     if final_keyboard:
                         await tc.send_text_with_keyboard(reply_bot, chat_id, html_text, final_keyboard, reply_to_message_id=reply_to)
                     else:
                         await tc.send_text(reply_bot, chat_id, html_text, reply_to_message_id=reply_to)
-                    if used_native_draft and progress_cfg["enabled"] and progress_message_id:
-                        await _finalize_progress_message_done(reply_bot, context, bot_cfg, final_keyboard)
-            else:
-                progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
-                if progress_cfg["enabled"] and progress_cfg["final_in_place"] and progress_message_id:
-                    await _finalize_progress_message_done(reply_bot, context, bot_cfg, final_keyboard)
+
+            if not progress_message_became_final:
+                await _cleanup_progress_message_after_final(reply_bot, context, bot_cfg)
 
             _clear_progress_state(context)
 

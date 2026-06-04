@@ -191,6 +191,23 @@ async def send_text_with_keyboard(
         return None
 
 
+async def delete_message(bot: Bot, chat_id: int, message_id: int) -> bool:
+    """Delete a bot message when Telegram allows it."""
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        return True
+    except TelegramBadRequest as e:
+        err = str(e).lower()
+        if "message to delete not found" in err or "message can't be deleted" in err:
+            PrintStyle.warning(f"Telegram delete_message skipped: {format_error(e)}")
+            return False
+        PrintStyle.error(f"Telegram delete_message failed: {format_error(e)}")
+        return False
+    except Exception as e:
+        PrintStyle.error(f"Telegram delete_message failed: {format_error(e)}")
+        return False
+
+
 async def edit_text(
     bot: Bot,
     chat_id: int,
