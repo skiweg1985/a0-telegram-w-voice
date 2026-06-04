@@ -205,6 +205,7 @@ def _install_stub_modules():
     tc = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.telegram_client")
     tc.send_text_with_keyboard = lambda *args, **kwargs: None
     tc.edit_text_with_keyboard = lambda *args, **kwargs: None
+    tc.supports_message_draft = lambda *args, **kwargs: False
     sys.modules["usr.plugins.telegram_integration_voice.helpers.telegram_client"] = tc
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
@@ -393,6 +394,29 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertIn("💬 Draft reply…", html_text)
         self.assertIn("Partial answer", html_text)
+
+    def test_render_progress_status_html_hides_preview_block_when_native_draft_active(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_STREAM_PREVIEW] = "Partial answer"
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_ACTIVE] = True
+
+        html_text = handler._render_progress_status_html(ctx, {"progress": {"live_response_preview": True}}, done=False)
+
+        self.assertNotIn("💬 Draft reply…", html_text)
+
+    def test_supports_native_draft_preview_only_for_private_chats_with_bot_capability(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {"live_response_preview": True, "native_draft_preview": True, "edit_enabled": True}}
+
+        with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
+            self.assertTrue(handler._supports_native_draft_preview(ctx, object()))
+
+        ctx.data[handler.CTX_TG_CHAT_ID] = -100123456
+        with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
+            self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
 
 
 if __name__ == "__main__":

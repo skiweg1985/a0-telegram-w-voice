@@ -310,6 +310,19 @@
 
               <div class="field">
                 <div class="field-label">
+                  <div class="field-title">Native Telegram draft streaming</div>
+                  <div class="field-description">Prefer Telegram's animated sendMessageDraft in private chats when the installed aiogram version supports it</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.progress.native_draft_preview" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
                   <div class="field-title">Live draft reply preview</div>
                   <div class="field-description">Show streamed response-tool text inside the editable progress message when no attachments are involved</div>
                 </div>

@@ -54,6 +54,11 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_PROGRESS_HEADER,
     CTX_TG_STREAM_PREVIEW,
     CTX_TG_STREAM_ACTIVE,
+    CTX_TG_STREAM_DRAFT_ID,
+    CTX_TG_STREAM_DRAFT_LAST_TS,
+    CTX_TG_STREAM_DRAFT_ACTIVE,
+    CTX_TG_STREAM_DRAFT_USED,
+    CTX_TG_STREAM_DRAFT_DISABLED,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
     CTX_TG_TTS_OVERRIDE,
@@ -2494,6 +2499,7 @@ def _progress_settings(bot_cfg: dict) -> dict:
         "throttle_ms": int(cfg.get("edit_throttle_ms", 200) or 200),
         "final_in_place": bool(cfg.get("final_in_place", True)),
         "live_response_preview": bool(cfg.get("live_response_preview", True)),
+        "native_draft_preview": bool(cfg.get("native_draft_preview", True)),
         "live_response_preview_chars": max(160, min(preview_chars, 4000)),
     }
 
@@ -2506,6 +2512,11 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_PROGRESS_HEADER, None)
     context.data.pop(CTX_TG_STREAM_PREVIEW, None)
     context.data.pop(CTX_TG_STREAM_ACTIVE, None)
+    context.data.pop(CTX_TG_STREAM_DRAFT_ID, None)
+    context.data.pop(CTX_TG_STREAM_DRAFT_LAST_TS, None)
+    context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
+    context.data.pop(CTX_TG_STREAM_DRAFT_USED, None)
+    context.data.pop(CTX_TG_STREAM_DRAFT_DISABLED, None)
 
 
 def _progress_history_limit(bot_cfg: dict, level: str) -> int:
@@ -2563,6 +2574,8 @@ def _render_live_response_preview_html(
         return ""
     progress_cfg = _progress_settings(bot_cfg)
     if not progress_cfg["live_response_preview"]:
+        return ""
+    if context.data.get(CTX_TG_STREAM_DRAFT_ACTIVE):
         return ""
     preview = str(context.data.get(CTX_TG_STREAM_PREVIEW, "") or "").strip()
     if not preview:
@@ -2685,6 +2698,88 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
     }
 
 
+def _supports_native_draft_preview(context: AgentContext, bot) -> bool:
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    progress_cfg = _progress_settings(bot_cfg)
+    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
+        return False
+    if not progress_cfg["native_draft_preview"]:
+        return False
+    if context.data.get(CTX_TG_STREAM_DRAFT_DISABLED):
+        return False
+    try:
+        chat_id = int(context.data.get(CTX_TG_CHAT_ID) or 0)
+    except (TypeError, ValueError):
+        return False
+    if chat_id <= 0:
+        return False
+    return tc.supports_message_draft(bot)
+
+
+async def _send_telegram_live_draft_preview(
+    context: AgentContext,
+    preview_text: str,
+) -> bool:
+    bot_name = context.data.get(CTX_TG_BOT)
+    if not bot_name:
+        return False
+    instance = get_bot(bot_name)
+    if not instance:
+        return False
+    chat_id = context.data.get(CTX_TG_CHAT_ID)
+    if not chat_id:
+        return False
+
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    progress_cfg = _progress_settings(bot_cfg)
+    throttle_ms = max(0, int(progress_cfg["throttle_ms"]))
+    now_ms = int(time.time() * 1000)
+    last_ts = int(context.data.get(CTX_TG_STREAM_DRAFT_LAST_TS, 0) or 0)
+    if throttle_ms > 0 and (now_ms - last_ts) < throttle_ms:
+        return True
+
+    draft_id = int(context.data.get(CTX_TG_STREAM_DRAFT_ID, 0) or 0)
+    if draft_id <= 0:
+        draft_id = (uuid.uuid4().int % 2147483646) + 1
+        context.data[CTX_TG_STREAM_DRAFT_ID] = draft_id
+
+    html_text = tc.md_to_telegram_html(preview_text)
+    if len(html_text) > tc.MAX_MESSAGE_LENGTH:
+        safe_cut = tc.MAX_MESSAGE_LENGTH - 30
+        cut_pos = html_text.rfind("\n", 0, safe_cut)
+        if cut_pos < safe_cut // 2:
+            cut_pos = safe_cut
+        html_text = html_text[:cut_pos] + "\n<i>… truncated</i>"
+
+    try:
+        async with _temp_bot(
+            instance.bot.token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        ) as reply_bot:
+            if not _supports_native_draft_preview(context, reply_bot):
+                return False
+            ok = await tc.send_message_draft(
+                reply_bot,
+                int(chat_id),
+                draft_id,
+                html_text,
+                parse_mode=ParseMode.HTML,
+            )
+        if not ok:
+            context.data[CTX_TG_STREAM_DRAFT_DISABLED] = True
+            context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
+            return False
+        context.data[CTX_TG_STREAM_DRAFT_LAST_TS] = now_ms
+        context.data[CTX_TG_STREAM_DRAFT_ACTIVE] = True
+        context.data[CTX_TG_STREAM_DRAFT_USED] = True
+        return True
+    except Exception as e:
+        PrintStyle.error(f"Telegram native draft preview failed: {format_error(e)}")
+        context.data[CTX_TG_STREAM_DRAFT_DISABLED] = True
+        context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
+        return False
+
+
 async def handle_telegram_response_stream_chunk(context: AgentContext, stream_data: dict | None):
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     progress_cfg = _progress_settings(bot_cfg)
@@ -2703,13 +2798,33 @@ async def handle_telegram_response_stream_chunk(context: AgentContext, stream_da
 
     context.data[CTX_TG_STREAM_PREVIEW] = next_preview
     context.data[CTX_TG_STREAM_ACTIVE] = True
+    if await _send_telegram_live_draft_preview(context, next_preview):
+        return
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)
 
 
 def handle_telegram_response_stream_end(context: AgentContext):
     context.data.pop(CTX_TG_STREAM_ACTIVE, None)
+    context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_PREVIEW, None)
+
+
+async def _finalize_progress_message_done(
+    reply_bot: Bot,
+    context: AgentContext,
+    bot_cfg: dict,
+    final_keyboard: list[list[dict]] | None = None,
+):
+    progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+    chat_id = context.data.get(CTX_TG_CHAT_ID)
+    if not progress_message_id or not chat_id:
+        return
+    done_html = _render_progress_status_html(context, bot_cfg, done=True)
+    if final_keyboard:
+        await tc.edit_text_with_keyboard(reply_bot, int(chat_id), int(progress_message_id), done_html, final_keyboard)
+    else:
+        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), done_html)
 
 
 def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
@@ -2989,6 +3104,7 @@ async def send_telegram_reply(
                 quick_action_keyboard = _show_text_quick_action_keyboard(response_token)
 
             final_keyboard = _append_inline_keyboard(keyboard, quick_action_keyboard)
+            used_native_draft = bool(context.data.get(CTX_TG_STREAM_DRAFT_USED))
 
             should_send_text = bool(text_body) and (
                 final_keyboard is not None or not sent_voice or also
@@ -3001,6 +3117,7 @@ async def send_telegram_reply(
                     and progress_cfg["final_in_place"]
                     and progress_message_id
                     and not attachments
+                    and not used_native_draft
                 )
 
                 edited = False
@@ -3019,14 +3136,12 @@ async def send_telegram_reply(
                         await tc.send_text_with_keyboard(reply_bot, chat_id, html_text, final_keyboard, reply_to_message_id=reply_to)
                     else:
                         await tc.send_text(reply_bot, chat_id, html_text, reply_to_message_id=reply_to)
+                    if used_native_draft and progress_cfg["enabled"] and progress_message_id:
+                        await _finalize_progress_message_done(reply_bot, context, bot_cfg, final_keyboard)
             else:
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 if progress_cfg["enabled"] and progress_cfg["final_in_place"] and progress_message_id:
-                    done_html = _render_progress_status_html(context, bot_cfg, done=True)
-                    if final_keyboard:
-                        await tc.edit_text_with_keyboard(reply_bot, chat_id, int(progress_message_id), done_html, final_keyboard)
-                    else:
-                        await tc.edit_text(reply_bot, chat_id, int(progress_message_id), done_html)
+                    await _finalize_progress_message_done(reply_bot, context, bot_cfg, final_keyboard)
 
             _clear_progress_state(context)
 

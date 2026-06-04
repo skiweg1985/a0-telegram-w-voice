@@ -278,6 +278,46 @@ async def edit_text_with_keyboard(
         PrintStyle.error(f"Telegram edit_text_with_keyboard failed: {format_error(e)}")
         return False
 
+
+def supports_message_draft(bot: Bot) -> bool:
+    return hasattr(bot, "send_message_draft")
+
+
+async def send_message_draft(
+    bot: Bot,
+    chat_id: int,
+    draft_id: int,
+    text: str,
+    parse_mode: object = _UNSET,
+) -> bool:
+    if not supports_message_draft(bot):
+        return False
+    try:
+        pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
+        ok = await bot.send_message_draft(
+            chat_id=chat_id,
+            draft_id=draft_id,
+            text=text,
+            **pm_kwargs,
+        )
+        return bool(ok)
+    except TelegramBadRequest:
+        try:
+            plain = re.sub(r"<[^>]+>", "", text)
+            ok = await bot.send_message_draft(
+                chat_id=chat_id,
+                draft_id=draft_id,
+                text=plain,
+                parse_mode=None,
+            )
+            return bool(ok)
+        except Exception as ee:
+            PrintStyle.error(f"Telegram send_message_draft failed: {format_error(ee)}")
+            return False
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_message_draft failed: {format_error(e)}")
+        return False
+
 # Chat actions
 
 async def send_chat_action(bot: Bot, chat_id: int, action: str):
