@@ -62,7 +62,7 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 - STT for incoming Telegram voice/audio
 - TTS for outgoing Telegram voice replies
 - Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
-- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/session`, `/detail`, `/tts`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/detail`, `/tts`, `/project`, `/optimize_output`, `/model` where applicable). Session `/tts` adjusts voice mode until `/clear`. `/optimize_output` steers how the agent phrases replies. `/session` opens a paginated session picker with inline navigation, details view, and search support.
+- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/session`, `/detail`, `/voice`, `/optimize_output`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/detail`, `/voice`, `/project`, `/optimize_output`, `/model` where applicable). Session `/voice` adjusts the reply mode until `/clear`. `/optimize_output` steers how the agent phrases replies. `/session` opens a paginated session picker with inline navigation, details view, and search support.
 
 ## Slash commands (summary)
 
@@ -75,9 +75,8 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 | `/newchat` | New session; old chat stays in browser UI |
 | `/session` | Open the paginated session picker, search with `/session search <term>`, or switch directly with `/session <id>` |
 | `/detail` | `off` / `info` / `verbose` / `reset` (`debug` accepted as alias), or no arg shows level + **inline buttons** |
-| `/tts` | `on` / `off` / `auto` / `force`, or no arg shows session + **inline buttons** |
+| `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** (`auto` speaks only after a voice message) |
 | `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode **with inline buttons** (typing still works) |
-| `/speakstyle` | Shortcut for voice-oriented output; `/speakstyle off` turns the extra prompt off |
 | `/compact` | Compress history (utility LLM) |
 | `/stop` | Abort running task |
 | `/project` | Active + available projects + **buttons** when projects exist, or `/project <name>` |
@@ -94,12 +93,19 @@ bots:
     mode: polling
     allowed_users: ["123456789"]
 
-    telegram_detail_level: off
+    telegram_detail_level: info                 # default; throttled step lines — set to off for final answer only
     telegram_detail_info_min_interval_sec: 5
     telegram_detail_debug_min_interval_sec: 1.5
     telegram_detail_icons_enabled: true          # emoji prefix per step
     # telegram_detail_tool_icons: {}             # override icons, e.g. { "memory_load": "\U0001f4cc" }
     # telegram_detail_max_body_chars: 3200       # debug JSON truncation limit
+
+    progress:
+      edit_throttle_ms: 200
+      completed_mode: delete                     # delete | none | edit; avoids leftover "Completed" bubbles
+      live_response_preview_interval_ms: 800      # Hermes-style max preview cadence
+      live_response_preview_buffer_threshold: 24  # flush early after enough buffered chars
+      live_response_preview_chars: 1200           # visible draft text cap
 
     speech:
       stt:
@@ -122,9 +128,8 @@ bots:
         timeout_sec: 60
 
       reply:
-        optimize_output_default: off   # off | voice | text — new sessions; /optimize_output overrides
-        voice_mode: auto
-        also_send_text: true
+        optimize_output_default: off   # off | voice | text | auto — new sessions; /optimize_output overrides
+        voice_mode: auto               # off | auto | voice_only | voice_text | text_only (legacy force + also_send_text still accepted)
         max_chars: 700
 ```
 

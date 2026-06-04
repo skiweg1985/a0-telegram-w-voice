@@ -45,6 +45,39 @@
 - Follow-ups:
   - none
 
+## 2026-06-04 18:14 – Cursor – Telegram Live-Preview Hintergrundversand
+
+- Done:
+  - Asynchrones Coalescing fuer Telegram-Live-Response-Preview eingebaut, damit Stream-Chunks nicht mehr auf Telegram-I/O warten.
+  - Neue Progress-Config fuer Preview-Kadenz und Buffer-Flush dokumentiert (`live_response_preview_interval_ms`, `live_response_preview_buffer_threshold`).
+  - Detail-Status-Updates auf geplante Hintergrund-Edits umgestellt und Tests fuer Worker-/Flush-Verhalten erweitert.
+  - `docs/CHANGELOG.md` unter `[Unreleased]` aktualisiert.
+- Next:
+  - Telegram-Smoke-Test mit echter Streaming-Antwort und `/detail info` nach Deploy.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: https://github.com/skiweg1985/a0-telegram-w-voice/pull/4
+- Files touched:
+  - README.md
+  - default_config.yaml
+  - extensions/python/response_stream_chunk/_45_telegram_live_response.py
+  - extensions/python/tool_execute_after/_45_telegram_detail_status.py
+  - helpers/constants.py
+  - helpers/handler.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest discover -s tests -p 'test_telegram_session_picker.py'`
+  - endpoints: none
+  - UI path: Telegram Chat Live-Preview und Detail-Status
+- Changelog updated:
+  - yes ([Unreleased] Added/Changed)
+- Follow-ups:
+  - none
+
 ## 2026-03-30 – Cursor – Release 0.11.1 (plugin.yaml + Changelog)
 
 - Done:
@@ -356,5 +389,229 @@
   - UI path: none
 - Changelog updated:
   - yes ([0.11.3])
+- Follow-ups:
+  - none
+
+## 2026-06-04 18:21 – Cursor – Voice-only reveal button on voice message
+
+- Done:
+  - `send_voice` accepts an optional `buttons` inline keyboard and passes it as `reply_markup`.
+  - Reworked `send_telegram_reply` so the "Show text" quick action button is attached to the voice message in `voice_only` mode instead of forcing a separate text bubble.
+  - `should_send_text` no longer becomes true just because the reveal button exists; text is only revealed on button tap, with text fallback kept for failed voice delivery.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/telegram_client.py
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: /voice voice_only then send a message; verify only a voice note with a "Text anzeigen" button appears, tapping it posts the text
+  - endpoints: none
+  - UI path: Telegram chat (voice_only mode)
+- Changelog updated:
+  - yes ([Unreleased] Fixed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 18:33 – Cursor – Persist voice_only "Text anzeigen" reveal token
+
+- Done:
+  - `CTX_TG_LAST_TEXT_RESPONSE` and `CTX_TG_LAST_TEXT_RESPONSE_TOKEN` now use non-underscore keys so persist_chat stores them in chat.json.
+  - `send_telegram_reply` calls `save_tmp_chat(context)` after sending so the reveal token/text reaches chat.json.
+  - `/clear` removes the stored reveal text/token.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/constants.py
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: /voice voice_only, send a message, restart bot, tap "Text anzeigen"; then /clear and verify old button reports unavailable
+  - endpoints: none
+  - UI path: Telegram chat (voice_only mode)
+- Changelog updated:
+  - yes ([Unreleased] Fixed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 – Cursor – Progress bubble title In progress
+
+- Done:
+  - Progress status title `🧠 Working…` → `🔄 In progress…` in `_progress_status_title`.
+  - Unit test for rendered progress HTML title.
+  - Changelog [Unreleased] Changed.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: `python -m pytest tests/test_telegram_session_picker.py -k in_progress_title -q`
+  - endpoints: none
+  - UI path: Telegram progress bubble during agent run
+- Changelog updated:
+  - yes ([Unreleased] Changed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 20:55 – Cursor – Settings & Commands bereinigt
+
+- Done:
+  - WebUI/Store auf nutzerrelevante Keys reduziert; Detail-Throttling/Labels/Icons, Progress-Edit-Throttle und Preview-Chars, STT/TTS-Endpoint, STT-Language und Timeouts sind jetzt YAML-only (Merge bewahrt sie über UI-Edits).
+  - Voice-Modell vereinheitlicht: ein 5-Modus-Dropdown (off|auto|voice_only|voice_text|text_only) statt mode + "Also send text"-Toggle; `speech._config_voice_reply` mappt neue und alte (`force` + `also_send_text`) Werte abwärtskompatibel.
+  - `/speakstyle` entfernt (Menü, Job-Loop-Registrierung, Handler-Zweige); `/clear`-Hilfetext korrigiert (kein nicht-existentes `/reset`).
+  - `/alsotext` entfernt (Handler, Inline-Keyboard, Callback `a`, Menü, Registrierung); `effective_also_send_text` liest Altsession-Override weiter, `/clear` poppt ihn.
+  - Legacy `/tts`-Fallback entfernt: `CTX_TG_TTS_OVERRIDE`, Callback `t`, speech.py-Fallback und Clear-Pop.
+  - `optimize_output_default`-Default in YAML auf `off` angeglichen (Code/README).
+  - Neuer Test `tests/test_telegram_voice_reply_mode.py` für das Mapping; gesamte Suite grün (52 Tests).
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/speech.py
+  - helpers/handler.py
+  - helpers/constants.py
+  - helpers/command_registry.py
+  - extensions/python/job_loop/_10_telegram_bot.py
+  - webui/telegram-config-store.js
+  - webui/config.html
+  - default_config.yaml
+  - README.md
+  - docs/CHANGELOG.md
+  - tests/test_telegram_voice_reply_mode.py
+- Test notes:
+  - commands: `python3 -m pytest tests/ -q` (52 passed)
+  - endpoints: none
+  - UI path: WebUI Telegram config (Voice Reply Mode dropdown); Telegram chat (`/voice`, `/optimize_output`, `/detail`, `/status`)
+- Changelog updated:
+  - yes ([Unreleased] Changed + Removed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 18:44 – Cursor – Voice-Commands konsolidiert (/tts entfernt)
+
+- Done:
+  - `/tts` Command vollständig entfernt (Handler, Inline-Keyboard, Callback `t`, Dispatch, Menü/Help).
+  - `/voice` um Modus `auto` erweitert (Sprachantwort nur bei Sprach-Eingabe); neuer Auto-Button im Inline-Keyboard.
+  - `speech.effective_voice_reply_mode`: `auto`-Voice-Mode → `auto`; `CTX_TG_TTS_OVERRIDE` nur noch Legacy-Fallback für Altsessions.
+  - Reset/Newchat poppt jetzt auch `CTX_TG_VOICE_CONVERSATION_MODE`.
+  - README/CHANGELOG/troubleshooting-tts aktualisiert.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/speech.py
+  - helpers/handler.py
+  - helpers/command_registry.py
+  - helpers/constants.py
+  - extensions/python/job_loop/_10_telegram_bot.py
+  - README.md
+  - docs/CHANGELOG.md
+  - docs/troubleshooting-tts.md
+- Test notes:
+  - commands: `/voice` (Buttons inkl. Auto), `/voice auto` + Text → Text, `/voice auto` + Voice → Voice, `/voice voice_only|voice_text|text_only|off`, `/status`
+  - endpoints: none
+  - UI path: Telegram Chat (/voice, /status)
+- Changelog updated:
+  - yes ([Unreleased] Changed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 21:12 – telegram-ux – UX/UI-Potenziale umgesetzt
+
+- Done:
+  - Slash-Commands auf reine Modus-Umschaltung umgestellt: Reset/Default-Buttons und `reset`/`default`-Args aus `/detail` und `/optimize_output` entfernt; `/voice off`-Copy bereinigt.
+  - `/start`- und `/help`-Copy auf Voice/Status/Modus-Umschaltung ausgerichtet.
+  - Englische Locale vereinheitlicht (Reveal-Button "Show text" statt "Text anzeigen").
+  - Session-Suche per Force-Reply: Such-Button armiert eine Einmal-Erfassung der nächsten Nachricht als Suchbegriff.
+  - Klare, gedrosselte Auth-Meldung für nicht-whitelistete User inkl. eigener Telegram-User-ID.
+  - Typing-Indicator wird nach jeder neuen Progress-Nachricht erneut gesendet (Hermes-Pattern).
+  - Sichtbare "Still working"-Notiz nach mehreren flood-control-bedingten Progress-Skips (einmalig pro Lauf).
+  - `/retry` (letzte Nachricht erneut) und `/undo` (letztes Topic aus History entfernen) implementiert und registriert.
+  - Approval/Clarify als Agent-Pattern über das `response`-Tool-Keyboard im System-Prompt verankert (Tastendruck läuft bereits in die Agent-Loop zurück).
+  - WebUI: Defaults-Banner, Answer-Style- und Tool-Detail-Selects, Walkie-Talkie-Preset, Preview-Kadenz/Buffer (operator) ergänzt; chat-überschreibbare Felder als Defaults mit Slash-Command-Hinweis gelabelt.
+  - `/topic [name]` als benannte Parallel-Session auf Basis der bestehenden Session-Infrastruktur.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: (current)
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - helpers/command_registry.py
+  - helpers/constants.py
+  - helpers/telegram_client.py
+  - extensions/python/job_loop/_10_telegram_bot.py
+  - extensions/python/system_prompt/_20_telegram_context.py
+  - prompts/fw.telegram.system_context_reply.md
+  - webui/config.html
+  - webui/telegram-config-store.js
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: `python3 -m pytest tests/ -q` (52 passed)
+  - endpoints: none
+  - UI path: Telegram chat (`/start`, `/help`, `/voice`, `/optimize_output`, `/detail`, `/session`, `/topic`, `/retry`, `/undo`); WebUI Telegram config (defaults, Answer Style, Tool Detail, Walkie-talkie preset, preview tuning)
+- Changelog updated:
+  - yes ([Unreleased] Added/Changed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 21:51 – GPT-5.5 – Progress Settings WebUI
+
+- Done:
+  - WebUI-Abschnitt "Progress Message Editing" entfernt.
+  - Progress-Verhalten im Handler fest verdrahtet: Progress-Edits, Live-Preview, finales In-Place-Edit und Native-Draft-Fallback laufen automatisch.
+  - Entfernte Progress-Toggles aus Store-Defaults, Beispielkonfiguration und README entfernt; YAML-only Operator-Tuning bleibt erhalten.
+  - Tests auf das neue Config-Modell ohne Progress-Toggles angepasst.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - webui/config.html
+  - webui/telegram-config-store.js
+  - default_config.yaml
+  - README.md
+  - tests/test_telegram_session_picker.py
+  - tests/test_telegram_flood_control.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m pytest tests/test_telegram_session_picker.py tests/test_telegram_flood_control.py -q` (38 passed); `python3 -m pytest tests/ -q` (52 passed)
+  - endpoints: none
+  - UI path: WebUI Telegram bot config; Progress Message Editing section removed
+- Changelog updated:
+  - yes ([Unreleased] Removed)
 - Follow-ups:
   - none

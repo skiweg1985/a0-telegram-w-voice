@@ -10,6 +10,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_REPLY_TO,
     CTX_TG_REPLY_CONTEXT,
     CTX_TG_VOICE_TEXT,
+    CTX_TG_FINAL_REPLY_SENT,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
@@ -33,18 +34,22 @@ class TelegramAutoReply(Extension):
         if not context.data.get(CTX_TG_BOT):
             return
 
-        response_text = _extract_last_response(context)
-        if not response_text:
-            PrintStyle.info(
-                "Telegram auto-reply skipped: no response content in context log."
-            )
-            return
-
-        attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])
-        keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
-        voice_text = context.data.pop(CTX_TG_VOICE_TEXT, None)
-
         try:
+            if context.data.get(CTX_TG_FINAL_REPLY_SENT):
+                PrintStyle.info("Telegram auto-reply skipped: final response already sent.")
+                return
+
+            response_text = _extract_last_response(context)
+            if not response_text:
+                PrintStyle.info(
+                    "Telegram auto-reply skipped: no response content in context log."
+                )
+                return
+
+            attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])
+            keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
+            voice_text = context.data.pop(CTX_TG_VOICE_TEXT, None)
+
             await self._send_reply(context, response_text, attachments, keyboard, voice_text)
         except Exception as e:
             PrintStyle.error(f"Telegram auto-reply error: {format_error(e)}")
@@ -55,6 +60,11 @@ class TelegramAutoReply(Extension):
                 typing_stop.set()
             context.data.pop(CTX_TG_REPLY_TO, None)
             context.data.pop(CTX_TG_REPLY_CONTEXT, None)
+            context.data.pop(CTX_TG_ATTACHMENTS, None)
+            context.data.pop(CTX_TG_KEYBOARD, None)
+            context.data.pop(CTX_TG_VOICE_TEXT, None)
+            context.data.pop(CTX_TG_FINAL_REPLY_SENT, None)
+            _clear_telegram_progress_state(context)
 
     async def _send_reply(
         self,
@@ -72,6 +82,7 @@ class TelegramAutoReply(Extension):
         )
         if not error:
             context.data[CTX_SEND_FAILURES] = 0
+            context.data[CTX_TG_FINAL_REPLY_SENT] = True
             return
 
         failures = context.data.get(CTX_SEND_FAILURES, 0) + 1
@@ -112,3 +123,12 @@ def _notify_agent_of_failure(
     )
     context.log.log(type="error", heading="Telegram send failed", content=error)
     context.communicate(UserMessage(message="", system_message=[msg]))
+
+
+def _clear_telegram_progress_state(context: AgentContext):
+    try:
+        from usr.plugins.telegram_integration_voice.helpers.handler import _clear_progress_state
+
+        _clear_progress_state(context)
+    except Exception as e:
+        PrintStyle.warning(f"Telegram progress cleanup failed: {format_error(e)}")

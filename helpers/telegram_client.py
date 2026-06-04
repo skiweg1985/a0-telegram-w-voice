@@ -2,7 +2,10 @@ import os
 import re
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramRetryAfter,
+)
 from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
@@ -13,6 +16,17 @@ from helpers.errors import format_error
 from helpers.print_style import PrintStyle
 
 _UNSET = object()  # sentinel: "not provided" (lets Bot default apply)
+
+
+def _notify_rate_limited(callback) -> None:
+    """Invoke an optional rate-limit callback without letting it break the edit path."""
+    if callback is None:
+        return
+    try:
+        callback()
+    except Exception as e:
+        PrintStyle.warning(f"Telegram rate-limit callback failed: {format_error(e)}")
+
 
 # Text messages
 
@@ -119,6 +133,7 @@ async def send_voice(
     voice_path: str,
     caption: str = "",
     reply_to_message_id: int | None = None,
+    buttons: list[list[dict]] | None = None,
 ) -> int | None:
     """Send a Telegram voice message (.ogg/opus preferred)."""
     try:
@@ -126,11 +141,13 @@ async def send_voice(
             PrintStyle.error(f"Telegram: voice file not found: {voice_path}")
             return None
         input_file = FSInputFile(voice_path)
+        reply_markup = build_inline_keyboard(buttons) if buttons else None
         msg = await bot.send_voice(
             chat_id=chat_id,
             voice=input_file,
             caption=caption[:1024] if caption else None,
             reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
         )
         return msg.message_id
     except Exception as e:
@@ -188,14 +205,43 @@ async def send_text_with_keyboard(
         return None
 
 
+async def delete_message(bot: Bot, chat_id: int, message_id: int) -> bool:
+    """Delete a bot message when Telegram allows it."""
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        return True
+    except TelegramBadRequest as e:
+        err = str(e).lower()
+        if "message to delete not found" in err or "message can't be deleted" in err:
+            PrintStyle.warning(f"Telegram delete_message skipped: {format_error(e)}")
+            return False
+        PrintStyle.error(f"Telegram delete_message failed: {format_error(e)}")
+        return False
+    except Exception as e:
+        PrintStyle.error(f"Telegram delete_message failed: {format_error(e)}")
+        return False
+
+
 async def edit_text(
     bot: Bot,
     chat_id: int,
     message_id: int,
     text: str,
     parse_mode: object = _UNSET,
+    *,
+    rate_limit_is_soft_success: bool = False,
+    on_rate_limited=None,
 ) -> bool:
-    """Edit an existing bot message text. Returns True on success (or no-op), False on hard failure."""
+    """Edit an existing bot message text. Returns True on success (or no-op), False on hard failure.
+
+    ``rate_limit_is_soft_success`` controls how ``TelegramRetryAfter`` (flood control on
+    ``editMessageText``) is reported back. The default ``False`` preserves the historical
+    behaviour: the function returns ``False`` so callers that need a guaranteed delivery
+    (e.g. the final reply) can fall back to ``send_message``. Set this to ``True`` for
+    cosmetic in-place updates (progress bubbles, live drafts, status edits) where it is
+    preferable to silently skip a rate-limited edit rather than spam the chat with a new
+    ``send_message`` for every flood-controlled edit.
+    """
     try:
         pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
         await bot.edit_message_text(
@@ -205,6 +251,17 @@ async def edit_text(
             **pm_kwargs,
         )
         return True
+    except TelegramRetryAfter as e:
+        if rate_limit_is_soft_success:
+            PrintStyle.warning(
+                f"Telegram edit_text rate-limited (retry after {getattr(e, 'retry_after', '?')}s); skipping edit."
+            )
+            _notify_rate_limited(on_rate_limited)
+            return True
+        PrintStyle.warning(
+            f"Telegram edit_text rate-limited (retry after {getattr(e, 'retry_after', '?')}s)."
+        )
+        return False
     except TelegramBadRequest as e:
         err = str(e).lower()
         if "message is not modified" in err:
@@ -218,6 +275,17 @@ async def edit_text(
                 parse_mode=None,
             )
             return True
+        except TelegramRetryAfter as ee:
+            if rate_limit_is_soft_success:
+                PrintStyle.warning(
+                    f"Telegram edit_text rate-limited (retry after {getattr(ee, 'retry_after', '?')}s); skipping edit."
+                )
+                _notify_rate_limited(on_rate_limited)
+                return True
+            PrintStyle.warning(
+                f"Telegram edit_text rate-limited (retry after {getattr(ee, 'retry_after', '?')}s)."
+            )
+            return False
         except TelegramBadRequest as ee:
             if "message is not modified" in str(ee).lower():
                 return True
@@ -238,8 +306,15 @@ async def edit_text_with_keyboard(
     text: str,
     buttons: list[list[dict]],
     parse_mode: object = _UNSET,
+    *,
+    rate_limit_is_soft_success: bool = False,
+    on_rate_limited=None,
 ) -> bool:
-    """Edit existing text + inline keyboard. Returns True on success (or no-op)."""
+    """Edit existing text + inline keyboard. Returns True on success (or no-op).
+
+    See :func:`edit_text` for the meaning of ``rate_limit_is_soft_success`` and the
+    flood-control rationale.
+    """
     try:
         keyboard = build_inline_keyboard(buttons)
         pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
@@ -251,6 +326,17 @@ async def edit_text_with_keyboard(
             **pm_kwargs,
         )
         return True
+    except TelegramRetryAfter as e:
+        if rate_limit_is_soft_success:
+            PrintStyle.warning(
+                f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(e, 'retry_after', '?')}s); skipping edit."
+            )
+            _notify_rate_limited(on_rate_limited)
+            return True
+        PrintStyle.warning(
+            f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(e, 'retry_after', '?')}s)."
+        )
+        return False
     except TelegramBadRequest as e:
         err = str(e).lower()
         if "message is not modified" in err:
@@ -266,6 +352,17 @@ async def edit_text_with_keyboard(
                 parse_mode=None,
             )
             return True
+        except TelegramRetryAfter as ee:
+            if rate_limit_is_soft_success:
+                PrintStyle.warning(
+                    f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(ee, 'retry_after', '?')}s); skipping edit."
+                )
+                _notify_rate_limited(on_rate_limited)
+                return True
+            PrintStyle.warning(
+                f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(ee, 'retry_after', '?')}s)."
+            )
+            return False
         except TelegramBadRequest as ee:
             if "message is not modified" in str(ee).lower():
                 return True
@@ -277,6 +374,47 @@ async def edit_text_with_keyboard(
     except Exception as e:
         PrintStyle.error(f"Telegram edit_text_with_keyboard failed: {format_error(e)}")
         return False
+
+
+def supports_message_draft(bot: Bot) -> bool:
+    return hasattr(bot, "send_message_draft")
+
+
+async def send_message_draft(
+    bot: Bot,
+    chat_id: int,
+    draft_id: int,
+    text: str,
+    parse_mode: object = _UNSET,
+) -> bool:
+    if not supports_message_draft(bot):
+        return False
+    try:
+        pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
+        ok = await bot.send_message_draft(
+            chat_id=chat_id,
+            draft_id=draft_id,
+            text=text,
+            **pm_kwargs,
+        )
+        return bool(ok)
+    except TelegramBadRequest:
+        try:
+            plain = re.sub(r"<[^>]+>", "", text)
+            ok = await bot.send_message_draft(
+                chat_id=chat_id,
+                draft_id=draft_id,
+                text=plain,
+                parse_mode=None,
+            )
+            return bool(ok)
+        except Exception as ee:
+            PrintStyle.error(f"Telegram send_message_draft failed: {format_error(ee)}")
+            return False
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_message_draft failed: {format_error(e)}")
+        return False
+
 
 # Chat actions
 

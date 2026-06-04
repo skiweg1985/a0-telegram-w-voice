@@ -25,16 +25,38 @@ CTX_TG_PROGRESS_LAST_HASH = "_telegram_progress_last_hash"
 CTX_TG_PROGRESS_LAST_TS = "_telegram_progress_last_ts"
 CTX_TG_PROGRESS_LINES = "_telegram_progress_lines"
 CTX_TG_PROGRESS_HEADER = "_telegram_progress_header"
-CTX_TG_LAST_TEXT_RESPONSE = "_telegram_last_text_response"
-CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "_telegram_last_text_response_token"
+# Consecutive flood-control skips of progress edits, and whether the user has
+# already been told that live updates are paused (transient per run).
+CTX_TG_PROGRESS_RL_SKIPS = "_telegram_progress_rate_limit_skips"
+CTX_TG_PROGRESS_RL_NOTIFIED = "_telegram_progress_rate_limit_notified"
+CTX_TG_STREAM_PREVIEW = "_telegram_stream_preview"
+CTX_TG_STREAM_ACTIVE = "_telegram_stream_active"
+CTX_TG_STREAM_DRAFT_ID = "_telegram_stream_draft_id"
+CTX_TG_STREAM_DRAFT_LAST_TS = "_telegram_stream_draft_last_ts"
+CTX_TG_STREAM_DRAFT_ACTIVE = "_telegram_stream_draft_active"
+CTX_TG_STREAM_DRAFT_USED = "_telegram_stream_draft_used"
+CTX_TG_STREAM_DRAFT_DISABLED = "_telegram_stream_draft_disabled"
+CTX_TG_STREAM_PENDING_FULL = "_telegram_stream_pending_full"
+CTX_TG_STREAM_WORKER_TASK = "_telegram_stream_worker_task"
+CTX_TG_STREAM_WORKER_EVENT = "_telegram_stream_worker_event"
+CTX_TG_STREAM_WORKER_TOKEN = "_telegram_stream_worker_token"
+CTX_TG_STREAM_LAST_FLUSH_RAW_LEN = "_telegram_stream_last_flush_raw_len"
+CTX_TG_STREAM_LAST_FLUSH_TS = "_telegram_stream_last_flush_ts"
+CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 
-# Per-session voice behaviour: None (missing) = use plugin config;
-# "off" = never send voice; "auto" / "force" = session voice_mode override.
-# Key must not start with "_" so persist_chat includes it in chat.json.
-CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
+# Last text reply + reveal-button token for the voice_only "Show text" action.
+# Persisted (no leading underscore) so the button survives bot restarts / context reloads.
+CTX_TG_LAST_TEXT_RESPONSE = "telegram_last_text_response"
+CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "telegram_last_text_response_token"
 
-# Per-session walkie-talkie mode: off | voice_only | voice_text | text_only.
-# Persisted (no leading underscore) so Telegram sessions remember the preferred conversation mode.
+# Last user turn (body, sender, attachment paths) so /retry can re-run it.
+# Persisted (no leading underscore) so /retry survives bot restarts / context reloads.
+CTX_TG_LAST_USER_BODY = "telegram_last_user_body"
+CTX_TG_LAST_USER_SENDER = "telegram_last_user_sender"
+CTX_TG_LAST_USER_ATTACHMENTS = "telegram_last_user_attachments"
+
+# Per-session voice reply mode (/voice): off | voice_only | voice_text | auto | text_only.
+# Persisted (no leading underscore) so Telegram sessions remember the preferred mode.
 CTX_TG_VOICE_CONVERSATION_MODE = "telegram_voice_conversation_session"
 
 # Per-session response style for system prompt: missing = use speech.reply.optimize_output_default;
@@ -45,7 +67,7 @@ CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
 # Key without "_" prefix so persist_chat includes it in chat.json.
 CTX_TG_ALSO_SEND_TEXT_OVERRIDE = "telegram_also_send_text_session"
 
-# Per-session tool-status detail: missing = use bot telegram_detail_level; off | info | debug.
+# Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | debug.
 CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"
 
 # Throttle for Telegram detail status lines (transient; reset on new user message).

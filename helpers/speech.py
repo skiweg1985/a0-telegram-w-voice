@@ -56,11 +56,33 @@ def _coerce_bool(value: Any, default: bool = True) -> bool:
     return default
 
 
+def _config_voice_reply(reply: dict) -> tuple[str, bool]:
+    """Resolve the configured voice reply into a (base_mode, also_send_text) pair.
+
+    Accepts the unified WebUI values (off | auto | voice_only | voice_text |
+    text_only) and the legacy split form (voice_mode off|auto|force plus a
+    separate also_send_text flag), so older configs keep working unchanged.
+    base_mode is always one of off | auto | force.
+    """
+    raw = str(reply.get("voice_mode", "off")).strip().lower()
+    also_default = _coerce_bool(reply.get("also_send_text"), True)
+    if raw == "voice_only":
+        return "force", False
+    if raw == "voice_text":
+        return "force", True
+    if raw == "text_only":
+        return "off", True
+    if raw in ("off", "auto", "force"):
+        return raw, also_default
+    return "off", also_default
+
+
 def voice_reply_settings(bot_cfg: dict) -> dict:
     reply = (bot_cfg.get("speech") or {}).get("reply") or {}
+    base_mode, also_send_text = _config_voice_reply(reply)
     return {
-        "voice_mode": str(reply.get("voice_mode", "off")).lower(),  # off|auto|force
-        "also_send_text": _coerce_bool(reply.get("also_send_text"), True),
+        "voice_mode": base_mode,  # off|auto|force
+        "also_send_text": also_send_text,
         "max_chars": int(reply.get("max_chars", 700) or 700),
         "quick_actions": quick_actions_settings(bot_cfg),
     }
@@ -144,27 +166,20 @@ def effective_also_send_text(bot_cfg: dict, ctx_data: dict) -> bool:
 
 
 def effective_voice_reply_mode(bot_cfg: dict, ctx_data: dict) -> str:
-    """Resolved voice reply mode: walkie-talkie mode wins, else session /tts value, else config."""
+    """Resolved voice reply mode: /voice session mode wins, else config default."""
     from usr.plugins.telegram_integration_voice.helpers.constants import (
-        CTX_TG_TTS_OVERRIDE,
         CTX_TG_VOICE_CONVERSATION_MODE,
     )
 
     voice_mode = str(ctx_data.get(CTX_TG_VOICE_CONVERSATION_MODE, "") or "").strip().lower()
     if voice_mode in ("voice_only", "voice_text"):
         return "force"
+    if voice_mode == "auto":
+        return "auto"
     if voice_mode == "text_only":
         return "off"
 
-    base = voice_reply_settings(bot_cfg)["voice_mode"]
-    sess = ctx_data.get(CTX_TG_TTS_OVERRIDE)
-    if sess == "off":
-        return "off"
-    if sess == "force":
-        return "force"
-    if sess == "auto":
-        return "auto"
-    return base
+    return voice_reply_settings(bot_cfg)["voice_mode"]
 
 
 def transcribe_audio_file(bot_cfg: dict, audio_path: str) -> dict:

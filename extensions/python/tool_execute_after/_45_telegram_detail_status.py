@@ -42,6 +42,7 @@ class TelegramDetailStatus(Extension):
             from usr.plugins.telegram_integration_voice.helpers.handler import (
                 _append_progress_line,
                 _render_progress_status_html,
+                schedule_telegram_progress_update,
                 send_telegram_progress_update,
             )
 
@@ -57,7 +58,8 @@ class TelegramDetailStatus(Extension):
             line = ds.format_step_html(name, bot_cfg, level=level, tool_args=tool_args)
             _append_progress_line(context, line, bot_cfg)
             html_text = _render_progress_status_html(context, bot_cfg, done=False)
-            await send_telegram_progress_update(context, html_text, text_is_html=True)
             context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now
+            if not schedule_telegram_progress_update(context, html_text, text_is_html=True):
+                await send_telegram_progress_update(context, html_text, text_is_html=True)
         except Exception as e:
             PrintStyle.warning(f"Telegram detail status: {format_error(e)}")
