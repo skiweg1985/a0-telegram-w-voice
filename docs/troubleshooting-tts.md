@@ -29,5 +29,5 @@ Relevante Zeilen (nach Plugin-Version mit Diagnose-Logs):
 ## Checkliste
 
 1. **`speech.tts.enabled: true`** und Provider (z. B. LiteLLM `base_url` / API-Key) in der Bot-Config, die der Chat wirklich nutzt (Projekt/Profil).
-2. **`speech.reply.voice_mode`:** `force` = immer Sprachantwort (wenn TTS an); `auto` = nur nach Spracheingabe.
+2. **`speech.reply.voice_mode`:** `force` = immer Sprachantwort (wenn TTS an); `auto` = nur nach Spracheingabe. Pro Session steuert `/voice` den Modus (`voice_only`/`voice_text`/`auto`/`text_only`/`off`).
 3. **Agent 0:** Telegram Chain-End-Versand ist nur für `agent.number == 0` aktiv; sonst erscheint eine **Warning** in den Logs.

@@ -144,7 +144,7 @@ def effective_also_send_text(bot_cfg: dict, ctx_data: dict) -> bool:
 
 
 def effective_voice_reply_mode(bot_cfg: dict, ctx_data: dict) -> str:
-    """Resolved voice reply mode: walkie-talkie mode wins, else session /tts value, else config."""
+    """Resolved voice reply mode: /voice mode wins, else legacy session value, else config."""
     from usr.plugins.telegram_integration_voice.helpers.constants import (
         CTX_TG_TTS_OVERRIDE,
         CTX_TG_VOICE_CONVERSATION_MODE,
@@ -153,10 +153,14 @@ def effective_voice_reply_mode(bot_cfg: dict, ctx_data: dict) -> str:
     voice_mode = str(ctx_data.get(CTX_TG_VOICE_CONVERSATION_MODE, "") or "").strip().lower()
     if voice_mode in ("voice_only", "voice_text"):
         return "force"
+    if voice_mode == "auto":
+        return "auto"
     if voice_mode == "text_only":
         return "off"
 
     base = voice_reply_settings(bot_cfg)["voice_mode"]
+    # Legacy fallback: sessions created with the removed /tts command may still
+    # carry this override. Honour it until the session is reset.
     sess = ctx_data.get(CTX_TG_TTS_OVERRIDE)
     if sess == "off":
         return "off"

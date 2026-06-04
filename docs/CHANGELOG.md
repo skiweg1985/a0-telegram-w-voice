@@ -18,6 +18,8 @@
 
 ### Changed
 
+- Voice reply controls consolidated into a single `/voice` command. `/voice` now supports `auto` (voice reply only when the incoming message was a voice message), alongside `voice_only`, `voice_text`, `text_only`, and `off`. The inline keyboard gained an **Auto** button. Sessions created with the old `/tts` command keep their behaviour via a legacy fallback until reset.
+- Default `telegram_detail_level` is now `info` instead of `off`: new chats and bots without an explicit value show throttled tool-step lines. An explicitly configured `off` is still respected; set `telegram_detail_level: off` or use `/detail off` to silence steps.
 - Telegram progress bubble title: `🧠 Working…` → `🔄 In progress…` (covers thinking, tool steps, and live draft preview).
 - `/status` Reply line: removed redundant `chat` extras that echoed session overrides already shown in the effective values (`shaping`, `tool detail`). The line now reads `⚙️ Reply: shaping <mode> · tool detail <level>` — clean, no meta info.
 - `/status`: Voice line shows effective reply mode (`replies`) instead of `voice default`; Reply line uses `chat` instead of `overrides`, with concise extras. Tool detail is labeled **verbose** when the internal level is `debug`.

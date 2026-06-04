@@ -469,3 +469,36 @@
   - yes ([Unreleased] Changed)
 - Follow-ups:
   - none
+
+## 2026-06-04 18:44 – Cursor – Voice-Commands konsolidiert (/tts entfernt)
+
+- Done:
+  - `/tts` Command vollständig entfernt (Handler, Inline-Keyboard, Callback `t`, Dispatch, Menü/Help).
+  - `/voice` um Modus `auto` erweitert (Sprachantwort nur bei Sprach-Eingabe); neuer Auto-Button im Inline-Keyboard.
+  - `speech.effective_voice_reply_mode`: `auto`-Voice-Mode → `auto`; `CTX_TG_TTS_OVERRIDE` nur noch Legacy-Fallback für Altsessions.
+  - Reset/Newchat poppt jetzt auch `CTX_TG_VOICE_CONVERSATION_MODE`.
+  - README/CHANGELOG/troubleshooting-tts aktualisiert.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/speech.py
+  - helpers/handler.py
+  - helpers/command_registry.py
+  - helpers/constants.py
+  - extensions/python/job_loop/_10_telegram_bot.py
+  - README.md
+  - docs/CHANGELOG.md
+  - docs/troubleshooting-tts.md
+- Test notes:
+  - commands: `/voice` (Buttons inkl. Auto), `/voice auto` + Text → Text, `/voice auto` + Voice → Voice, `/voice voice_only|voice_text|text_only|off`, `/status`
+  - endpoints: none
+  - UI path: Telegram Chat (/voice, /status)
+- Changelog updated:
+  - yes ([Unreleased] Changed)
+- Follow-ups:
+  - none

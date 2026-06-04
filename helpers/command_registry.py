@@ -59,14 +59,9 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/detail off|info|verbose|reset — no arg = status + buttons (debug = verbose)",
     ),
     (
-        "tts",
-        "Voice reply mode",
-        "/tts [on|off|auto|force] — no arg = session + buttons",
-    ),
-    (
         "voice",
-        "Walkie-talkie mode",
-        "/voice [voice_only|voice_text|text_only|off] — no arg = status + buttons",
+        "Voice reply mode",
+        "/voice [voice_only|voice_text|auto|text_only|off] — auto speaks only after a voice message; no arg = status + buttons",
     ),
     (
         "alsotext",

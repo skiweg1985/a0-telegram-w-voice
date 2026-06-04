@@ -150,21 +150,6 @@ def _model_preset_button_label(name: str) -> str:
     return n[:57] + "…"
 
 
-def _tts_inline_keyboard() -> list[list[dict]]:
-    """Session voice: plugin default, muted, auto, force."""
-    p = TG_UI_CALLBACK_PREFIX
-    return [
-        [
-            {"text": "Default", "callback_data": f"{p}t|on"},
-            {"text": "Muted", "callback_data": f"{p}t|off"},
-        ],
-        [
-            {"text": "Auto", "callback_data": f"{p}t|auto"},
-            {"text": "Force", "callback_data": f"{p}t|force"},
-        ],
-    ]
-
-
 def _voice_mode_inline_keyboard() -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     return [
@@ -173,7 +158,10 @@ def _voice_mode_inline_keyboard() -> list[list[dict]]:
             {"text": "🎙+📝 Voice + Text", "callback_data": f"{p}v|voice_text"},
         ],
         [
+            {"text": "🔁 Auto", "callback_data": f"{p}v|auto"},
             {"text": "📝 Text only", "callback_data": f"{p}v|text_only"},
+        ],
+        [
             {"text": "⏹ Off", "callback_data": f"{p}v|off"},
         ],
     ]
@@ -202,6 +190,7 @@ def _voice_mode_label(mode: str) -> str:
     return {
         "voice_only": "voice only",
         "voice_text": "voice + text",
+        "auto": "auto (mirrors input)",
         "text_only": "text only",
         "off": "off",
     }.get(str(mode or "off").strip().lower(), "off")
@@ -218,35 +207,14 @@ def _apply_voice_mode_setting(ctx: AgentContext, mode: str) -> str:
     mode = str(mode or "").strip().lower()
     if mode in ("start", "on", "enable"):
         mode = "voice_text"
-    if mode not in ("off", "voice_only", "voice_text", "text_only"):
-        return "Usage: /voice [voice_only|voice_text|text_only|off]"
+    if mode not in ("off", "voice_only", "voice_text", "auto", "text_only"):
+        return "Usage: /voice [voice_only|voice_text|auto|text_only|off]"
     ctx.data[CTX_TG_VOICE_CONVERSATION_MODE] = mode
     if mode == "off":
-        return "🎙 Voice mode off. Session uses normal TTS/text settings again."
-    return f"🎙 Voice mode active: {_voice_mode_label(mode)}."
-
-
-def _tts_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
-    return speech.effective_voice_reply_mode(bot_cfg, ctx.data)
-
-
-def _apply_tts_setting(ctx: AgentContext, mode: str, bot_cfg: dict) -> str:
-    """Apply on|off|auto|force (mutates ctx.data). Returns user-facing reply."""
-    mode = mode.strip().lower()
-    if mode in ("on", "enable"):
-        ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
-        eff = speech.effective_voice_reply_mode(bot_cfg, ctx.data)
-        return f"Voice replies: {eff}."
-    if mode in ("off", "disable"):
-        ctx.data[CTX_TG_TTS_OVERRIDE] = "off"
-        return "Voice replies: off."
+        return "🎙 Voice mode off. Session uses the configured default reply style again."
     if mode == "auto":
-        ctx.data[CTX_TG_TTS_OVERRIDE] = "auto"
-        return "Voice replies: auto."
-    if mode == "force":
-        ctx.data[CTX_TG_TTS_OVERRIDE] = "force"
-        return "Voice replies: force."
-    return "Usage: /tts on|off|auto|force"
+        return "🎙 Voice mode active: auto — voice replies only when you send a voice message."
+    return f"🎙 Voice mode active: {_voice_mode_label(mode)}."
 
 
 def _detail_inline_keyboard() -> list[list[dict]]:
@@ -1137,6 +1105,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
             ctx = AgentContext.get(ctx_id)
             if ctx:
                 ctx.reset()
+                ctx.data.pop(CTX_TG_VOICE_CONVERSATION_MODE, None)
                 ctx.data.pop(CTX_TG_TTS_OVERRIDE, None)
                 ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
                 ctx.data.pop(CTX_TG_VOICE_TEXT, None)
@@ -1220,8 +1189,8 @@ async def handle_voice(message: TgMessage, bot_name: str, bot_cfg: dict):
     if not arg:
         reply = (
             f"{_voice_mode_header(ctx)}\n"
-            "Choose a mode: voice only, voice + text, text only, or off.\n"
-            "Tip: send a voice message and the session stays in the selected reply style."
+            "Choose a mode: voice only, voice + text, auto, text only, or off.\n"
+            "Auto sends a voice reply only when you send a voice message."
         )
         kb = _voice_mode_inline_keyboard()
         save_tmp_chat(ctx)
@@ -1230,51 +1199,10 @@ async def handle_voice(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
         return
 
-    if arg in ("start", "on", "enable", "voice_only", "voice_text", "text_only", "off"):
+    if arg in ("start", "on", "enable", "voice_only", "voice_text", "auto", "text_only", "off"):
         reply = _apply_voice_mode_setting(ctx, arg)
     else:
-        reply = "Usage: /voice [voice_only|voice_text|text_only|off]"
-
-    save_tmp_chat(ctx)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
-
-
-async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
-    """Handle /tts — per-session voice reply mode."""
-    user = message.from_user
-    if not user or not _is_allowed(bot_cfg, user.id, user.username):
-        return
-    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
-    if not ctx:
-        return
-    instance = get_bot(bot_name)
-    if not instance:
-        return
-
-    arg = _cmd_rest(message).lower().strip()
-    if not arg:
-        desc = _tts_session_description(ctx, bot_cfg)
-        reply = (
-            f"Voice replies: {desc}.\n"
-            "Tap a button or type /tts on|off|auto|force"
-        )
-        kb = _tts_inline_keyboard()
-        save_tmp_chat(ctx)
-        await _send_with_temp_bot(
-            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
-        )
-        return
-
-    if arg in ("on", "enable"):
-        reply = _apply_tts_setting(ctx, "on", bot_cfg)
-    elif arg in ("off", "disable"):
-        reply = _apply_tts_setting(ctx, "off", bot_cfg)
-    elif arg == "auto":
-        reply = _apply_tts_setting(ctx, "auto", bot_cfg)
-    elif arg == "force":
-        reply = _apply_tts_setting(ctx, "force", bot_cfg)
-    else:
-        reply = "Usage: /tts on|off|auto|force"
+        reply = "Usage: /voice [voice_only|voice_text|auto|text_only|off]"
 
     save_tmp_chat(ctx)
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
@@ -2083,7 +2011,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
 
         if kind == "v":
-            if payload not in ("voice_only", "voice_text", "text_only", "off"):
+            if payload not in ("voice_only", "voice_text", "auto", "text_only", "off"):
                 await query.answer("Unknown option.")
                 return
             reply = _apply_voice_mode_setting(context, payload)
@@ -2143,13 +2071,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
 
         if kind == "t":
-            if payload not in ("on", "off", "auto", "force"):
-                await query.answer("Unknown option.")
-                return
-            reply = _apply_tts_setting(context, payload, bot_cfg)
-            save_tmp_chat(context)
-            await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await query.answer("This control moved to /voice.")
             return
 
         if kind == "d":

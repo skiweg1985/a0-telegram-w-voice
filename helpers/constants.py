@@ -45,13 +45,14 @@ CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 CTX_TG_LAST_TEXT_RESPONSE = "telegram_last_text_response"
 CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "telegram_last_text_response_token"
 
-# Per-session voice behaviour: None (missing) = use plugin config;
+# Legacy per-session voice override from the removed /tts command:
 # "off" = never send voice; "auto" / "force" = session voice_mode override.
-# Key must not start with "_" so persist_chat includes it in chat.json.
+# No longer written; still read as a fallback so sessions created before the
+# /voice consolidation keep their voice behaviour until they are reset.
 CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
 
-# Per-session walkie-talkie mode: off | voice_only | voice_text | text_only.
-# Persisted (no leading underscore) so Telegram sessions remember the preferred conversation mode.
+# Per-session voice reply mode (/voice): off | voice_only | voice_text | auto | text_only.
+# Persisted (no leading underscore) so Telegram sessions remember the preferred mode.
 CTX_TG_VOICE_CONVERSATION_MODE = "telegram_voice_conversation_session"
 
 # Per-session response style for system prompt: missing = use speech.reply.optimize_output_default;
@@ -62,7 +63,7 @@ CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
 # Key without "_" prefix so persist_chat includes it in chat.json.
 CTX_TG_ALSO_SEND_TEXT_OVERRIDE = "telegram_also_send_text_session"
 
-# Per-session tool-status detail: missing = use bot telegram_detail_level; off | info | debug.
+# Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | debug.
 CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"
 
 # Throttle for Telegram detail status lines (transient; reset on new user message).
