@@ -470,6 +470,44 @@
 - Follow-ups:
   - none
 
+## 2026-06-04 20:55 – Cursor – Settings & Commands bereinigt
+
+- Done:
+  - WebUI/Store auf nutzerrelevante Keys reduziert; Detail-Throttling/Labels/Icons, Progress-Edit-Throttle und Preview-Chars, STT/TTS-Endpoint, STT-Language und Timeouts sind jetzt YAML-only (Merge bewahrt sie über UI-Edits).
+  - Voice-Modell vereinheitlicht: ein 5-Modus-Dropdown (off|auto|voice_only|voice_text|text_only) statt mode + "Also send text"-Toggle; `speech._config_voice_reply` mappt neue und alte (`force` + `also_send_text`) Werte abwärtskompatibel.
+  - `/speakstyle` entfernt (Menü, Job-Loop-Registrierung, Handler-Zweige); `/clear`-Hilfetext korrigiert (kein nicht-existentes `/reset`).
+  - `/alsotext` entfernt (Handler, Inline-Keyboard, Callback `a`, Menü, Registrierung); `effective_also_send_text` liest Altsession-Override weiter, `/clear` poppt ihn.
+  - Legacy `/tts`-Fallback entfernt: `CTX_TG_TTS_OVERRIDE`, Callback `t`, speech.py-Fallback und Clear-Pop.
+  - `optimize_output_default`-Default in YAML auf `off` angeglichen (Code/README).
+  - Neuer Test `tests/test_telegram_voice_reply_mode.py` für das Mapping; gesamte Suite grün (52 Tests).
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/speech.py
+  - helpers/handler.py
+  - helpers/constants.py
+  - helpers/command_registry.py
+  - extensions/python/job_loop/_10_telegram_bot.py
+  - webui/telegram-config-store.js
+  - webui/config.html
+  - default_config.yaml
+  - README.md
+  - docs/CHANGELOG.md
+  - tests/test_telegram_voice_reply_mode.py
+- Test notes:
+  - commands: `python3 -m pytest tests/ -q` (52 passed)
+  - endpoints: none
+  - UI path: WebUI Telegram config (Voice Reply Mode dropdown); Telegram chat (`/voice`, `/optimize_output`, `/detail`, `/status`)
+- Changelog updated:
+  - yes ([Unreleased] Changed + Removed)
+- Follow-ups:
+  - none
+
 ## 2026-06-04 18:44 – Cursor – Voice-Commands konsolidiert (/tts entfernt)
 
 - Done:
@@ -500,5 +538,47 @@
   - UI path: Telegram Chat (/voice, /status)
 - Changelog updated:
   - yes ([Unreleased] Changed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 21:12 – telegram-ux – UX/UI-Potenziale umgesetzt
+
+- Done:
+  - Slash-Commands auf reine Modus-Umschaltung umgestellt: Reset/Default-Buttons und `reset`/`default`-Args aus `/detail` und `/optimize_output` entfernt; `/voice off`-Copy bereinigt.
+  - `/start`- und `/help`-Copy auf Voice/Status/Modus-Umschaltung ausgerichtet.
+  - Englische Locale vereinheitlicht (Reveal-Button "Show text" statt "Text anzeigen").
+  - Session-Suche per Force-Reply: Such-Button armiert eine Einmal-Erfassung der nächsten Nachricht als Suchbegriff.
+  - Klare, gedrosselte Auth-Meldung für nicht-whitelistete User inkl. eigener Telegram-User-ID.
+  - Typing-Indicator wird nach jeder neuen Progress-Nachricht erneut gesendet (Hermes-Pattern).
+  - Sichtbare "Still working"-Notiz nach mehreren flood-control-bedingten Progress-Skips (einmalig pro Lauf).
+  - `/retry` (letzte Nachricht erneut) und `/undo` (letztes Topic aus History entfernen) implementiert und registriert.
+  - Approval/Clarify als Agent-Pattern über das `response`-Tool-Keyboard im System-Prompt verankert (Tastendruck läuft bereits in die Agent-Loop zurück).
+  - WebUI: Defaults-Banner, Answer-Style- und Tool-Detail-Selects, Walkie-Talkie-Preset, Preview-Kadenz/Buffer (operator) ergänzt; chat-überschreibbare Felder als Defaults mit Slash-Command-Hinweis gelabelt.
+  - `/topic [name]` als benannte Parallel-Session auf Basis der bestehenden Session-Infrastruktur.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: (current)
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - helpers/command_registry.py
+  - helpers/constants.py
+  - helpers/telegram_client.py
+  - extensions/python/job_loop/_10_telegram_bot.py
+  - extensions/python/system_prompt/_20_telegram_context.py
+  - prompts/fw.telegram.system_context_reply.md
+  - webui/config.html
+  - webui/telegram-config-store.js
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: `python3 -m pytest tests/ -q` (52 passed)
+  - endpoints: none
+  - UI path: Telegram chat (`/start`, `/help`, `/voice`, `/optimize_output`, `/detail`, `/session`, `/topic`, `/retry`, `/undo`); WebUI Telegram config (defaults, Answer Style, Tool Detail, Walkie-talkie preset, preview tuning)
+- Changelog updated:
+  - yes ([Unreleased] Added/Changed)
 - Follow-ups:
   - none

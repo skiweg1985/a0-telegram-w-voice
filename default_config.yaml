@@ -15,57 +15,61 @@ bots: []
 #   default_project: ""          # Fallback project if user not in user_projects
 #   attachment_max_age_hours: 0  # Hours to keep downloaded attachments. 0 = keep forever.
 #   agent_instructions: ""       # Extra instructions for the agent in Telegram chats
+#
+#   # The WebUI exposes the common settings below. Keys marked "(YAML only)" are not
+#   # shown in the WebUI but are read from this file and preserved across UI edits.
+#
 #   # Tool-run status in chat (tool names / labels only; never tool arguments)
 #   telegram_detail_level: info             # off | info | debug — default info; /detail can override per session
-#   telegram_detail_info_min_interval_sec: 5
-#   telegram_detail_debug_min_interval_sec: 1.5
-#   telegram_detail_exclude_tools: []
-#   telegram_detail_tool_labels: {}        # e.g. { "code_execution": "Run code" }
-#   telegram_detail_icons_enabled: true    # Prefix each step with an emoji icon
-#   telegram_detail_tool_icons: {}         # Override icons, e.g. { "memory_load": "📌" }
-#   telegram_detail_max_body_chars: 3200   # Max chars for debug JSON body (truncated if longer)
+#   telegram_detail_info_min_interval_sec: 5    # (YAML only)
+#   telegram_detail_debug_min_interval_sec: 1.5 # (YAML only)
+#   telegram_detail_exclude_tools: []           # (YAML only)
+#   telegram_detail_tool_labels: {}             # (YAML only) e.g. { "code_execution": "Run code" }
+#   telegram_detail_icons_enabled: true         # (YAML only) Prefix each step with an emoji icon
+#   telegram_detail_tool_icons: {}              # (YAML only) Override icons, e.g. { "memory_load": "📌" }
+#   telegram_detail_max_body_chars: 3200        # (YAML only) Max chars for debug JSON body (truncated if longer)
 
 #
 #   # Voice/STT/TTS
 #   progress:
 #     edit_enabled: true           # Use message edit for break_loop=false progress updates
-#     edit_throttle_ms: 200        # Minimum delay between progress edits
+#     edit_throttle_ms: 200        # (YAML only) Minimum delay between progress edits
 #     final_in_place: true         # Edit last progress message into final result when possible
-#     completed_mode: delete       # delete | none | edit — cleanup leftover progress; never leave "Completed" by default
+#     completed_mode: delete       # (YAML only) delete | none | edit — cleanup leftover progress; never leave "Completed" by default
 #     native_draft_preview: true   # Prefer Telegram sendMessageDraft in private chats when aiogram supports it
 #     live_response_preview: true  # Async/best-effort preview; never blocks Agent Zero streaming
-#     live_response_preview_interval_ms: 800      # Hermes-style max preview cadence
-#     live_response_preview_buffer_threshold: 24  # Flush early after enough new buffered chars
-#     live_response_preview_chars: 1200  # Cap visible draft text to avoid giant Telegram edits
+#     live_response_preview_interval_ms: 800      # (YAML only) Hermes-style max preview cadence
+#     live_response_preview_buffer_threshold: 24  # (YAML only) Flush early after enough new buffered chars
+#     live_response_preview_chars: 1200           # (YAML only) Cap visible draft text to avoid giant Telegram edits
 #
 #   speech:
 #     stt:
 #       enabled: true
 #       provider: openai_compatible   # openai_compatible | elevenlabs | custom_http | local_whisper
 #       base_url: "http://litellm.internal:4000/v1"
-#       endpoint: ""                  # optional override, if empty provider default is used
+#       endpoint: ""                  # (YAML only) optional override, if empty provider default is used
 #       api_key: "${LITELLM_API_KEY}"
 #       model: "whisper-1"
-#       language: "de"
-#       timeout_sec: 60
+#       language: "de"                # (YAML only) ISO language hint; empty = auto-detect
+#       timeout_sec: 60               # (YAML only)
 #
 #     tts:
 #       enabled: true
 #       provider: openai_compatible   # openai_compatible | elevenlabs | custom_http | kokoro_local
 #       base_url: "http://litellm.internal:4000/v1"
-#       endpoint: ""                  # optional override
+#       endpoint: ""                  # (YAML only) optional override
 #       api_key: "${LITELLM_API_KEY}"
 #       model: "gpt-4o-mini-tts"
 #       voice: "alloy"               # for elevenlabs set voice_id here
 #       format: "opus"               # openai: opus/mp3/wav/flac/pcm... | elevenlabs: mp3_44100_128 etc.
 #                                   # Telegram voice replies are auto-converted to ogg/opus when needed.
 #                                   # For raw PCM input the plugin assumes s16le / 24000 Hz / mono by default.
-#       timeout_sec: 60
+#       timeout_sec: 60               # (YAML only)
 #
 #     reply:
-#       optimize_output_default: auto   # auto | off | voice | text — auto adapts style to voice mode per turn; /optimize_output overrides per session
-#       voice_mode: auto              # off | auto | force
-#       also_send_text: true          # send text in addition to voice; /alsotext overrides per session
+#       optimize_output_default: off    # (YAML only) off | voice | text | auto — answer style for new sessions; /optimize_output overrides per session
+#       voice_mode: auto              # off | auto | voice_only | voice_text | text_only
+#                                     # (legacy "force" + also_send_text still accepted)
 #       max_chars: 700                # cap text length for TTS
 #       quick_actions:
 #         enabled: true               # show optional inline UX buttons under Telegram replies

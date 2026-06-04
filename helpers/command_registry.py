@@ -31,7 +31,7 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "clear",
         "Reset chat",
-        "/clear — reset conversation (same as reset)",
+        "/clear — reset conversation in the current session",
     ),
     (
         "newchat",
@@ -44,19 +44,19 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/session [id|search …] — browse, search, or switch saved sessions for this Telegram chat",
     ),
     (
-        "optimize_output",
-        "Answer style (voice/text)",
-        "/optimize_output voice|text|off|reset — no arg = status + buttons",
+        "topic",
+        "Open or name a topic",
+        "/topic [name] — open a named topic or start a new one; no arg lists topics",
     ),
     (
-        "speakstyle",
-        "Shortcut: voice style",
-        "/speakstyle — same as voice optimize; /speakstyle off",
+        "optimize_output",
+        "Answer style (voice/text)",
+        "/optimize_output voice|text|auto|off — no arg = status + buttons",
     ),
     (
         "detail",
         "Tool status detail",
-        "/detail off|info|verbose|reset — no arg = status + buttons (debug = verbose)",
+        "/detail off|info|verbose — no arg = status + buttons (debug = verbose)",
     ),
     (
         "voice",
@@ -64,9 +64,14 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/voice [voice_only|voice_text|auto|text_only|off] — auto speaks only after a voice message; no arg = status + buttons",
     ),
     (
-        "alsotext",
-        "Text alongside voice",
-        "/alsotext [on|off|reset] — send text with voice reply",
+        "retry",
+        "Redo last message",
+        "/retry — re-run your last message",
+    ),
+    (
+        "undo",
+        "Remove last exchange",
+        "/undo — drop the last message and its reply from history",
     ),
     (
         "compact",
@@ -119,7 +124,11 @@ async def register_bot_command_menu(bot: Bot) -> None:
 
 def format_help_text() -> str:
     """Plain-text body for /help replies."""
-    lines = ["Commands:"]
+    lines = [
+        "Reply and voice modes apply to this chat and switch anytime with the commands below.",
+        "",
+        "Commands:",
+    ]
     for _, _, help_line in COMMAND_ROWS:
         lines.append(help_line)
     return "\n".join(lines)

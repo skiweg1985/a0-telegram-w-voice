@@ -17,6 +17,17 @@ from helpers.print_style import PrintStyle
 
 _UNSET = object()  # sentinel: "not provided" (lets Bot default apply)
 
+
+def _notify_rate_limited(callback) -> None:
+    """Invoke an optional rate-limit callback without letting it break the edit path."""
+    if callback is None:
+        return
+    try:
+        callback()
+    except Exception as e:
+        PrintStyle.warning(f"Telegram rate-limit callback failed: {format_error(e)}")
+
+
 # Text messages
 
 MAX_MESSAGE_LENGTH: int = 4096  # Telegram message length limit
@@ -219,6 +230,7 @@ async def edit_text(
     parse_mode: object = _UNSET,
     *,
     rate_limit_is_soft_success: bool = False,
+    on_rate_limited=None,
 ) -> bool:
     """Edit an existing bot message text. Returns True on success (or no-op), False on hard failure.
 
@@ -244,6 +256,7 @@ async def edit_text(
             PrintStyle.warning(
                 f"Telegram edit_text rate-limited (retry after {getattr(e, 'retry_after', '?')}s); skipping edit."
             )
+            _notify_rate_limited(on_rate_limited)
             return True
         PrintStyle.warning(
             f"Telegram edit_text rate-limited (retry after {getattr(e, 'retry_after', '?')}s)."
@@ -267,6 +280,7 @@ async def edit_text(
                 PrintStyle.warning(
                     f"Telegram edit_text rate-limited (retry after {getattr(ee, 'retry_after', '?')}s); skipping edit."
                 )
+                _notify_rate_limited(on_rate_limited)
                 return True
             PrintStyle.warning(
                 f"Telegram edit_text rate-limited (retry after {getattr(ee, 'retry_after', '?')}s)."
@@ -294,6 +308,7 @@ async def edit_text_with_keyboard(
     parse_mode: object = _UNSET,
     *,
     rate_limit_is_soft_success: bool = False,
+    on_rate_limited=None,
 ) -> bool:
     """Edit existing text + inline keyboard. Returns True on success (or no-op).
 
@@ -316,6 +331,7 @@ async def edit_text_with_keyboard(
             PrintStyle.warning(
                 f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(e, 'retry_after', '?')}s); skipping edit."
             )
+            _notify_rate_limited(on_rate_limited)
             return True
         PrintStyle.warning(
             f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(e, 'retry_after', '?')}s)."
@@ -341,6 +357,7 @@ async def edit_text_with_keyboard(
                 PrintStyle.warning(
                     f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(ee, 'retry_after', '?')}s); skipping edit."
                 )
+                _notify_rate_limited(on_rate_limited)
                 return True
             PrintStyle.warning(
                 f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(ee, 'retry_after', '?')}s)."

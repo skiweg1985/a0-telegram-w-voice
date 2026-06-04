@@ -4,10 +4,22 @@
 
 ### Added
 
+- `/retry` re-runs your last message, and `/undo` drops the last exchange (your message and the agent's reply) from the session history.
+- `/topic [name]` opens a named conversation thread in the same chat, or starts a new one; without a name it lists existing topics.
+- Session search is now button-driven: tapping **Search** in the session picker prompts for a term via Telegram's reply box and uses your next message to filter, instead of only showing help text.
+- Unauthorized users now get a clear, throttled reply with their Telegram user ID so they can request access, instead of silence.
+- Visible "still working" notice when live progress edits are repeatedly paused by Telegram rate limits, so a stalled progress message no longer looks frozen. The typing indicator is also refreshed after each new progress message.
+- WebUI: per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`), a **Walkie-talkie preset** button, and operator tuning for live-preview cadence and buffer threshold. Chat-overridable settings are labeled as defaults for new sessions with the matching slash command.
 - Emoji icons and human-readable labels for `/detail info` and `/detail debug` steps (e.g. memory tools show a brain icon, code execution a laptop). Icons are resolved by exact match, prefix-before-colon, then prefix rules with a built-in map and configurable overrides.
 - New bot config keys: `telegram_detail_icons_enabled` (default true), `telegram_detail_tool_icons` (override map), `telegram_detail_max_body_chars` (debug JSON truncation limit, default 3200).
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
 - New Telegram progress config keys `live_response_preview_interval_ms` and `live_response_preview_buffer_threshold` to tune live-preview cadence and early flush behavior.
+
+### Removed
+
+- `/speakstyle` command removed. Use `/optimize_output voice` for a voice-oriented answer style and `/optimize_output off` to turn it off.
+- `/alsotext` command removed. Control text alongside voice via `/voice voice_text` (voice + text) or `/voice voice_only` (voice without text), or set the bot's default **Voice Reply Mode**. Any leftover session override is cleared on `/clear`.
+- Legacy `/tts` session fallback (`telegram_tts_voice_session`) removed. The old TTS inline control is gone; use `/voice`.
 
 ### Fixed
 
@@ -18,13 +30,20 @@
 
 ### Changed
 
-- Voice reply controls consolidated into a single `/voice` command. `/voice` now supports `auto` (voice reply only when the incoming message was a voice message), alongside `voice_only`, `voice_text`, `text_only`, and `off`. The inline keyboard gained an **Auto** button. Sessions created with the old `/tts` command keep their behaviour via a legacy fallback until reset.
+- Slash-command modes are now switch-only: `/detail` and `/optimize_output` no longer offer **Reset**/`reset`/`default`. Every command sets a concrete mode (e.g. `/detail off`), and the WebUI default applies again after `/newchat` or `/clear`.
+- `/voice off` copy now reads "Voice mode: off — replies are text only" instead of implying a return to a configured default.
+- `/start` welcomes with the voice and status commands; `/help` notes that reply and voice modes can be switched anytime in chat.
+- The voice-only reveal button label is now "Show text" (was the German "Text anzeigen") so Telegram copy is consistently English.
+- The agent is guided to confirm risky actions with an Approve/Cancel inline keyboard and to offer choices as inline buttons; button taps are fed back into the agent automatically.
+- Voice reply controls consolidated into a single `/voice` command. `/voice` now supports `auto` (voice reply only when the incoming message was a voice message), alongside `voice_only`, `voice_text`, `text_only`, and `off`. The inline keyboard gained an **Auto** button.
+- WebUI: the bot config now exposes a single **Voice Reply Mode** dropdown (off, auto, voice_only, voice_text, text_only) that mirrors `/voice`, replacing the former mode selector plus separate "Also send text" toggle. Configs that still use `voice_mode: force` together with `also_send_text` keep working unchanged.
+- WebUI no longer shows operator-only tuning keys (detail throttling, labels and icons, progress edit throttle and live-preview character cap, STT/TTS endpoint overrides, STT language hint, request timeouts). These stay configurable in `default_config.yaml` and are preserved across WebUI edits.
 - Default `telegram_detail_level` is now `info` instead of `off`: new chats and bots without an explicit value show throttled tool-step lines. An explicitly configured `off` is still respected; set `telegram_detail_level: off` or use `/detail off` to silence steps.
 - Telegram progress bubble title: `🧠 Working…` → `🔄 In progress…` (covers thinking, tool steps, and live draft preview).
 - `/status` Reply line: removed redundant `chat` extras that echoed session overrides already shown in the effective values (`shaping`, `tool detail`). The line now reads `⚙️ Reply: shaping <mode> · tool detail <level>` — clean, no meta info.
 - `/status`: Voice line shows effective reply mode (`replies`) instead of `voice default`; Reply line uses `chat` instead of `overrides`, with concise extras. Tool detail is labeled **verbose** when the internal level is `debug`.
 - `/detail`: user-facing name **verbose** for the highest level (config value and slash `debug` still work); inline button **Verbose**.
-- `/tts` and `/optimize_output` (no argument): status text without “plugin default” / `session=` meta; short confirmations for `/tts`.
+- `/optimize_output` (no argument): status text without “plugin default” / `session=` meta.
 - `speech.effective_voice_reply_mode()` and `detail_status.detail_level_display()` for consistent effective/display values.
 - Telegram live response previews now use a background coalescing worker so streamed chunks never block agent output and preview edits are flushed on cadence or buffer growth.
 - Tool detail status updates now prefer scheduled background progress edits instead of waiting synchronously on each step.

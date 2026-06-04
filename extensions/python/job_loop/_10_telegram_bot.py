@@ -64,15 +64,17 @@ class TelegramBotManager(Extension):
         handle_callback_query = _tg_handler.handle_callback_query
         handle_new_members = _tg_handler.handle_new_members
         cleanup_old_attachments = _tg_handler.cleanup_old_attachments
+        handle_retry = getattr(_tg_handler, "handle_retry", None)
+        handle_undo = getattr(_tg_handler, "handle_undo", None)
+        handle_topic = getattr(_tg_handler, "handle_topic", None)
 
         handle_optimize_output = getattr(_tg_handler, "handle_optimize_output", None)
-        handle_also_text = getattr(_tg_handler, "handle_also_text", None)
         if handle_optimize_output is None and not _MISSING_OPTIMIZE_HANDLER_WARNED:
             _MISSING_OPTIMIZE_HANDLER_WARNED = True
             PrintStyle.warning(
                 "Telegram plugin: handler.handle_optimize_output is missing — "
                 "deploy a full plugin update (same version for all files). "
-                "Commands /optimize_output and /speakstyle are disabled until then."
+                "Command /optimize_output is disabled until then."
             )
 
         cleanup_old_attachments()
@@ -111,6 +113,11 @@ class TelegramBotManager(Extension):
                 _on_newchat = partial(_make_handler(handle_newchat), bot_name=name, bot_cfg=bot_cfg)
                 _on_help = partial(_make_handler(handle_help), bot_name=name, bot_cfg=bot_cfg)
                 _on_session = partial(_make_handler(handle_session), bot_name=name, bot_cfg=bot_cfg)
+                _on_topic = (
+                    partial(_make_handler(handle_topic), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_topic
+                    else None
+                )
                 _on_voice = (
                     partial(_make_handler(handle_voice), bot_name=name, bot_cfg=bot_cfg)
                     if handle_voice
@@ -122,12 +129,17 @@ class TelegramBotManager(Extension):
                     if handle_optimize_output
                     else None
                 )
-                _on_also_text = (
-                    partial(_make_handler(handle_also_text), bot_name=name, bot_cfg=bot_cfg)
-                    if handle_also_text
+                _on_status = partial(_make_handler(handle_status), bot_name=name, bot_cfg=bot_cfg)
+                _on_retry = (
+                    partial(_make_handler(handle_retry), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_retry
                     else None
                 )
-                _on_status = partial(_make_handler(handle_status), bot_name=name, bot_cfg=bot_cfg)
+                _on_undo = (
+                    partial(_make_handler(handle_undo), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_undo
+                    else None
+                )
                 _on_compact = partial(_make_handler(handle_compact), bot_name=name, bot_cfg=bot_cfg)
                 _on_stop = partial(_make_handler(handle_stop), bot_name=name, bot_cfg=bot_cfg)
                 _on_pause = partial(_make_handler(handle_pause), bot_name=name, bot_cfg=bot_cfg)
@@ -142,18 +154,16 @@ class TelegramBotManager(Extension):
                     ("help", _on_help),
                     ("newchat", _on_newchat),
                     ("session", _on_session),
+                    *(([("topic", _on_topic)]) if _on_topic else []),
                     *(([("voice", _on_voice)]) if _on_voice else []),
                     ("detail", _on_detail),
                 ]
                 if _on_optimize:
-                    _extra_commands.extend(
-                        [
-                            ("optimize_output", _on_optimize),
-                            ("speakstyle", _on_optimize),
-                        ]
-                    )
-                if _on_also_text:
-                    _extra_commands.append(("alsotext", _on_also_text))
+                    _extra_commands.append(("optimize_output", _on_optimize))
+                if _on_retry:
+                    _extra_commands.append(("retry", _on_retry))
+                if _on_undo:
+                    _extra_commands.append(("undo", _on_undo))
                 _extra_commands.extend(
                     [
                         ("status", _on_status),

@@ -287,16 +287,6 @@
 
               <div class="field">
                 <div class="field-label">
-                  <div class="field-title">Edit throttle (ms)</div>
-                  <div class="field-description">Minimum delay between progress edits</div>
-                </div>
-                <div class="field-control">
-                  <input type="number" x-model.number="bot.progress.edit_throttle_ms" min="0" step="100" />
-                </div>
-              </div>
-
-              <div class="field">
-                <div class="field-label">
                   <div class="field-title">Final response in same message</div>
                   <div class="field-description">Edit final answer into last progress message when possible</div>
                 </div>
@@ -334,13 +324,23 @@
                 </div>
               </div>
 
-              <div class="field">
+              <div class="field" x-show="bot.progress.live_response_preview">
                 <div class="field-label">
-                  <div class="field-title">Live draft preview chars</div>
-                  <div class="field-description">Maximum visible characters for the streamed draft snippet</div>
+                  <div class="field-title">Preview cadence (ms)</div>
+                  <div class="field-description">Operator / technical. Maximum interval between live draft edits</div>
                 </div>
                 <div class="field-control">
-                  <input type="number" x-model.number="bot.progress.live_response_preview_chars" min="160" step="50" />
+                  <input type="number" x-model.number="bot.progress.live_response_preview_interval_ms" min="200" step="100" placeholder="800" />
+                </div>
+              </div>
+
+              <div class="field" x-show="bot.progress.live_response_preview">
+                <div class="field-label">
+                  <div class="field-title">Preview buffer threshold</div>
+                  <div class="field-description">Operator / technical. Flush a draft early after this many new characters</div>
+                </div>
+                <div class="field-control">
+                  <input type="number" x-model.number="bot.progress.live_response_preview_buffer_threshold" min="1" step="1" placeholder="24" />
                 </div>
               </div>
 
@@ -381,16 +381,6 @@
                 </div>
                 <div class="field-control">
                   <input type="text" x-model="bot.speech.stt.base_url" placeholder="https://api.openai.com/v1" />
-                </div>
-              </div>
-
-              <div class="field" x-show="bot.speech.stt.provider !== 'local_whisper'">
-                <div class="field-label">
-                  <div class="field-title">STT Endpoint (optional)</div>
-                  <div class="field-description">Override provider default endpoint</div>
-                </div>
-                <div class="field-control">
-                  <input type="text" x-model="bot.speech.stt.endpoint" placeholder="/audio/transcriptions" />
                 </div>
               </div>
 
@@ -454,15 +444,6 @@
 
               <div class="field" x-show="bot.speech.tts.provider !== 'kokoro_local'">
                 <div class="field-label">
-                  <div class="field-title">TTS Endpoint (optional)</div>
-                </div>
-                <div class="field-control">
-                  <input type="text" x-model="bot.speech.tts.endpoint" placeholder="/audio/speech" />
-                </div>
-              </div>
-
-              <div class="field" x-show="bot.speech.tts.provider !== 'kokoro_local'">
-                <div class="field-label">
                   <div class="field-title">TTS API Key</div>
                 </div>
                 <div class="field-control">
@@ -510,29 +491,65 @@
 
               <div class="field-divider" style="margin-top:8px;font-weight:600;opacity:.85;">Voice Reply Behavior</div>
 
+              <div class="tg-guide-note" style="margin:4px 0 10px;">
+                These are defaults for new sessions. Users switch modes in chat with slash commands, and the defaults apply again after /newchat or /clear.
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Walkie-talkie preset</div>
+                  <div class="field-description">Sets STT + TTS on, voice-only replies, and voice answer style.</div>
+                </div>
+                <div class="field-control">
+                  <button type="button" class="btn btn-field"
+                          @click.stop="$store.telegramConfig.applyWalkieTalkie(bot)">
+                    Apply
+                  </button>
+                </div>
+              </div>
+
               <div class="field">
                 <div class="field-label">
                   <div class="field-title">Voice Reply Mode</div>
-                  <div class="field-description">off, auto (if user sent voice), force (always)</div>
+                  <div class="field-description">Default for new sessions. In chat: /voice</div>
                 </div>
                 <div class="field-control">
                   <select x-model="bot.speech.reply.voice_mode">
-                    <option value="off">off</option>
-                    <option value="auto">auto</option>
-                    <option value="force">force</option>
+                    <option value="off">No voice replies</option>
+                    <option value="auto">Auto (voice only after a voice message)</option>
+                    <option value="voice_only">Voice only</option>
+                    <option value="voice_text">Voice + text</option>
+                    <option value="text_only">Text only</option>
                   </select>
                 </div>
               </div>
 
               <div class="field">
                 <div class="field-label">
-                  <div class="field-title">Also send text</div>
+                  <div class="field-title">Answer Style</div>
+                  <div class="field-description">Default for new sessions. In chat: /optimize_output</div>
                 </div>
                 <div class="field-control">
-                  <label class="toggle">
-                    <input type="checkbox" x-model="bot.speech.reply.also_send_text" />
-                    <span class="toggler"></span>
-                  </label>
+                  <select x-model="bot.speech.reply.optimize_output_default">
+                    <option value="off">No extra styling</option>
+                    <option value="auto">Auto (follows voice mode)</option>
+                    <option value="voice">Voice (TTS-friendly)</option>
+                    <option value="text">Text (reading)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Tool Status Detail</div>
+                  <div class="field-description">Default for new sessions. In chat: /detail</div>
+                </div>
+                <div class="field-control">
+                  <select x-model="bot.telegram_detail_level">
+                    <option value="off">Off</option>
+                    <option value="info">Info</option>
+                    <option value="debug">Verbose</option>
+                  </select>
                 </div>
               </div>
 

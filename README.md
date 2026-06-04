@@ -62,7 +62,7 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 - STT for incoming Telegram voice/audio
 - TTS for outgoing Telegram voice replies
 - Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
-- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/session`, `/detail`, `/voice`, `/optimize_output`, `/speakstyle`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/detail`, `/voice`, `/project`, `/optimize_output`, `/model` where applicable). Session `/voice` adjusts the reply mode until `/clear`. `/optimize_output` steers how the agent phrases replies. `/session` opens a paginated session picker with inline navigation, details view, and search support.
+- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/session`, `/detail`, `/voice`, `/optimize_output`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/detail`, `/voice`, `/project`, `/optimize_output`, `/model` where applicable). Session `/voice` adjusts the reply mode until `/clear`. `/optimize_output` steers how the agent phrases replies. `/session` opens a paginated session picker with inline navigation, details view, and search support.
 
 ## Slash commands (summary)
 
@@ -77,7 +77,6 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 | `/detail` | `off` / `info` / `verbose` / `reset` (`debug` accepted as alias), or no arg shows level + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** (`auto` speaks only after a voice message) |
 | `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode **with inline buttons** (typing still works) |
-| `/speakstyle` | Shortcut for voice-oriented output; `/speakstyle off` turns the extra prompt off |
 | `/compact` | Compress history (utility LLM) |
 | `/stop` | Abort running task |
 | `/project` | Active + available projects + **buttons** when projects exist, or `/project <name>` |
@@ -131,9 +130,8 @@ bots:
         timeout_sec: 60
 
       reply:
-        optimize_output_default: off   # off | voice | text — new sessions; /optimize_output overrides
-        voice_mode: auto
-        also_send_text: true
+        optimize_output_default: off   # off | voice | text | auto — new sessions; /optimize_output overrides
+        voice_mode: auto               # off | auto | voice_only | voice_text | text_only (legacy force + also_send_text still accepted)
         max_chars: 700
 ```
 

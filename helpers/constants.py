@@ -25,6 +25,10 @@ CTX_TG_PROGRESS_LAST_HASH = "_telegram_progress_last_hash"
 CTX_TG_PROGRESS_LAST_TS = "_telegram_progress_last_ts"
 CTX_TG_PROGRESS_LINES = "_telegram_progress_lines"
 CTX_TG_PROGRESS_HEADER = "_telegram_progress_header"
+# Consecutive flood-control skips of progress edits, and whether the user has
+# already been told that live updates are paused (transient per run).
+CTX_TG_PROGRESS_RL_SKIPS = "_telegram_progress_rate_limit_skips"
+CTX_TG_PROGRESS_RL_NOTIFIED = "_telegram_progress_rate_limit_notified"
 CTX_TG_STREAM_PREVIEW = "_telegram_stream_preview"
 CTX_TG_STREAM_ACTIVE = "_telegram_stream_active"
 CTX_TG_STREAM_DRAFT_ID = "_telegram_stream_draft_id"
@@ -40,16 +44,16 @@ CTX_TG_STREAM_LAST_FLUSH_RAW_LEN = "_telegram_stream_last_flush_raw_len"
 CTX_TG_STREAM_LAST_FLUSH_TS = "_telegram_stream_last_flush_ts"
 CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 
-# Last text reply + reveal-button token for the voice_only "Text anzeigen" action.
+# Last text reply + reveal-button token for the voice_only "Show text" action.
 # Persisted (no leading underscore) so the button survives bot restarts / context reloads.
 CTX_TG_LAST_TEXT_RESPONSE = "telegram_last_text_response"
 CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "telegram_last_text_response_token"
 
-# Legacy per-session voice override from the removed /tts command:
-# "off" = never send voice; "auto" / "force" = session voice_mode override.
-# No longer written; still read as a fallback so sessions created before the
-# /voice consolidation keep their voice behaviour until they are reset.
-CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
+# Last user turn (body, sender, attachment paths) so /retry can re-run it.
+# Persisted (no leading underscore) so /retry survives bot restarts / context reloads.
+CTX_TG_LAST_USER_BODY = "telegram_last_user_body"
+CTX_TG_LAST_USER_SENDER = "telegram_last_user_sender"
+CTX_TG_LAST_USER_ATTACHMENTS = "telegram_last_user_attachments"
 
 # Per-session voice reply mode (/voice): off | voice_only | voice_text | auto | text_only.
 # Persisted (no leading underscore) so Telegram sessions remember the preferred mode.

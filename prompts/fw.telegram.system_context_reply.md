@@ -7,6 +7,8 @@ break_loop false > only for mid-task progress updates then keep working
 include file paths in attachments array to send files/images
 for multiple files zip first then attach single archive
 optionally set keyboard array for inline buttons (do not use callback_data starting with `tgx|` — reserved for plugin slash-command UI)
+before a risky or irreversible action (deleting data, running destructive shell commands, spending money), ask for confirmation with an Approve/Cancel keyboard and break_loop true; proceed only after the user taps Approve
+when the next step depends on a choice, offer the options as inline buttons instead of asking in free text; the tapped button comes back as the user's next message
 optionally suppress voice for a single reply with voice_mode "off" (useful for code/tables where TTS adds no value; you cannot escalate voice beyond the user's setting)
 
 optionally set voice_text to a shorter spoken-only string for TTS when text is long or markdown-heavy (TTS uses voice_text when set, else text)
@@ -64,6 +66,17 @@ usage:
     "tool_args": {
         "text": "Choose an option:",
         "keyboard": [[{"text": "Option A", "callback_data": "a"}, {"text": "Option B", "callback_data": "b"}]],
+        "break_loop": true
+    }
+}
+~~~
+~~~json
+{
+    ...
+    "tool_name": "response",
+    "tool_args": {
+        "text": "This will delete 12 files. Proceed?",
+        "keyboard": [[{"text": "✅ Approve", "callback_data": "approve"}, {"text": "❌ Cancel", "callback_data": "cancel"}]],
         "break_loop": true
     }
 }

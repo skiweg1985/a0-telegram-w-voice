@@ -56,46 +56,34 @@ export const store = createStore("telegramConfig", {
       agent_instructions: "",
       attachment_max_age_hours: 0,
       telegram_detail_level: "info",
-      telegram_detail_info_min_interval_sec: 5,
-      telegram_detail_debug_min_interval_sec: 1.5,
-      telegram_detail_exclude_tools: [],
-      telegram_detail_tool_labels: {},
-      telegram_detail_icons_enabled: true,
-      telegram_detail_tool_icons: {},
-      telegram_detail_max_body_chars: 3200,
       progress: {
         edit_enabled: true,
-        edit_throttle_ms: 200,
         final_in_place: true,
         native_draft_preview: true,
         live_response_preview: true,
-        live_response_preview_chars: 1200,
+        live_response_preview_interval_ms: 800,
+        live_response_preview_buffer_threshold: 24,
       },
       speech: {
         stt: {
           enabled: false,
           provider: "openai_compatible",
           base_url: "",
-          endpoint: "",
           api_key: "",
           model: "whisper-1",
-          language: "",
-          timeout_sec: 60,
         },
         tts: {
           enabled: false,
           provider: "openai_compatible",
           base_url: "",
-          endpoint: "",
           api_key: "",
           model: "gpt-4o-mini-tts",
           voice: "alloy",
           format: "opus",
-          timeout_sec: 60,
         },
         reply: {
           voice_mode: "auto",
-          also_send_text: true,
+          optimize_output_default: "off",
           max_chars: 700,
           quick_actions: {
             enabled: true,
@@ -141,6 +129,18 @@ export const store = createStore("telegramConfig", {
   removeBot(config, idx) {
     config.bots.splice(idx, 1);
     this.expandedIdx = null;
+  },
+
+  applyWalkieTalkie(bot) {
+    this.ensureSpeech(bot);
+    bot.speech.stt.enabled = true;
+    bot.speech.tts.enabled = true;
+    bot.speech.reply.voice_mode = "voice_only";
+    bot.speech.reply.optimize_output_default = "voice";
+    toastFrontendSuccess(
+      "Walkie-talkie defaults applied. Save to keep them.",
+      "Telegram Integration (Voice)",
+    );
   },
 
   toggle(idx) {

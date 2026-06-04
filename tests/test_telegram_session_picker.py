@@ -36,6 +36,11 @@ class _DummyCallbackQuery:
     pass
 
 
+class _DummyForceReply:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
 class _DummyAgentContext:
     registry = {}
 
@@ -129,6 +134,7 @@ def _install_stub_modules():
     aiogram_types = types.ModuleType("aiogram.types")
     aiogram_types.Message = _DummyMessage
     aiogram_types.CallbackQuery = _DummyCallbackQuery
+    aiogram_types.ForceReply = _DummyForceReply
     sys.modules["aiogram.types"] = aiogram_types
 
     agent = types.ModuleType("agent")
@@ -210,6 +216,11 @@ def _install_stub_modules():
     tc.delete_message = lambda *args, **kwargs: None
     tc.supports_message_draft = lambda *args, **kwargs: False
     tc.send_message_draft = lambda *args, **kwargs: None
+
+    async def _tc_send_typing(*args, **kwargs):
+        return None
+
+    tc.send_typing = _tc_send_typing
     sys.modules["usr.plugins.telegram_integration_voice.helpers.telegram_client"] = tc
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
