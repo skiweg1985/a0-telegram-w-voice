@@ -557,6 +557,22 @@ def _session_matches_identity(meta: dict, bot_name: str, user_id: int, chat_id: 
     return True
 
 
+def _session_binding_state(meta: dict, bot_name: str, user_id: int, chat_id: int) -> str | None:
+    data = meta.get("data") or {}
+    if not isinstance(data, dict):
+        return None
+
+    tg_keys = (CTX_TG_BOT, CTX_TG_USER_ID, CTX_TG_CHAT_ID)
+    has_any_tg_identity = any(str(data.get(key) or "").strip() for key in tg_keys)
+    if not has_any_tg_identity:
+        return "unbound"
+
+    if _session_matches_identity(meta, bot_name, user_id, chat_id):
+        return "bound"
+
+    return None
+
+
 def _list_switchable_sessions(
     bot_name: str, user_id: int, chat_id: int, limit: int | None = None
 ) -> list[dict]:
@@ -570,8 +586,12 @@ def _list_switchable_sessions(
         if not os.path.isdir(path):
             continue
         meta = _read_persisted_chat_meta(entry)
-        if not meta or not _session_matches_identity(meta, bot_name, user_id, chat_id):
+        if not meta:
             continue
+        binding_state = _session_binding_state(meta, bot_name, user_id, chat_id)
+        if not binding_state:
+            continue
+        meta["telegram_binding"] = binding_state
         sessions.append(meta)
 
     sessions.sort(
@@ -640,7 +660,13 @@ def _session_selector_keyboard(
         ctx_id = str(meta.get("id") or "").strip()
         if not ctx_id:
             continue
-        marker = "🟢 " if ctx_id == str(active_ctx_id or "") else "💬 "
+        binding_state = str(meta.get("telegram_binding") or "bound")
+        if ctx_id == str(active_ctx_id or ""):
+            marker = "🟢 "
+        elif binding_state == "unbound":
+            marker = "🌐 "
+        else:
+            marker = "💬 "
         rows.append([
             {
                 "text": _model_preset_button_label(f"{marker}{meta.get('display_name') or ctx_id}"),
@@ -666,15 +692,24 @@ def _session_selector_keyboard(
 def _session_details_text(meta: dict, active_ctx_id: str | None) -> str:
     ctx_id = str(meta.get("id") or "")
     active = ctx_id == str(active_ctx_id or "")
+    binding_state = str(meta.get("telegram_binding") or "bound")
+    if active:
+        status = "🟢 active"
+    elif binding_state == "unbound":
+        status = "🔓 unbound web session"
+    else:
+        status = "⚪ inactive"
     lines = [
         f"📂 {meta.get('display_name') or ctx_id}",
         "",
-        f"Status: {'🟢 active' if active else '⚪ inactive'}",
+        f"Status: {status}",
         f"Session ID: {ctx_id}",
         f"Created: {_format_session_date(meta.get('created_at'))}",
         f"Last activity: {_format_session_timestamp(meta.get('last_message'))}",
         f"Messages: {meta.get('message_count', 0)}",
     ]
+    if binding_state == "unbound" and not active:
+        lines.extend(["", "Opening this session will bind it to this Telegram chat."])
     summary = _extract_user_prompt_summary(meta)
     if summary:
         lines.extend(["", f"Topic: {_trim_session_title(summary, limit=80)}"])
@@ -685,7 +720,13 @@ def _session_details_keyboard(meta: dict, active_ctx_id: str | None) -> list[lis
     p = TG_UI_CALLBACK_PREFIX
     ctx_id = str(meta.get("id") or "")
     is_active = ctx_id == str(active_ctx_id or "")
-    switch_label = "🟢 Already active" if is_active else "✅ Open this session"
+    binding_state = str(meta.get("telegram_binding") or "bound")
+    if is_active:
+        switch_label = "🟢 Already active"
+    elif binding_state == "unbound":
+        switch_label = "✅ Open and bind to this chat"
+    else:
+        switch_label = "✅ Open this session"
     return [
         [{"text": switch_label, "callback_data": f"{p}ss|{ctx_id}"}],
         [{"text": "⬅️ Back", "callback_data": f"{p}sb|back"}],
@@ -823,15 +864,24 @@ def _activate_existing_session(
     if not target:
         return False, "Session not found for this Telegram chat.", None
 
-    ctx = _load_persisted_context(
-        target_ctx_id,
-        bot_cfg,
-        expected_bot_name=bot_name,
-        expected_user_id=user_id,
-        expected_chat_id=chat_id,
-    )
+    binding_state = str(target.get("telegram_binding") or "bound")
+    if binding_state == "unbound":
+        ctx = _load_persisted_context(target_ctx_id, bot_cfg)
+    else:
+        ctx = _load_persisted_context(
+            target_ctx_id,
+            bot_cfg,
+            expected_bot_name=bot_name,
+            expected_user_id=user_id,
+            expected_chat_id=chat_id,
+        )
     if not ctx:
         return False, "Failed to load that saved session.", None
+
+    if binding_state == "unbound":
+        ctx.data[CTX_TG_BOT] = bot_name
+        ctx.data[CTX_TG_USER_ID] = user_id
+        ctx.data[CTX_TG_CHAT_ID] = chat_id
 
     key = _map_key(bot_name, user_id, chat_id)
     with _chat_map_lock:
@@ -847,9 +897,10 @@ def _activate_existing_session(
         _save_state(state)
 
     save_tmp_chat(ctx)
+    suffix = " Bound to this Telegram chat." if binding_state == "unbound" else ""
     return (
         True,
-        f"Switched to {target.get('display_name') or ctx.id}. Last activity: {_format_session_timestamp(target.get('last_message'))}",
+        f"Switched to {target.get('display_name') or ctx.id}. Last activity: {_format_session_timestamp(target.get('last_message'))}.{suffix}",
         ctx,
     )
 
