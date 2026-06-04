@@ -59,6 +59,12 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_STREAM_DRAFT_ACTIVE,
     CTX_TG_STREAM_DRAFT_USED,
     CTX_TG_STREAM_DRAFT_DISABLED,
+    CTX_TG_STREAM_PENDING_FULL,
+    CTX_TG_STREAM_WORKER_TASK,
+    CTX_TG_STREAM_WORKER_EVENT,
+    CTX_TG_STREAM_WORKER_TOKEN,
+    CTX_TG_STREAM_LAST_FLUSH_RAW_LEN,
+    CTX_TG_STREAM_LAST_FLUSH_TS,
     CTX_TG_FINAL_REPLY_SENT,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
@@ -2495,6 +2501,14 @@ def _progress_settings(bot_cfg: dict) -> dict:
         preview_chars = int(cfg.get("live_response_preview_chars", 1200) or 1200)
     except (TypeError, ValueError):
         preview_chars = 1200
+    try:
+        preview_interval_ms = int(cfg.get("live_response_preview_interval_ms", 800) or 800)
+    except (TypeError, ValueError):
+        preview_interval_ms = 800
+    try:
+        preview_threshold = int(cfg.get("live_response_preview_buffer_threshold", 24) or 24)
+    except (TypeError, ValueError):
+        preview_threshold = 24
     completed_mode = str(cfg.get("completed_mode", "delete") or "delete").strip().lower()
     if completed_mode not in {"delete", "none", "edit"}:
         completed_mode = "delete"
@@ -2506,10 +2520,13 @@ def _progress_settings(bot_cfg: dict) -> dict:
         "live_response_preview": bool(cfg.get("live_response_preview", True)),
         "native_draft_preview": bool(cfg.get("native_draft_preview", True)),
         "live_response_preview_chars": max(160, min(preview_chars, 4000)),
+        "live_response_preview_interval_ms": max(100, min(preview_interval_ms, 10000)),
+        "live_response_preview_buffer_threshold": max(1, min(preview_threshold, 4000)),
     }
 
 
 def _clear_progress_state(context: AgentContext):
+    _cancel_stream_preview_worker(context)
     context.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
     context.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
     context.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
@@ -2522,7 +2539,30 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_USED, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_DISABLED, None)
+    context.data.pop(CTX_TG_STREAM_PENDING_FULL, None)
+    context.data.pop(CTX_TG_STREAM_LAST_FLUSH_RAW_LEN, None)
+    context.data.pop(CTX_TG_STREAM_LAST_FLUSH_TS, None)
     context.data.pop(CTX_TG_FINAL_REPLY_SENT, None)
+
+
+def _cancel_stream_preview_worker(context: AgentContext):
+    event = context.data.pop(CTX_TG_STREAM_WORKER_EVENT, None)
+    task = context.data.pop(CTX_TG_STREAM_WORKER_TASK, None)
+    context.data.pop(CTX_TG_STREAM_WORKER_TOKEN, None)
+    if event:
+        with suppress(Exception):
+            event.set()
+    if task and not task.done():
+        with suppress(Exception):
+            task.cancel()
+
+
+def _forget_stream_preview_worker(context: AgentContext, token: str, task):
+    if context.data.get(CTX_TG_STREAM_WORKER_TOKEN) != token:
+        return
+    if context.data.get(CTX_TG_STREAM_WORKER_TASK) is task:
+        context.data.pop(CTX_TG_STREAM_WORKER_TASK, None)
+        context.data.pop(CTX_TG_STREAM_WORKER_EVENT, None)
 
 
 def _progress_history_limit(bot_cfg: dict, level: str) -> int:
@@ -2740,14 +2780,6 @@ async def _send_telegram_live_draft_preview(
     if not _supports_native_draft_preview(context, instance.bot):
         return False
 
-    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
-    progress_cfg = _progress_settings(bot_cfg)
-    throttle_ms = max(0, int(progress_cfg["throttle_ms"]))
-    now_ms = int(time.time() * 1000)
-    last_ts = int(context.data.get(CTX_TG_STREAM_DRAFT_LAST_TS, 0) or 0)
-    if throttle_ms > 0 and (now_ms - last_ts) < throttle_ms:
-        return True
-
     draft_id = int(context.data.get(CTX_TG_STREAM_DRAFT_ID, 0) or 0)
     if draft_id <= 0:
         draft_id = (uuid.uuid4().int % 2147483646) + 1
@@ -2779,7 +2811,7 @@ async def _send_telegram_live_draft_preview(
             context.data[CTX_TG_STREAM_DRAFT_DISABLED] = True
             context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
             return False
-        context.data[CTX_TG_STREAM_DRAFT_LAST_TS] = now_ms
+        context.data[CTX_TG_STREAM_DRAFT_LAST_TS] = int(time.time() * 1000)
         context.data[CTX_TG_STREAM_DRAFT_ACTIVE] = True
         context.data[CTX_TG_STREAM_DRAFT_USED] = True
         return True
@@ -2796,31 +2828,124 @@ async def handle_telegram_response_stream_chunk(context: AgentContext, stream_da
     if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
         return
 
-    preview = _extract_live_response_preview((stream_data or {}).get("full", ""))
-    current_preview = str(context.data.get(CTX_TG_STREAM_PREVIEW, "") or "")
-
-    if not preview:
+    stream_full = str((stream_data or {}).get("full", "") or "")
+    if not stream_full:
         return
+
+    context.data[CTX_TG_STREAM_PENDING_FULL] = stream_full
+    context.data[CTX_TG_STREAM_ACTIVE] = True
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    event = context.data.get(CTX_TG_STREAM_WORKER_EVENT)
+    if event is None:
+        event = asyncio.Event()
+        context.data[CTX_TG_STREAM_WORKER_EVENT] = event
+    with suppress(Exception):
+        event.set()
+
+    task = context.data.get(CTX_TG_STREAM_WORKER_TASK)
+    if task and not task.done():
+        return
+
+    token = str(context.data.get(CTX_TG_STREAM_WORKER_TOKEN) or uuid.uuid4().hex)
+    context.data[CTX_TG_STREAM_WORKER_TOKEN] = token
+    task = loop.create_task(_telegram_live_preview_worker(context, token))
+    context.data[CTX_TG_STREAM_WORKER_TASK] = task
+    task.add_done_callback(lambda t: _forget_stream_preview_worker(context, token, t))
+
+
+async def _telegram_live_preview_worker(context: AgentContext, token: str):
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    progress_cfg = _progress_settings(bot_cfg)
+    interval_sec = progress_cfg["live_response_preview_interval_ms"] / 1000.0
+    threshold = int(progress_cfg["live_response_preview_buffer_threshold"])
+    context.data.setdefault(CTX_TG_STREAM_LAST_FLUSH_RAW_LEN, 0)
+    context.data.setdefault(CTX_TG_STREAM_LAST_FLUSH_TS, time.monotonic())
+
+    try:
+        while context.data.get(CTX_TG_STREAM_WORKER_TOKEN) == token:
+            raw = str(context.data.get(CTX_TG_STREAM_PENDING_FULL, "") or "")
+            if not raw:
+                return
+
+            now = time.monotonic()
+            last_len = int(context.data.get(CTX_TG_STREAM_LAST_FLUSH_RAW_LEN, 0) or 0)
+            last_ts = float(context.data.get(CTX_TG_STREAM_LAST_FLUSH_TS, now) or now)
+            raw_delta = max(0, len(raw) - last_len)
+            due_by_size = raw_delta >= threshold
+            due_by_time = (now - last_ts) >= interval_sec
+
+            if due_by_size or due_by_time:
+                await _flush_telegram_live_preview_once(context, token)
+                context.data[CTX_TG_STREAM_LAST_FLUSH_RAW_LEN] = len(
+                    str(context.data.get(CTX_TG_STREAM_PENDING_FULL, "") or "")
+                )
+                context.data[CTX_TG_STREAM_LAST_FLUSH_TS] = time.monotonic()
+                continue
+
+            event = context.data.get(CTX_TG_STREAM_WORKER_EVENT)
+            timeout = max(0.05, interval_sec - (now - last_ts))
+            if event is None:
+                await asyncio.sleep(timeout)
+                continue
+            with suppress(Exception):
+                event.clear()
+            try:
+                await asyncio.wait_for(event.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                pass
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        PrintStyle.warning(f"Telegram live preview worker failed: {format_error(e)}")
+
+
+async def _flush_telegram_live_preview_once(context: AgentContext, token: str) -> bool:
+    if context.data.get(CTX_TG_STREAM_WORKER_TOKEN) != token:
+        return False
+
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    progress_cfg = _progress_settings(bot_cfg)
+    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
+        return False
+
+    preview = _extract_live_response_preview(
+        str(context.data.get(CTX_TG_STREAM_PENDING_FULL, "") or "")
+    )
+    current_preview = str(context.data.get(CTX_TG_STREAM_PREVIEW, "") or "")
+    if not preview:
+        return False
 
     next_preview = str(preview.get("text") or "")
     if not next_preview or next_preview == current_preview:
-        return
+        return True
 
     context.data[CTX_TG_STREAM_PREVIEW] = next_preview
     context.data[CTX_TG_STREAM_ACTIVE] = True
     if await _send_telegram_live_draft_preview(context, next_preview):
-        return
+        return True
+    if context.data.get(CTX_TG_STREAM_WORKER_TOKEN) != token:
+        return False
     level = detail_status.effective_detail_level(bot_cfg, context.data)
     if level == "off":
-        return
+        return False
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)
+    return True
 
 
 def handle_telegram_response_stream_end(context: AgentContext):
+    _cancel_stream_preview_worker(context)
     context.data.pop(CTX_TG_STREAM_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_PREVIEW, None)
+    context.data.pop(CTX_TG_STREAM_PENDING_FULL, None)
+    context.data.pop(CTX_TG_STREAM_LAST_FLUSH_RAW_LEN, None)
+    context.data.pop(CTX_TG_STREAM_LAST_FLUSH_TS, None)
 
 
 async def _cleanup_progress_message_after_final(
@@ -2867,6 +2992,41 @@ def _progress_fingerprint(text: str, keyboard: list[list[dict]] | None) -> str:
     return hashlib.sha1(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
+
+
+def schedule_telegram_progress_update(
+    context: AgentContext,
+    response_text: str,
+    keyboard: list[list[dict]] | None = None,
+    *,
+    text_is_html: bool = False,
+) -> bool:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    task = loop.create_task(
+        send_telegram_progress_update(
+            context,
+            response_text,
+            keyboard,
+            text_is_html=text_is_html,
+        )
+    )
+    task.add_done_callback(_log_background_progress_result)
+    return True
+
+
+def _log_background_progress_result(task):
+    try:
+        error = task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        PrintStyle.warning(f"Telegram background progress update failed: {format_error(e)}")
+        return
+    if error:
+        PrintStyle.warning(f"Telegram background progress update failed: {error}")
 
 
 async def send_telegram_progress_update(

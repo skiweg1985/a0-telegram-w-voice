@@ -33,7 +33,9 @@ bots: []
 #     final_in_place: true         # Edit last progress message into final result when possible
 #     completed_mode: delete       # delete | none | edit — cleanup leftover progress; never leave "Completed" by default
 #     native_draft_preview: true   # Prefer Telegram sendMessageDraft in private chats when aiogram supports it
-#     live_response_preview: true  # Stream response-tool text into the editable progress message when safe
+#     live_response_preview: true  # Async/best-effort preview; never blocks Agent Zero streaming
+#     live_response_preview_interval_ms: 800      # Hermes-style max preview cadence
+#     live_response_preview_buffer_threshold: 24  # Flush early after enough new buffered chars
 #     live_response_preview_chars: 1200  # Cap visible draft text to avoid giant Telegram edits
 #
 #   speech:

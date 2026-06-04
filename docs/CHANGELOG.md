@@ -7,6 +7,7 @@
 - Emoji icons and human-readable labels for `/detail info` and `/detail debug` steps (e.g. memory tools show a brain icon, code execution a laptop). Icons are resolved by exact match, prefix-before-colon, then prefix rules with a built-in map and configurable overrides.
 - New bot config keys: `telegram_detail_icons_enabled` (default true), `telegram_detail_tool_icons` (override map), `telegram_detail_max_body_chars` (debug JSON truncation limit, default 3200).
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
+- New Telegram progress config keys `live_response_preview_interval_ms` and `live_response_preview_buffer_threshold` to tune live-preview cadence and early flush behavior.
 
 ### Fixed
 
@@ -20,6 +21,8 @@
 - `/detail`: user-facing name **verbose** for the highest level (config value and slash `debug` still work); inline button **Verbose**.
 - `/tts` and `/optimize_output` (no argument): status text without “plugin default” / `session=` meta; short confirmations for `/tts`.
 - `speech.effective_voice_reply_mode()` and `detail_status.detail_level_display()` for consistent effective/display values.
+- Telegram live response previews now use a background coalescing worker so streamed chunks never block agent output and preview edits are flushed on cadence or buffer growth.
+- Tool detail status updates now prefer scheduled background progress edits instead of waiting synchronously on each step.
 
 - `/status`: flat one-line-per-topic layout (OpenClaw-style scan pattern); header with bot name; order Activity → models → context → voice → reply → project → session; combined reply chat extras; friendlier `unknown` / `other (custom)` model fields.
 - `/detail info` no longer shows a bare `Step: tool_name` line; it now displays an emoji prefix followed by the configured label (same visual treatment as debug, minus the JSON block).

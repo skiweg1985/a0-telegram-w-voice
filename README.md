@@ -106,7 +106,9 @@ bots:
       final_in_place: true
       completed_mode: delete                     # delete | none | edit; avoids leftover "Completed" bubbles
       native_draft_preview: true
-      live_response_preview: true
+      live_response_preview: true                 # async/best-effort; never blocks Agent Zero streaming
+      live_response_preview_interval_ms: 800      # Hermes-style max preview cadence
+      live_response_preview_buffer_threshold: 24  # flush early after enough buffered chars
 
     speech:
       stt:

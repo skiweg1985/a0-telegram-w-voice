@@ -45,6 +45,39 @@
 - Follow-ups:
   - none
 
+## 2026-06-04 18:14 – Cursor – Telegram Live-Preview Hintergrundversand
+
+- Done:
+  - Asynchrones Coalescing fuer Telegram-Live-Response-Preview eingebaut, damit Stream-Chunks nicht mehr auf Telegram-I/O warten.
+  - Neue Progress-Config fuer Preview-Kadenz und Buffer-Flush dokumentiert (`live_response_preview_interval_ms`, `live_response_preview_buffer_threshold`).
+  - Detail-Status-Updates auf geplante Hintergrund-Edits umgestellt und Tests fuer Worker-/Flush-Verhalten erweitert.
+  - `docs/CHANGELOG.md` unter `[Unreleased]` aktualisiert.
+- Next:
+  - Telegram-Smoke-Test mit echter Streaming-Antwort und `/detail info` nach Deploy.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - README.md
+  - default_config.yaml
+  - extensions/python/response_stream_chunk/_45_telegram_live_response.py
+  - extensions/python/tool_execute_after/_45_telegram_detail_status.py
+  - helpers/constants.py
+  - helpers/handler.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest tests.test_telegram_session_picker`
+  - endpoints: none
+  - UI path: Telegram Chat Live-Preview und Detail-Status
+- Changelog updated:
+  - yes ([Unreleased] Added/Changed)
+- Follow-ups:
+  - none
+
 ## 2026-03-30 – Cursor – Release 0.11.1 (plugin.yaml + Changelog)
 
 - Done:

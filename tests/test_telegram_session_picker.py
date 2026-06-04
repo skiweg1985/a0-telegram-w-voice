@@ -471,6 +471,149 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertFalse(ok)
 
+    def test_progress_settings_uses_hermes_style_live_preview_defaults(self):
+        handler = self.handler
+
+        cfg = handler._progress_settings({})
+
+        self.assertEqual(cfg["live_response_preview_interval_ms"], 800)
+        self.assertEqual(cfg["live_response_preview_buffer_threshold"], 24)
+
+    def test_schedule_telegram_progress_update_returns_without_waiting_for_send(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+
+        async def slow_update(*args, **kwargs):
+            await asyncio.sleep(0.05)
+            return None
+
+        async def scenario():
+            with mock.patch.object(handler, "send_telegram_progress_update", new=mock.AsyncMock(side_effect=slow_update)) as send_progress:
+                ok = handler.schedule_telegram_progress_update(ctx, "status", text_is_html=True)
+                self.assertTrue(ok)
+                send_progress.assert_not_awaited()
+                await asyncio.sleep(0.01)
+                send_progress.assert_awaited_once_with(ctx, "status", None, text_is_html=True)
+
+        asyncio.run(scenario())
+
+    def test_stream_chunk_schedules_worker_without_telegram_io(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_BOT_CFG] = {
+            "progress": {
+                "edit_enabled": True,
+                "live_response_preview": True,
+                "live_response_preview_interval_ms": 10000,
+                "live_response_preview_buffer_threshold": 9999,
+            }
+        }
+        stream_data = {
+            "full": json.dumps({
+                "tool_name": "response",
+                "tool_args": {"text": "Partial answer", "break_loop": True},
+            })
+        }
+
+        async def scenario():
+            with mock.patch.object(handler, "_send_telegram_live_draft_preview", new=mock.AsyncMock()) as send_draft:
+                await handler.handle_telegram_response_stream_chunk(ctx, stream_data)
+                send_draft.assert_not_awaited()
+                self.assertIn(handler.CTX_TG_STREAM_WORKER_TASK, ctx.data)
+                self.assertEqual(ctx.data[handler.CTX_TG_STREAM_PENDING_FULL], stream_data["full"])
+                handler._cancel_stream_preview_worker(ctx)
+
+        asyncio.run(scenario())
+
+    def test_stream_chunk_coalesces_many_chunks_into_one_worker(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_BOT_CFG] = {
+            "progress": {
+                "edit_enabled": True,
+                "live_response_preview": True,
+                "live_response_preview_interval_ms": 10000,
+                "live_response_preview_buffer_threshold": 9999,
+            }
+        }
+        first = {"full": '{"tool_name":"response","tool_args":{"text":"First'}
+        second = {"full": '{"tool_name":"response","tool_args":{"text":"Second'}
+
+        async def scenario():
+            await handler.handle_telegram_response_stream_chunk(ctx, first)
+            task = ctx.data.get(handler.CTX_TG_STREAM_WORKER_TASK)
+            await handler.handle_telegram_response_stream_chunk(ctx, second)
+            self.assertIs(ctx.data.get(handler.CTX_TG_STREAM_WORKER_TASK), task)
+            self.assertEqual(ctx.data[handler.CTX_TG_STREAM_PENDING_FULL], second["full"])
+            handler._cancel_stream_preview_worker(ctx)
+
+        asyncio.run(scenario())
+
+    def test_stream_worker_flushes_when_buffer_threshold_is_reached(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_BOT_CFG] = {
+            "progress": {
+                "edit_enabled": True,
+                "live_response_preview": True,
+                "live_response_preview_interval_ms": 10000,
+                "live_response_preview_buffer_threshold": 1,
+            }
+        }
+        stream_data = {
+            "full": json.dumps({
+                "tool_name": "response",
+                "tool_args": {"text": "Threshold answer", "break_loop": True},
+            })
+        }
+
+        async def scenario():
+            with mock.patch.object(handler, "_send_telegram_live_draft_preview", new=mock.AsyncMock(return_value=True)) as send_draft:
+                await handler.handle_telegram_response_stream_chunk(ctx, stream_data)
+                await asyncio.sleep(0.01)
+                send_draft.assert_awaited_once_with(ctx, "Threshold answer")
+                handler._cancel_stream_preview_worker(ctx)
+
+        asyncio.run(scenario())
+
+    def test_flush_live_preview_uses_latest_pending_text(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        token = "tok"
+        ctx.data[handler.CTX_TG_STREAM_WORKER_TOKEN] = token
+        ctx.data[handler.CTX_TG_BOT_CFG] = {
+            "progress": {
+                "edit_enabled": True,
+                "live_response_preview": True,
+                "native_draft_preview": True,
+            }
+        }
+        ctx.data[handler.CTX_TG_STREAM_PENDING_FULL] = json.dumps({
+            "tool_name": "response",
+            "tool_args": {"text": "Latest answer", "break_loop": True},
+        })
+
+        with mock.patch.object(handler, "_send_telegram_live_draft_preview", new=mock.AsyncMock(return_value=True)) as send_draft:
+            ok = asyncio.run(handler._flush_telegram_live_preview_once(ctx, token))
+
+        self.assertTrue(ok)
+        send_draft.assert_awaited_once_with(ctx, "Latest answer")
+
+    def test_flush_live_preview_ignores_stale_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_STREAM_WORKER_TOKEN] = "new"
+        ctx.data[handler.CTX_TG_STREAM_PENDING_FULL] = json.dumps({
+            "tool_name": "response",
+            "tool_args": {"text": "Latest answer", "break_loop": True},
+        })
+
+        with mock.patch.object(handler, "_send_telegram_live_draft_preview", new=mock.AsyncMock()) as send_draft:
+            ok = asyncio.run(handler._flush_telegram_live_preview_once(ctx, "old"))
+
+        self.assertFalse(ok)
+        send_draft.assert_not_awaited()
+
     def test_send_initial_progress_status_still_sends_tool_info_progress_in_native_draft_mode(self):
         handler = self.handler
         ctx = _DummyAgentContext()
@@ -608,7 +751,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
              mock.patch.object(handler, "send_telegram_progress_update", new=mock.AsyncMock()) as send_progress, \
              mock.patch.object(handler.detail_status, "effective_detail_level", return_value="off"), \
              mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
-            asyncio.run(handler.handle_telegram_response_stream_chunk(ctx, stream_data))
+            token = "tok"
+            ctx.data[handler.CTX_TG_STREAM_WORKER_TOKEN] = token
+            ctx.data[handler.CTX_TG_STREAM_PENDING_FULL] = stream_data["full"]
+            asyncio.run(handler._flush_telegram_live_preview_once(ctx, token))
 
         send_draft.assert_awaited_once()
         send_progress.assert_not_called()
@@ -637,7 +783,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
              mock.patch.object(handler, "send_telegram_progress_update", new=mock.AsyncMock()) as send_progress, \
              mock.patch.object(handler.detail_status, "effective_detail_level", return_value="info"), \
              mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
-            asyncio.run(handler.handle_telegram_response_stream_chunk(ctx, stream_data))
+            token = "tok"
+            ctx.data[handler.CTX_TG_STREAM_WORKER_TOKEN] = token
+            ctx.data[handler.CTX_TG_STREAM_PENDING_FULL] = stream_data["full"]
+            asyncio.run(handler._flush_telegram_live_preview_once(ctx, token))
 
         send_draft.assert_awaited_once()
         send_progress.assert_awaited_once()
