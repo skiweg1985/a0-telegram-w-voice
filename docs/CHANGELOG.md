@@ -11,11 +11,14 @@
 
 ### Fixed
 
+- **Voice-only "Show text" after restart**: The reveal button's text and token are now persisted with the chat (keys without leading underscore) and the context is saved after each reply, so tapping "Text anzeigen" still works after a bot restart or context reload instead of returning "Text is no longer available". `/clear` drops the stored reveal text/token.
+- **Voice-only replies**: In `voice_only` mode the "Show text" quick action no longer triggers a visible text bubble. The reveal button is now attached directly to the voice message (`sendVoice` inline keyboard), and the text is only sent after the user taps it. Text is still sent as a fallback when voice delivery fails.
 - **`also_send_text`**: If the model only fills `voice_text` (TTS) and leaves `text` empty, Telegram now still sends a text bubble when **Also send text** is enabled (uses `voice_text` as fallback). Config value `also_send_text` is parsed robustly (strings like `"false"` no longer behave like Python `bool("false") == True`).
 - `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
 
 ### Changed
 
+- Telegram progress bubble title: `🧠 Working…` → `🔄 In progress…` (covers thinking, tool steps, and live draft preview).
 - `/status` Reply line: removed redundant `chat` extras that echoed session overrides already shown in the effective values (`shaping`, `tool detail`). The line now reads `⚙️ Reply: shaping <mode> · tool detail <level>` — clean, no meta info.
 - `/status`: Voice line shows effective reply mode (`replies`) instead of `voice default`; Reply line uses `chat` instead of `overrides`, with concise extras. Tool detail is labeled **verbose** when the internal level is `debug`.
 - `/detail`: user-facing name **verbose** for the highest level (config value and slash `debug` still work); inline button **Verbose**.

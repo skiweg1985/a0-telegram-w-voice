@@ -1145,6 +1145,8 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
                 ctx.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
                 ctx.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
+                ctx.data.pop(CTX_TG_LAST_TEXT_RESPONSE, None)
+                ctx.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
                 save_tmp_chat(ctx)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
@@ -2579,10 +2581,7 @@ def _progress_history_limit(bot_cfg: dict, level: str) -> int:
 def _progress_status_title(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
     if done:
         return "Done"
-    level = detail_status.effective_detail_level(bot_cfg, context.data)
-    if level == "off":
-        return "🧠 Working…"
-    return "🧠 Working…"
+    return "🔄 In progress…"
 
 
 def _progress_line_prefix(line_html: str) -> str:
@@ -3233,27 +3232,6 @@ async def send_telegram_reply(
                     else:
                         await tc.send_file(reply_bot, chat_id, local_path, reply_to_message_id=reply_to)
 
-            sent_voice = False
-            voice_file: str | None = None
-            if want_voice and tts_raw and tts_on:
-                try:
-                    max_chars = max(100, int(reply_cfg["max_chars"]))
-                    tts_payload = tts_raw[:max_chars]
-                    await tc.send_record_voice(reply_bot, chat_id)
-                    voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
-                    msg_id = await tc.send_voice(reply_bot, chat_id, voice_file, reply_to_message_id=reply_to)
-                    sent_voice = bool(msg_id)
-                    if sent_voice:
-                        PrintStyle.info(
-                            f"Telegram TTS: voice message sent (bot={bot_name!r}, mode={mode!r})."
-                        )
-                except Exception as e:
-                    PrintStyle.error(f"Telegram TTS failed: {format_error(e)}")
-                finally:
-                    if voice_file:
-                        with suppress(Exception):
-                            os.remove(voice_file)
-
             also = speech.effective_also_send_text(bot_cfg, context.data)
             quick_actions = speech.quick_actions_settings(bot_cfg)
             # If the agent only set voice_text (TTS) and left text empty, response_text is
@@ -3270,17 +3248,50 @@ async def send_telegram_reply(
             else:
                 context.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
 
-            quick_action_keyboard = None
-            if (
-                sent_voice
+            # In voice_only mode the text reply stays hidden behind a reveal button that
+            # is attached directly to the voice message, so no separate text bubble is sent.
+            want_show_text_button = bool(
+                text_body
                 and _voice_conversation_mode(context) == "voice_only"
-                and text_body
                 and quick_actions.get("enabled", True)
                 and quick_actions.get("show_text", True)
-            ):
-                quick_action_keyboard = _show_text_quick_action_keyboard(response_token)
+            )
+            voice_buttons = (
+                _show_text_quick_action_keyboard(response_token)
+                if want_show_text_button
+                else None
+            )
 
-            final_keyboard = _append_inline_keyboard(keyboard, quick_action_keyboard)
+            sent_voice = False
+            voice_file: str | None = None
+            if want_voice and tts_raw and tts_on:
+                try:
+                    max_chars = max(100, int(reply_cfg["max_chars"]))
+                    tts_payload = tts_raw[:max_chars]
+                    await tc.send_record_voice(reply_bot, chat_id)
+                    voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
+                    msg_id = await tc.send_voice(
+                        reply_bot,
+                        chat_id,
+                        voice_file,
+                        reply_to_message_id=reply_to,
+                        buttons=voice_buttons,
+                    )
+                    sent_voice = bool(msg_id)
+                    if sent_voice:
+                        PrintStyle.info(
+                            f"Telegram TTS: voice message sent (bot={bot_name!r}, mode={mode!r})."
+                        )
+                except Exception as e:
+                    PrintStyle.error(f"Telegram TTS failed: {format_error(e)}")
+                finally:
+                    if voice_file:
+                        with suppress(Exception):
+                            os.remove(voice_file)
+
+            # The reveal button only lives on the voice message; the agent-provided
+            # keyboard (if any) still goes on the text bubble.
+            final_keyboard = _append_inline_keyboard(keyboard, None)
             used_native_draft = bool(context.data.get(CTX_TG_STREAM_DRAFT_USED))
 
             should_send_text = bool(text_body) and (
@@ -3321,6 +3332,8 @@ async def send_telegram_reply(
 
             _clear_progress_state(context)
 
+        # Persist the reveal-button token/text so "Text anzeigen" survives restarts.
+        save_tmp_chat(context)
         return None
 
     except Exception as e:

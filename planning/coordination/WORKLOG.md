@@ -391,3 +391,81 @@
   - yes ([0.11.3])
 - Follow-ups:
   - none
+
+## 2026-06-04 18:21 – Cursor – Voice-only reveal button on voice message
+
+- Done:
+  - `send_voice` accepts an optional `buttons` inline keyboard and passes it as `reply_markup`.
+  - Reworked `send_telegram_reply` so the "Show text" quick action button is attached to the voice message in `voice_only` mode instead of forcing a separate text bubble.
+  - `should_send_text` no longer becomes true just because the reveal button exists; text is only revealed on button tap, with text fallback kept for failed voice delivery.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/telegram_client.py
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: /voice voice_only then send a message; verify only a voice note with a "Text anzeigen" button appears, tapping it posts the text
+  - endpoints: none
+  - UI path: Telegram chat (voice_only mode)
+- Changelog updated:
+  - yes ([Unreleased] Fixed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 18:33 – Cursor – Persist voice_only "Text anzeigen" reveal token
+
+- Done:
+  - `CTX_TG_LAST_TEXT_RESPONSE` and `CTX_TG_LAST_TEXT_RESPONSE_TOKEN` now use non-underscore keys so persist_chat stores them in chat.json.
+  - `send_telegram_reply` calls `save_tmp_chat(context)` after sending so the reveal token/text reaches chat.json.
+  - `/clear` removes the stored reveal text/token.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: main
+  - PR: none
+- Files touched:
+  - helpers/constants.py
+  - helpers/handler.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: /voice voice_only, send a message, restart bot, tap "Text anzeigen"; then /clear and verify old button reports unavailable
+  - endpoints: none
+  - UI path: Telegram chat (voice_only mode)
+- Changelog updated:
+  - yes ([Unreleased] Fixed)
+- Follow-ups:
+  - none
+
+## 2026-06-04 – Cursor – Progress bubble title In progress
+
+- Done:
+  - Progress status title `🧠 Working…` → `🔄 In progress…` in `_progress_status_title`.
+  - Unit test for rendered progress HTML title.
+  - Changelog [Unreleased] Changed.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+- Test notes:
+  - commands: `python -m pytest tests/test_telegram_session_picker.py -k in_progress_title -q`
+  - endpoints: none
+  - UI path: Telegram progress bubble during agent run
+- Changelog updated:
+  - yes ([Unreleased] Changed)
+- Follow-ups:
+  - none

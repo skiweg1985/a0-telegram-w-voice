@@ -404,6 +404,14 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertIsNone(handler._extract_live_response_preview(payload))
 
+    def test_render_progress_status_html_uses_in_progress_title(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        html_text = handler._render_progress_status_html(ctx, {}, done=False)
+
+        self.assertIn("🔄 In progress…", html_text)
+        self.assertNotIn("Working", html_text)
+
     def test_render_progress_status_html_includes_live_preview_block(self):
         handler = self.handler
         ctx = _DummyAgentContext()
