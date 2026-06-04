@@ -55,7 +55,7 @@ export const store = createStore("telegramConfig", {
       default_project: "",
       agent_instructions: "",
       attachment_max_age_hours: 0,
-      telegram_detail_level: "off",
+      telegram_detail_level: "info",
       telegram_detail_info_min_interval_sec: 5,
       telegram_detail_debug_min_interval_sec: 1.5,
       telegram_detail_exclude_tools: [],

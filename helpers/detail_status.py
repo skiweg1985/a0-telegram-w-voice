@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 DETAIL_LEVELS = frozenset({"off", "info", "debug"})
+_DEFAULT_DETAIL_LEVEL = "info"
 
 _DEFAULT_ICONS: dict[str, str] = {
     "memory_load": "\U0001f9e0",
@@ -38,7 +39,9 @@ _DEFAULT_MAX_BODY_CHARS = 3200
 
 
 def normalize_detail_level(value: Any) -> str:
-    s = str(value if value is not None else "off").strip().lower()
+    if value is None:
+        return _DEFAULT_DETAIL_LEVEL
+    s = str(value).strip().lower()
     if s == "verbose":
         return "debug"
     return s if s in DETAIL_LEVELS else "off"
