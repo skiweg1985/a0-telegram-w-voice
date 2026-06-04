@@ -94,6 +94,10 @@ export const store = createStore("telegramConfig", {
           voice_mode: "auto",
           also_send_text: true,
           max_chars: 700,
+          quick_actions: {
+            enabled: true,
+            show_text: true,
+          },
         },
       },
     };
@@ -109,6 +113,11 @@ export const store = createStore("telegramConfig", {
     bot.speech.stt = { ...d.stt, ...(bot.speech.stt || {}) };
     bot.speech.tts = { ...d.tts, ...(bot.speech.tts || {}) };
     bot.speech.reply = { ...d.reply, ...(bot.speech.reply || {}) };
+    const qaDefaults = d.reply.quick_actions || {};
+    bot.speech.reply.quick_actions = {
+      ...qaDefaults,
+      ...((bot.speech.reply && bot.speech.reply.quick_actions) || {}),
+    };
   },
 
   ensureProgress(bot) {

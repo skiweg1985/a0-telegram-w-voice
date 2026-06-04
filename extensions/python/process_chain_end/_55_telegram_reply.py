@@ -8,6 +8,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_KEYBOARD,
     CTX_TG_TYPING_STOP,
     CTX_TG_REPLY_TO,
+    CTX_TG_REPLY_CONTEXT,
     CTX_TG_VOICE_TEXT,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
@@ -53,6 +54,7 @@ class TelegramAutoReply(Extension):
             if typing_stop:
                 typing_stop.set()
             context.data.pop(CTX_TG_REPLY_TO, None)
+            context.data.pop(CTX_TG_REPLY_CONTEXT, None)
 
     async def _send_reply(
         self,
