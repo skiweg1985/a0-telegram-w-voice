@@ -1,6 +1,8 @@
 PLUGIN_NAME = "telegram_integration_voice"
 DOWNLOAD_FOLDER = "usr/uploads"
 STATE_FILE = "usr/plugins/telegram_integration_voice/state.json"
+PERSISTED_CHATS_FOLDER = "usr/chats"
+PERSISTED_CHAT_FILE_NAME = "chat.json"
 
 # Context data keys
 CTX_TG_BOT = "telegram_bot"

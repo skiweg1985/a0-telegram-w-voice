@@ -3,9 +3,11 @@ import hashlib
 import html
 import json
 import os
+import re
 import threading
 import time
 import uuid
+from datetime import datetime
 from contextlib import asynccontextmanager, suppress
 
 from aiogram import Bot
@@ -17,7 +19,7 @@ from agent import Agent, AgentContext, UserMessage
 from helpers import plugins, files, projects
 from helpers import message_queue as mq
 from helpers.notification import NotificationManager, NotificationType, NotificationPriority
-from helpers.persist_chat import save_tmp_chat
+from helpers.persist_chat import save_tmp_chat, _deserialize_context
 from helpers.print_style import PrintStyle
 from helpers.errors import format_error
 from initialize import initialize_agent
@@ -30,6 +32,8 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     PLUGIN_NAME,
     DOWNLOAD_FOLDER,
     STATE_FILE,
+    PERSISTED_CHATS_FOLDER,
+    PERSISTED_CHAT_FILE_NAME,
     CTX_TG_BOT,
     CTX_TG_BOT_CFG,
     CTX_TG_CHAT_ID,
@@ -295,17 +299,606 @@ def _telegram_command_base(message: TgMessage) -> str:
     return t.split(maxsplit=1)[0].split("@", 1)[0].lower()
 
 
+def _mapped_context_id(bot_name: str, user_id: int, chat_id: int) -> str | None:
+    key = _map_key(bot_name, user_id, chat_id)
+    with _chat_map_lock:
+        state = _load_state()
+        return state.get("chats", {}).get(key)
+
+
+def _persisted_chat_file_path(ctx_id: str) -> str:
+    return files.get_abs_path(PERSISTED_CHATS_FOLDER, ctx_id, PERSISTED_CHAT_FILE_NAME)
+
+
+def _parse_session_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.min
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.min
+
+
+def _format_session_timestamp(value: object, *, with_date: bool = True) -> str:
+    dt = _parse_session_datetime(value)
+    if dt == datetime.min:
+        return "unknown"
+    return dt.strftime("%Y-%m-%d %H:%M" if with_date else "%H:%M")
+
+
+def _format_session_date(value: object) -> str:
+    dt = _parse_session_datetime(value)
+    if dt == datetime.min:
+        return "unknown"
+    return dt.strftime("%Y-%m-%d")
+
+
+def _session_browser_state_key(bot_name: str, user_id: int, chat_id: int) -> str:
+    return _map_key(bot_name, user_id, chat_id)
+
+
+def _load_session_browser_state(bot_name: str, user_id: int, chat_id: int) -> dict:
+    key = _session_browser_state_key(bot_name, user_id, chat_id)
+    with _chat_map_lock:
+        state = _load_state()
+        browsers = state.get("session_browser", {})
+        data = browsers.get(key, {}) if isinstance(browsers, dict) else {}
+    if not isinstance(data, dict):
+        return {"query": "", "page": 0, "message_id": None}
+    message_id = data.get("message_id")
+    try:
+        message_id = int(message_id) if message_id is not None else None
+    except Exception:
+        message_id = None
+    return {
+        "query": str(data.get("query") or "").strip(),
+        "page": max(int(data.get("page") or 0), 0),
+        "message_id": message_id,
+    }
+
+
+def _save_session_browser_state(
+    bot_name: str,
+    user_id: int,
+    chat_id: int,
+    *,
+    query: str,
+    page: int,
+    message_id: int | None = None,
+):
+    key = _session_browser_state_key(bot_name, user_id, chat_id)
+    with _chat_map_lock:
+        state = _load_state()
+        browsers = state.setdefault("session_browser", {})
+        if not isinstance(browsers, dict):
+            browsers = {}
+            state["session_browser"] = browsers
+        current = browsers.get(key, {}) if isinstance(browsers.get(key), dict) else {}
+        current.update(
+            {
+                "query": str(query or "").strip(),
+                "page": max(int(page or 0), 0),
+                "message_id": int(message_id) if message_id is not None else current.get("message_id"),
+                "updated_at": int(time.time()),
+            }
+        )
+        browsers[key] = current
+        _save_state(state)
+
+
+def _normalize_session_line(text: str) -> str:
+    line = re.sub(r"\s+", " ", str(text or "")).strip(" -–—	\n\r")
+    if line.startswith("[Telegram message from") and line.endswith("]"):
+        return ""
+    lower = line.lower()
+    if lower in {"body", "sender"} or lower.startswith("sender:"):
+        return ""
+    return line
+
+
+def _extract_user_prompt_summary(meta: dict) -> str:
+    log = meta.get("log") or {}
+    logs = log.get("logs") if isinstance(log, dict) else []
+    if not isinstance(logs, list):
+        return ""
+    for item in logs:
+        if not isinstance(item, dict) or str(item.get("type") or "") != "user":
+            continue
+        content = str(item.get("content") or "")
+        lines = [_normalize_session_line(line) for line in content.splitlines()]
+        cleaned = [line for line in lines if line]
+        if cleaned:
+            return cleaned[0]
+    return ""
+
+
+def _trim_session_title(text: str, limit: int = 42) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not value:
+        return ""
+    if len(value) <= limit:
+        return value
+    short = value[:limit].rstrip()
+    if " " in short:
+        short = short.rsplit(" ", 1)[0]
+    return short.rstrip(" -–—:;,.!") + "…"
+
+
+def _session_display_name(meta: dict) -> str:
+    explicit = _trim_session_title(meta.get("name") or "")
+    if explicit and not explicit.lower().startswith("telegram: @"):
+        return explicit
+    derived = _trim_session_title(_extract_user_prompt_summary(meta))
+    if derived:
+        return derived
+    if explicit:
+        return explicit
+    data = meta.get("data") or {}
+    username = str(data.get(CTX_TG_USERNAME) or "").strip()
+    return f"Telegram chat @{username}" if username else "Untitled session"
+
+
+def _session_message_count(meta: dict) -> int:
+    log = meta.get("log") or {}
+    logs = log.get("logs") if isinstance(log, dict) else []
+    return len(logs) if isinstance(logs, list) else 0
+
+
+def _read_persisted_chat_meta(ctx_id: str) -> dict | None:
+    path = _persisted_chat_file_path(ctx_id)
+    if not os.path.isfile(path):
+        return None
+    try:
+        data = json.loads(files.read_file(path))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    meta = {
+        "id": str(data.get("id") or ctx_id),
+        "name": str(data.get("name") or "").strip(),
+        "created_at": data.get("created_at") or "",
+        "last_message": data.get("last_message") or data.get("created_at") or "",
+        "data": data.get("data") or {},
+        "log": data.get("log") or {},
+    }
+    if not isinstance(meta["data"], dict):
+        meta["data"] = {}
+    if not isinstance(meta["log"], dict):
+        meta["log"] = {}
+    meta["display_name"] = _session_display_name(meta)
+    meta["message_count"] = _session_message_count(meta)
+    return meta
+
+
+def _session_matches_identity(meta: dict, bot_name: str, user_id: int, chat_id: int) -> bool:
+    data = meta.get("data") or {}
+    if not isinstance(data, dict):
+        return False
+    if str(data.get(CTX_TG_BOT) or "") != str(bot_name):
+        return False
+    try:
+        if int(data.get(CTX_TG_USER_ID)) != int(user_id):
+            return False
+        if int(data.get(CTX_TG_CHAT_ID)) != int(chat_id):
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def _list_switchable_sessions(
+    bot_name: str, user_id: int, chat_id: int, limit: int | None = None
+) -> list[dict]:
+    chats_root = files.get_abs_path(PERSISTED_CHATS_FOLDER)
+    if not os.path.isdir(chats_root):
+        return []
+
+    sessions: list[dict] = []
+    for entry in os.listdir(chats_root):
+        path = os.path.join(chats_root, entry)
+        if not os.path.isdir(path):
+            continue
+        meta = _read_persisted_chat_meta(entry)
+        if not meta or not _session_matches_identity(meta, bot_name, user_id, chat_id):
+            continue
+        sessions.append(meta)
+
+    sessions.sort(
+        key=lambda item: (
+            _parse_session_datetime(item.get("last_message") or item.get("created_at")),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return sessions[:limit] if limit else sessions
+
+
+def _filter_sessions_by_query(sessions: list[dict], query: str) -> list[dict]:
+    q = str(query or "").strip().lower()
+    if not q:
+        return sessions
+    result: list[dict] = []
+    for meta in sessions:
+        haystacks = [
+            str(meta.get("display_name") or ""),
+            str(meta.get("name") or ""),
+            str(meta.get("id") or ""),
+            _extract_user_prompt_summary(meta),
+        ]
+        if any(q in h.lower() for h in haystacks if h):
+            result.append(meta)
+    return result
+
+
+def _session_page_slice(sessions: list[dict], page: int, page_size: int = 5) -> tuple[list[dict], int, int]:
+    if page_size <= 0:
+        page_size = 5
+    total_pages = max((len(sessions) + page_size - 1) // page_size, 1)
+    current_page = min(max(page, 0), total_pages - 1)
+    start = current_page * page_size
+    end = start + page_size
+    return sessions[start:end], current_page, total_pages
+
+
+def _session_list_header(active_label: str | None, total_count: int, query: str) -> str:
+    lines = ["📂 Session picker", ""]
+    if active_label:
+        lines.append(f"Current: 🟢 {active_label}")
+    else:
+        lines.append("Current: none")
+    if query:
+        lines.append(f"Search: {query}")
+    else:
+        lines.append(f"Saved sessions: {total_count}")
+    lines.append("")
+    lines.append("Choose a session:")
+    return "\n".join(lines)
+
+
+def _session_selector_keyboard(
+    sessions: list[dict],
+    *,
+    active_ctx_id: str | None,
+    page: int,
+    total_pages: int,
+    has_query: bool,
+) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    rows: list[list[dict]] = []
+    for meta in sessions:
+        ctx_id = str(meta.get("id") or "").strip()
+        if not ctx_id:
+            continue
+        marker = "🟢 " if ctx_id == str(active_ctx_id or "") else "💬 "
+        rows.append([
+            {
+                "text": _model_preset_button_label(f"{marker}{meta.get('display_name') or ctx_id}"),
+                "callback_data": f"{p}sv|{ctx_id}",
+            }
+        ])
+
+    nav_row = [
+        {"text": "◀️" if page > 0 else "·", "callback_data": f"{p}sp|prev"},
+        {"text": f"{page + 1}/{total_pages}", "callback_data": f"{p}sp|stay"},
+        {"text": "▶️" if page + 1 < total_pages else "·", "callback_data": f"{p}sp|next"},
+    ]
+    rows.append(nav_row)
+    rows.append([
+        {"text": "➕ New session", "callback_data": f"{p}sn|new"},
+        {"text": "🔍 Search", "callback_data": f"{p}sh|help"},
+    ])
+    if has_query:
+        rows.append([{"text": "✖️ Clear search", "callback_data": f"{p}sc|clear"}])
+    return rows
+
+
+def _session_details_text(meta: dict, active_ctx_id: str | None) -> str:
+    ctx_id = str(meta.get("id") or "")
+    active = ctx_id == str(active_ctx_id or "")
+    lines = [
+        f"📂 {meta.get('display_name') or ctx_id}",
+        "",
+        f"Status: {'🟢 active' if active else '⚪ inactive'}",
+        f"Session ID: {ctx_id}",
+        f"Created: {_format_session_date(meta.get('created_at'))}",
+        f"Last activity: {_format_session_timestamp(meta.get('last_message'))}",
+        f"Messages: {meta.get('message_count', 0)}",
+    ]
+    summary = _extract_user_prompt_summary(meta)
+    if summary:
+        lines.extend(["", f"Topic: {_trim_session_title(summary, limit=80)}"])
+    return "\n".join(lines)
+
+
+def _session_details_keyboard(meta: dict, active_ctx_id: str | None) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    ctx_id = str(meta.get("id") or "")
+    is_active = ctx_id == str(active_ctx_id or "")
+    switch_label = "🟢 Already active" if is_active else "✅ Open this session"
+    return [
+        [{"text": switch_label, "callback_data": f"{p}ss|{ctx_id}"}],
+        [{"text": "⬅️ Back", "callback_data": f"{p}sb|back"}],
+    ]
+
+
+def _session_search_help_text() -> str:
+    return (
+        "🔍 Search sessions\n\n"
+        "Use /session search <term> to filter old chats by title, topic, or session ID.\n"
+        "Example: /session search prtg"
+    )
+
+
+def _resolve_session_target(sessions: list[dict], arg: str) -> dict | None:
+    value = (arg or "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        idx = int(value) - 1
+        if 0 <= idx < len(sessions):
+            return sessions[idx]
+        return None
+    exact = [s for s in sessions if str(s.get("id") or "") == value]
+    if exact:
+        return exact[0]
+    prefix = [s for s in sessions if str(s.get("id") or "").startswith(value)]
+    if len(prefix) == 1:
+        return prefix[0]
+    title_matches = [
+        s
+        for s in sessions
+        if str(s.get("display_name") or "").strip().lower() == value.lower()
+    ]
+    if len(title_matches) == 1:
+        return title_matches[0]
+    return None
+
+
+def _session_render_payload(
+    bot_name: str,
+    user_id: int,
+    chat_id: int,
+    *,
+    active_ctx_id: str | None,
+    query: str,
+    page: int,
+) -> tuple[str, list[list[dict]] | None, int]:
+    sessions = _list_switchable_sessions(bot_name, user_id, chat_id)
+    active_meta = next((s for s in sessions if str(s.get("id") or "") == str(active_ctx_id or "")), None)
+    active_label = str(active_meta.get("display_name") or "").strip() if active_meta else ""
+    if not active_label and active_ctx_id:
+        live_ctx = AgentContext.get(active_ctx_id)
+        active_label = _trim_session_title(getattr(live_ctx, "name", "") or active_ctx_id, limit=48)
+    filtered = _filter_sessions_by_query(sessions, query)
+
+    if not filtered:
+        if query:
+            text = (
+                "📂 Session picker\n\n"
+                f"Search: {query}\n\n"
+                "No matching saved sessions found.\n"
+                "Use /session search <term> or clear the search."
+            )
+            keyboard = [[{"text": "✖️ Clear search", "callback_data": f"{TG_UI_CALLBACK_PREFIX}sc|clear"}]]
+            return text, keyboard, 0
+        text = (
+            "📂 Session picker\n\n"
+            "No saved sessions for this Telegram chat yet.\n"
+            "Send a message or start a new session."
+        )
+        keyboard = [[{"text": "➕ New session", "callback_data": f"{TG_UI_CALLBACK_PREFIX}sn|new"}]]
+        return text, keyboard, 0
+
+    page_sessions, current_page, total_pages = _session_page_slice(filtered, page)
+    text = _session_list_header(active_label or None, len(filtered), query)
+    keyboard = _session_selector_keyboard(
+        page_sessions,
+        active_ctx_id=active_ctx_id,
+        page=current_page,
+        total_pages=total_pages,
+        has_query=bool(query),
+    )
+    return text, keyboard, current_page
+
+
+def _load_persisted_context(
+    ctx_id: str,
+    bot_cfg: dict,
+    *,
+    expected_bot_name: str | None = None,
+    expected_user_id: int | None = None,
+    expected_chat_id: int | None = None,
+) -> AgentContext | None:
+    meta = _read_persisted_chat_meta(ctx_id)
+    if not meta:
+        return None
+
+    if (
+        expected_bot_name is not None
+        and expected_user_id is not None
+        and expected_chat_id is not None
+        and not _session_matches_identity(meta, expected_bot_name, expected_user_id, expected_chat_id)
+    ):
+        PrintStyle.warning(
+            f"Telegram: refusing to load persisted chat {ctx_id} for mismatched identity"
+        )
+        return None
+
+    existing = AgentContext.get(ctx_id)
+    if existing:
+        existing.data[CTX_TG_BOT_CFG] = bot_cfg
+        return existing
+
+    path = _persisted_chat_file_path(ctx_id)
+    try:
+        payload = json.loads(files.read_file(path))
+        ctx = _deserialize_context(payload)
+        ctx.data[CTX_TG_BOT_CFG] = bot_cfg
+        return ctx
+    except Exception as e:
+        PrintStyle.warning(f"Telegram: failed to load persisted chat {ctx_id}: {format_error(e)}")
+        return None
+
+
+def _activate_existing_session(
+    bot_name: str,
+    bot_cfg: dict,
+    user_id: int,
+    chat_id: int,
+    target_ctx_id: str,
+) -> tuple[bool, str, AgentContext | None]:
+    sessions = _list_switchable_sessions(bot_name, user_id, chat_id)
+    target = next((s for s in sessions if str(s.get("id") or "") == str(target_ctx_id)), None)
+    if not target:
+        return False, "Session not found for this Telegram chat.", None
+
+    ctx = _load_persisted_context(
+        target_ctx_id,
+        bot_cfg,
+        expected_bot_name=bot_name,
+        expected_user_id=user_id,
+        expected_chat_id=chat_id,
+    )
+    if not ctx:
+        return False, "Failed to load that saved session.", None
+
+    key = _map_key(bot_name, user_id, chat_id)
+    with _chat_map_lock:
+        state = _load_state()
+        chats = state.setdefault("chats", {})
+        old_ctx_id = chats.get(key)
+        if old_ctx_id and old_ctx_id != ctx.id:
+            old_ctx = AgentContext.get(old_ctx_id)
+            if old_ctx:
+                old_ctx.kill_process()
+                save_tmp_chat(old_ctx)
+        chats[key] = ctx.id
+        _save_state(state)
+
+    save_tmp_chat(ctx)
+    return (
+        True,
+        f"Switched to {target.get('display_name') or ctx.id}. Last activity: {_format_session_timestamp(target.get('last_message'))}",
+        ctx,
+    )
+
+
+async def _start_new_session_for_user(
+    bot_name: str,
+    bot_cfg: dict,
+    user_id: int,
+    username: str | None,
+    chat_id: int,
+) -> tuple[bool, str, AgentContext | None]:
+    key = _map_key(bot_name, user_id, chat_id)
+
+    with _chat_map_lock:
+        state = _load_state()
+        chats = state.setdefault("chats", {})
+        old_ctx_id = chats.pop(key, None)
+        if old_ctx_id:
+            old_ctx = AgentContext.get(old_ctx_id)
+            if old_ctx:
+                old_ctx.kill_process()
+                save_tmp_chat(old_ctx)
+            _save_state(state)
+
+    ctx = await _get_or_create_context_from_user(bot_name, bot_cfg, user_id, username, chat_id)
+    if not ctx:
+        return False, "Failed to create a new session.", None
+    return True, "New chat started. Previous conversation is still available in the session list.", ctx
+
+
+async def _show_session_picker(
+    token: str,
+    chat_id: int,
+    *,
+    bot_name: str,
+    user_id: int,
+    active_ctx_id: str | None,
+    query: str,
+    page: int,
+    message_id: int | None = None,
+) -> int | None:
+    text, keyboard, current_page = _session_render_payload(
+        bot_name,
+        user_id,
+        chat_id,
+        active_ctx_id=active_ctx_id,
+        query=query,
+        page=page,
+    )
+    async with _temp_bot(token) as bot:
+        if message_id:
+            edited = await tc.edit_text_with_keyboard(
+                bot, chat_id, message_id, text, keyboard or [], parse_mode=None
+            )
+            if edited:
+                _save_session_browser_state(
+                    bot_name, user_id, chat_id, query=query, page=current_page, message_id=message_id
+                )
+                return message_id
+        sent_id = await tc.send_text_with_keyboard(
+            bot, chat_id, text, keyboard or [], parse_mode=None
+        )
+    if sent_id is not None:
+        _save_session_browser_state(
+            bot_name, user_id, chat_id, query=query, page=current_page, message_id=sent_id
+        )
+    return sent_id
+
+
+async def _show_session_details(
+    token: str,
+    chat_id: int,
+    *,
+    active_ctx_id: str | None,
+    meta: dict,
+    message_id: int | None = None,
+) -> int | None:
+    text = _session_details_text(meta, active_ctx_id)
+    keyboard = _session_details_keyboard(meta, active_ctx_id)
+    async with _temp_bot(token) as bot:
+        if message_id:
+            edited = await tc.edit_text_with_keyboard(
+                bot, chat_id, message_id, text, keyboard, parse_mode=None
+            )
+            if edited:
+                return message_id
+        return await tc.send_text_with_keyboard(bot, chat_id, text, keyboard, parse_mode=None)
+
+
 def _get_existing_context(message: TgMessage, bot_name: str) -> AgentContext | None:
     user = message.from_user
     if not user:
         return None
+    ctx_id = _mapped_context_id(bot_name, user.id, message.chat.id)
+    if not ctx_id:
+        return None
+    ctx = AgentContext.get(ctx_id)
+    if ctx:
+        return ctx
+    ctx = _load_persisted_context(
+        ctx_id,
+        {},
+        expected_bot_name=bot_name,
+        expected_user_id=user.id,
+        expected_chat_id=message.chat.id,
+    )
+    if ctx:
+        return ctx
     key = _map_key(bot_name, user.id, message.chat.id)
     with _chat_map_lock:
         state = _load_state()
-        ctx_id = state.get("chats", {}).get(key)
-    if not ctx_id:
-        return None
-    return AgentContext.get(ctx_id)
+        chats = state.get("chats", {})
+        if chats.get(key) == ctx_id:
+            chats.pop(key, None)
+            _save_state(state)
+    return None
 
 
 def cleanup_old_attachments():
@@ -453,32 +1046,11 @@ async def handle_newchat(message: TgMessage, bot_name: str, bot_cfg: dict):
     if not instance:
         return
 
-    key = _map_key(bot_name, user.id, message.chat.id)
-
-    with _chat_map_lock:
-        state = _load_state()
-        chats = state.setdefault("chats", {})
-        old_ctx_id = chats.pop(key, None)
-        if old_ctx_id:
-            old_ctx = AgentContext.get(old_ctx_id)
-            if old_ctx:
-                old_ctx.kill_process()
-                save_tmp_chat(old_ctx)
-            _save_state(state)
-
-    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
-    if not ctx:
-        await _send_with_temp_bot(
-            instance.bot.token, message.chat.id,
-            "Failed to create a new session.",
-            parse_mode=None,
-        )
-        return
-
+    _, reply, _ = await _start_new_session_for_user(
+        bot_name, bot_cfg, user.id, user.username, message.chat.id
+    )
     await _send_with_temp_bot(
-        instance.bot.token, message.chat.id,
-        "New chat started. Previous conversation is still available in the browser UI.",
-        parse_mode=None,
+        instance.bot.token, message.chat.id, reply, parse_mode=None
     )
 
 
@@ -926,6 +1498,72 @@ async def handle_project(message: TgMessage, bot_name: str, bot_cfg: dict):
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
 
+async def handle_session(message: TgMessage, bot_name: str, bot_cfg: dict):
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    active_ctx_id = _mapped_context_id(bot_name, user.id, message.chat.id)
+    ctx = _get_existing_context(message, bot_name)
+    if ctx:
+        ctx.data[CTX_TG_BOT_CFG] = bot_cfg
+        active_ctx_id = ctx.id
+
+    arg = _cmd_rest(message).strip()
+    if not arg:
+        await _show_session_picker(
+            instance.bot.token,
+            message.chat.id,
+            bot_name=bot_name,
+            user_id=user.id,
+            active_ctx_id=active_ctx_id,
+            query="",
+            page=0,
+        )
+        return
+
+    parts = arg.split(maxsplit=1)
+    if parts and parts[0].lower() == "search":
+        query = parts[1].strip() if len(parts) > 1 else ""
+        if not query:
+            await _send_with_temp_bot(
+                instance.bot.token, message.chat.id, _session_search_help_text(), parse_mode=None
+            )
+            return
+        await _show_session_picker(
+            instance.bot.token,
+            message.chat.id,
+            bot_name=bot_name,
+            user_id=user.id,
+            active_ctx_id=active_ctx_id,
+            query=query,
+            page=0,
+        )
+        return
+
+    browser = _load_session_browser_state(bot_name, user.id, message.chat.id)
+    all_sessions = _list_switchable_sessions(bot_name, user.id, message.chat.id)
+    if arg.isdigit() and browser.get("query"):
+        resolve_sessions = _filter_sessions_by_query(all_sessions, browser.get("query", ""))
+    else:
+        resolve_sessions = all_sessions
+    target = _resolve_session_target(resolve_sessions, arg)
+    if not target:
+        reply = "Unknown session. Use /session or /session search <term>."
+        await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+        return
+
+    ok, reply, target_ctx = _activate_existing_session(
+        bot_name, bot_cfg, user.id, message.chat.id, str(target.get("id") or "")
+    )
+    if ok and target_ctx:
+        target_ctx.data[CTX_TG_BOT_CFG] = bot_cfg
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+
+
 async def handle_model(message: TgMessage, bot_name: str, bot_cfg: dict):
     user = message.from_user
     if not user or not _is_allowed(bot_cfg, user.id, user.username):
@@ -1116,6 +1754,130 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
         token = instance.bot.token
         chat_id = query.message.chat.id
 
+        if kind in {"s", "ss"}:
+            ok, reply, target_ctx = _activate_existing_session(
+                bot_name, bot_cfg, user.id, chat_id, payload
+            )
+            if ok and target_ctx:
+                target_ctx.data[CTX_TG_BOT_CFG] = bot_cfg
+                await query.answer("Switched")
+                active_ctx_id = target_ctx.id
+                if kind == "ss":
+                    browser = _load_session_browser_state(bot_name, user.id, chat_id)
+                    await _show_session_picker(
+                        token,
+                        chat_id,
+                        bot_name=bot_name,
+                        user_id=user.id,
+                        active_ctx_id=active_ctx_id,
+                        query=browser.get("query", ""),
+                        page=browser.get("page", 0),
+                        message_id=query.message.message_id,
+                    )
+                else:
+                    await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            else:
+                await query.answer("Failed")
+                await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "sv":
+            sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
+            target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
+            if not target:
+                await query.answer("Session not found")
+                return
+            await _show_session_details(
+                token,
+                chat_id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                meta=target,
+                message_id=query.message.message_id,
+            )
+            await query.answer()
+            return
+
+        if kind == "sp":
+            browser = _load_session_browser_state(bot_name, user.id, chat_id)
+            page = int(browser.get("page", 0) or 0)
+            if payload == "next":
+                page += 1
+            elif payload == "prev":
+                page = max(page - 1, 0)
+            await _show_session_picker(
+                token,
+                chat_id,
+                bot_name=bot_name,
+                user_id=user.id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                query=browser.get("query", ""),
+                page=page,
+                message_id=query.message.message_id,
+            )
+            await query.answer()
+            return
+
+        if kind == "sb":
+            browser = _load_session_browser_state(bot_name, user.id, chat_id)
+            await _show_session_picker(
+                token,
+                chat_id,
+                bot_name=bot_name,
+                user_id=user.id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                query=browser.get("query", ""),
+                page=browser.get("page", 0),
+                message_id=query.message.message_id,
+            )
+            await query.answer()
+            return
+
+        if kind == "sh":
+            async with _temp_bot(token) as bot:
+                await tc.edit_text_with_keyboard(
+                    bot,
+                    chat_id,
+                    query.message.message_id,
+                    _session_search_help_text(),
+                    [[{"text": "⬅️ Back", "callback_data": f"{TG_UI_CALLBACK_PREFIX}sb|back"}]],
+                    parse_mode=None,
+                )
+            await query.answer()
+            return
+
+        if kind == "sc":
+            await _show_session_picker(
+                token,
+                chat_id,
+                bot_name=bot_name,
+                user_id=user.id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                query="",
+                page=0,
+                message_id=query.message.message_id,
+            )
+            await query.answer()
+            return
+
+        if kind == "sn":
+            ok, reply, new_ctx = await _start_new_session_for_user(
+                bot_name, bot_cfg, user.id, user.username, chat_id
+            )
+            active_ctx_id = new_ctx.id if ok and new_ctx else _mapped_context_id(bot_name, user.id, chat_id)
+            await _show_session_picker(
+                token,
+                chat_id,
+                bot_name=bot_name,
+                user_id=user.id,
+                active_ctx_id=active_ctx_id,
+                query="",
+                page=0,
+                message_id=query.message.message_id,
+            )
+            await query.answer("Started" if ok else "Failed")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
         context = await _get_or_create_context_from_user(
             bot_name, bot_cfg, user.id, user.username, chat_id,
         )
@@ -1296,15 +2058,21 @@ async def _get_or_create_context_from_user(
         chats = state.setdefault("chats", {})
         ctx_id = chats.get(key)
 
-        # Check if existing context is still alive
+        # Check if existing context is still alive or can be restored from persisted chats
         if ctx_id:
-            ctx = AgentContext.get(ctx_id)
+            ctx = AgentContext.get(ctx_id) or _load_persisted_context(
+                ctx_id,
+                bot_cfg,
+                expected_bot_name=bot_name,
+                expected_user_id=user_id,
+                expected_chat_id=chat_id,
+            )
             if ctx:
                 # Keep snapshot in sync with current plugin external config (handlers pass fresh bot_cfg).
                 # Without this, TTS/STT/progress/system prompt keep using values from first session creation.
                 ctx.data[CTX_TG_BOT_CFG] = bot_cfg
                 return ctx
-            # Context was garbage collected, remove stale mapping
+            # Context no longer exists on disk or in memory, remove stale mapping
             chats.pop(key, None)
 
         # Create new context
