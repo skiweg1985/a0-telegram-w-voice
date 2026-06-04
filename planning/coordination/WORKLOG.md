@@ -58,7 +58,7 @@
   - none
 - Branch/PR:
   - branch: feat/telegram-native-draft-streaming
-  - PR: none
+  - PR: https://github.com/skiweg1985/a0-telegram-w-voice/pull/4
 - Files touched:
   - README.md
   - default_config.yaml
@@ -70,7 +70,7 @@
   - docs/CHANGELOG.md
   - planning/coordination/WORKLOG.md
 - Test notes:
-  - commands: `python3 -m unittest tests.test_telegram_session_picker`
+  - commands: `python3 -m unittest discover -s tests -p 'test_telegram_session_picker.py'`
   - endpoints: none
   - UI path: Telegram Chat Live-Preview und Detail-Status
 - Changelog updated:
