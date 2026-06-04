@@ -1,6 +1,8 @@
 # a0-telegram-w-voice
 
-Agent Zero plugin: **Telegram** with optional **STT/TTS** (voice in, voice out), aligned with the upstream conventions in [a0-create-plugin](https://github.com/agent0ai/agent-zero/blob/main/skills/a0-create-plugin/SKILL.md).
+![version](https://img.shields.io/badge/version-0.11.3-blue)
+
+Agent Zero plugin: **Telegram** with optional **STT/TTS** (voice in, voice out), live response preview, inline buttons, and background progress streaming. Aligned with the upstream conventions in [a0-create-plugin](https://github.com/agent0ai/agent-zero/blob/main/skills/a0-create-plugin/SKILL.md).
 
 **Canonical repository:** [https://github.com/skiweg1985/a0-telegram-w-voice](https://github.com/skiweg1985/a0-telegram-w-voice)
 
@@ -59,29 +61,71 @@ Refresh the plugin cache: toggle the plugin off and on in the Plugins UI, or res
 
 ## Features
 
-- STT for incoming Telegram voice/audio
-- TTS for outgoing Telegram voice replies
-- Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines
-- **Slash commands** with Telegram command menu (`set_my_commands`): `/help`, `/start`, `/status`, `/clear`, `/newchat`, `/session`, `/detail`, `/voice`, `/optimize_output`, `/compact`, `/stop`, `/project`, `/model`, `/pause`, `/resume`. Several commands show **inline buttons** when used without extra arguments (`/detail`, `/voice`, `/project`, `/optimize_output`, `/model` where applicable). Session `/voice` adjusts the reply mode until `/clear`. `/optimize_output` steers how the agent phrases replies. `/session` opens a paginated session picker with inline navigation, details view, and search support.
+### Voice (STT / TTS)
+
+- **Speech-to-text** for incoming Telegram voice and audio messages.
+- **Text-to-speech** for outgoing replies — delivered as Telegram voice bubbles.
+- Providers: OpenAI-compatible APIs (incl. LiteLLM), ElevenLabs, custom HTTP endpoints, optional local engines.
+- Raw PCM output (e.g. Gemini-compatible endpoints, `format: pcm`) is automatically converted to `ogg/opus` before sending; `ffmpeg` used when available.
+- `/voice` controls the reply mode per session: `auto` (speak only after a voice message), `voice_only`, `voice_text` (voice + text), `text_only`, `off`.
+- **Voice-only "Show text"**: in `voice_only` mode an inline button is attached to the voice message — tapping it reveals the text reply on demand without a separate bubble. Persisted across restarts; cleared on `/clear`.
+- **Output shaping** via `/optimize_output` (`voice`, `text`, `off`) — steers how the agent phrases replies for the active session.
+
+### Live Response Preview
+
+Streamed agent responses appear as a **live-edited Telegram message** while the agent is still typing — similar to the native draft preview in other chat apps.
+
+- A **background coalescing worker** collects stream chunks and flushes them on a configurable cadence, so agent output is never blocked by Telegram I/O.
+- **Flood-control safe**: if Telegram rate-limits a progress edit (HTTP 429), the update is silently skipped rather than falling back to a new message. The final answer always lands correctly.
+- Tunable via `progress:` config keys: `live_response_preview_interval_ms`, `live_response_preview_buffer_threshold`, `live_response_preview_chars`.
+
+### Tool Status & Detail Level
+
+- `/detail` controls what appears in chat while tools are running: `off` (final answer only), `info` (throttled step lines), `verbose` (full tool detail).
+- Each step shows an **emoji icon and a human-readable label** (e.g. 🧠 for memory tools, 💻 for code execution). Icons and labels are configurable per tool.
+- Detail updates are sent as **in-place progress edits** — a single bubble is updated rather than a new message per step.
+- Long debug payloads are truncated at a safe boundary before sending (`telegram_detail_max_body_chars`).
+
+### Slash Commands & Inline Buttons
+
+- **Inline keyboards** on all mode-switching commands: `/detail`, `/voice`, `/optimize_output`, `/project`, `/model` — tap to switch without typing.
+- **Approve / Cancel flows**: the agent can present risky actions as inline keyboard choices; taps are fed back into the agent automatically.
+- **Unauthorized users** receive a clear, throttled reply with their Telegram user ID so they can request access.
+- **`/session` picker**: paginated list of saved sessions with inline navigation, details view, and **button-driven search** — tap Search, send a term, results filter inline.
+- `/retry` re-runs your last message; `/undo` drops the last exchange (your message and the agent's reply) from session history.
+- `/topic [name]` opens a named conversation thread in the same chat, or lists existing topics without a name.
+
+### WebUI
+
+- Per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`) directly in the plugin settings UI.
+- **Walkie-talkie preset** button for quick voice-oriented configuration.
+- Operator-only tuning (detail throttling, icon overrides, progress timing, STT/TTS endpoint details) is YAML-only — no visual clutter in the UI.
+
+---
 
 ## Slash commands (summary)
 
 | Command | Purpose |
-|--------|---------|
+|---------|---------|
 | `/help` | List commands |
 | `/start` | Welcome; ensures session |
 | `/status` | Model, tokens, project, TTS/STT, run state |
-| `/clear` | Reset conversation (same context) |
+| `/clear` | Reset conversation history (same context) |
 | `/newchat` | New session; old chat stays in browser UI |
-| `/session` | Open the paginated session picker, search with `/session search <term>`, or switch directly with `/session <id>` |
-| `/detail` | `off` / `info` / `verbose` / `reset` (`debug` accepted as alias), or no arg shows level + **inline buttons** |
-| `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** (`auto` speaks only after a voice message) |
-| `/optimize_output` | `voice` / `text` / `off` / `reset`, or no arg shows current mode **with inline buttons** (typing still works) |
+| `/session` | Paginated session picker; `/session search <term>` or `/session <id>` to switch directly |
+| `/detail` | `off` / `info` / `verbose`, or no arg shows level + **inline buttons** |
+| `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
+| `/optimize_output` | `voice` / `text` / `off`, or no arg shows current mode **with inline buttons** |
+| `/retry` | Re-run your last message |
+| `/undo` | Drop the last exchange from session history |
+| `/topic` | Start or list named conversation threads |
 | `/compact` | Compress history (utility LLM) |
 | `/stop` | Abort running task |
-| `/project` | Active + available projects + **buttons** when projects exist, or `/project <name>` |
-| `/model` | Show current model and **preset buttons** when override is allowed, or `/model <preset>` by name |
+| `/project` | Active + available projects + **buttons**; or `/project <name>` |
+| `/model` | Show current model + **preset buttons**; or `/model <preset>` |
 | `/pause` / `/resume` | Pause or resume agent loop |
+
+---
 
 ## Configuration example
 
@@ -98,14 +142,14 @@ bots:
     telegram_detail_debug_min_interval_sec: 1.5
     telegram_detail_icons_enabled: true          # emoji prefix per step
     # telegram_detail_tool_icons: {}             # override icons, e.g. { "memory_load": "\U0001f4cc" }
-    # telegram_detail_max_body_chars: 3200       # debug JSON truncation limit
+    # telegram_detail_max_body_chars: 3200       # verbose JSON truncation limit
 
     progress:
       edit_throttle_ms: 200
       completed_mode: delete                     # delete | none | edit; avoids leftover "Completed" bubbles
-      live_response_preview_interval_ms: 800      # Hermes-style max preview cadence
-      live_response_preview_buffer_threshold: 24  # flush early after enough buffered chars
-      live_response_preview_chars: 1200           # visible draft text cap
+      live_response_preview_interval_ms: 800     # max cadence for live draft preview edits
+      live_response_preview_buffer_threshold: 24 # flush early after enough buffered chars
+      live_response_preview_chars: 1200          # visible draft text cap
 
     speech:
       stt:
@@ -129,7 +173,7 @@ bots:
 
       reply:
         optimize_output_default: off   # off | voice | text | auto — new sessions; /optimize_output overrides
-        voice_mode: auto               # off | auto | voice_only | voice_text | text_only (legacy force + also_send_text still accepted)
+        voice_mode: auto               # off | auto | voice_only | voice_text | text_only
         max_chars: 700
 ```
 
@@ -137,7 +181,8 @@ bots:
 
 - `/clear` resets the currently active session history.
 - `/newchat` creates a fresh session and keeps older sessions available in Agent Zero/browser history.
-- `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat, supports inline details navigation, and accepts `/session search <term>` for filtering.
+- `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat. Supports inline details navigation and **button-driven search**: tap Search, send a search term, and results filter inline without typing a command.
+- `/topic [name]` opens or resumes a named thread within the same chat; without a name it lists existing topics.
 - Session switching is scoped to the same Telegram bot, Telegram user, and Telegram chat for safety.
 
 ## Notes
@@ -146,6 +191,8 @@ bots:
 - For OpenAI-compatible Gemini PCM (`format: "pcm"`), the plugin assumes raw PCM `s16le`, `24000 Hz`, mono and converts it automatically before sending to Telegram.
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
+- **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, and `/model` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
+- **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
 - Publishing to the Plugin Index: use `name` without a leading underscore; see `packaging/plugin-index/index.yaml.example` for an `a0-plugins` PR template.
 
 ## TTS troubleshooting
