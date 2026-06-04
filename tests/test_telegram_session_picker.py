@@ -455,7 +455,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertFalse(ok)
 
-    def test_send_initial_progress_status_skips_when_native_draft_mode_is_supported(self):
+    def test_send_initial_progress_status_still_sends_tool_info_progress_in_native_draft_mode(self):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
@@ -472,7 +472,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
              mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             asyncio.run(handler._send_initial_progress_status(ctx))
 
-        send_progress.assert_not_called()
+        send_progress.assert_awaited_once()
 
     def test_stream_chunk_does_not_fallback_to_old_progress_bubble_in_native_draft_mode(self):
         handler = self.handler

@@ -2868,8 +2868,6 @@ def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
 
 
 async def _send_initial_progress_status(context: AgentContext):
-    if _prefer_native_draft_preview(context):
-        return
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)
