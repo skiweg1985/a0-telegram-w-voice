@@ -2729,6 +2729,8 @@ async def _send_telegram_live_draft_preview(
     chat_id = context.data.get(CTX_TG_CHAT_ID)
     if not chat_id:
         return False
+    if not _supports_native_draft_preview(context, instance.bot):
+        return False
 
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     progress_cfg = _progress_settings(bot_cfg)
@@ -2756,7 +2758,7 @@ async def _send_telegram_live_draft_preview(
             instance.bot.token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         ) as reply_bot:
-            if not _supports_native_draft_preview(context, reply_bot):
+            if not tc.supports_message_draft(reply_bot):
                 return False
             ok = await tc.send_message_draft(
                 reply_bot,

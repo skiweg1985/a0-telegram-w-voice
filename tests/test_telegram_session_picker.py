@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 import sys
@@ -206,6 +207,7 @@ def _install_stub_modules():
     tc.send_text_with_keyboard = lambda *args, **kwargs: None
     tc.edit_text_with_keyboard = lambda *args, **kwargs: None
     tc.supports_message_draft = lambda *args, **kwargs: False
+    tc.send_message_draft = lambda *args, **kwargs: None
     sys.modules["usr.plugins.telegram_integration_voice.helpers.telegram_client"] = tc
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
@@ -417,6 +419,41 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx.data[handler.CTX_TG_CHAT_ID] = -100123456
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
+
+    def test_supports_native_draft_preview_respects_disabled_flag(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_DISABLED] = True
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {"live_response_preview": True, "native_draft_preview": True, "edit_enabled": True}}
+
+        with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
+            self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
+
+    def test_send_live_draft_preview_short_circuits_when_native_drafts_disabled(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_BOT] = "mainbot"
+        ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_DISABLED] = True
+        ctx.data[handler.CTX_TG_BOT_CFG] = {
+            "progress": {
+                "enabled": True,
+                "live_response_preview": True,
+                "native_draft_preview": True,
+                "edit_enabled": True,
+                "edit_throttle_ms": 200,
+            }
+        }
+
+        async def _should_not_send(*args, **kwargs):
+            raise AssertionError("send_message_draft should not be called when drafts are disabled")
+
+        with mock.patch.object(handler.tc, "supports_message_draft", return_value=True), \
+             mock.patch.object(handler.tc, "send_message_draft", side_effect=_should_not_send):
+            ok = asyncio.run(handler._send_telegram_live_draft_preview(ctx, "Partial answer"))
+
+        self.assertFalse(ok)
 
 
 if __name__ == "__main__":
