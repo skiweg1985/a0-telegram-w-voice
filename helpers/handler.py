@@ -2716,6 +2716,30 @@ def _supports_native_draft_preview(context: AgentContext, bot) -> bool:
     return tc.supports_message_draft(bot)
 
 
+def _prefer_native_draft_preview(context: AgentContext) -> bool:
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    progress_cfg = _progress_settings(bot_cfg)
+    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
+        return False
+    if not progress_cfg["native_draft_preview"]:
+        return False
+    if context.data.get(CTX_TG_STREAM_DRAFT_DISABLED):
+        return False
+    try:
+        chat_id = int(context.data.get(CTX_TG_CHAT_ID) or 0)
+    except (TypeError, ValueError):
+        return False
+    if chat_id <= 0:
+        return False
+    bot_name = context.data.get(CTX_TG_BOT)
+    if bot_name:
+        instance = get_bot(bot_name)
+        if not instance:
+            return False
+        return tc.supports_message_draft(instance.bot)
+    return True
+
+
 async def _send_telegram_live_draft_preview(
     context: AgentContext,
     preview_text: str,
@@ -2800,7 +2824,10 @@ async def handle_telegram_response_stream_chunk(context: AgentContext, stream_da
 
     context.data[CTX_TG_STREAM_PREVIEW] = next_preview
     context.data[CTX_TG_STREAM_ACTIVE] = True
+    prefer_native_draft = _prefer_native_draft_preview(context)
     if await _send_telegram_live_draft_preview(context, next_preview):
+        return
+    if prefer_native_draft:
         return
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)
@@ -2841,6 +2868,8 @@ def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
 
 
 async def _send_initial_progress_status(context: AgentContext):
+    if _prefer_native_draft_preview(context):
+        return
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)

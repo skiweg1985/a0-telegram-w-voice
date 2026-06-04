@@ -455,6 +455,53 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertFalse(ok)
 
+    def test_send_initial_progress_status_skips_when_native_draft_mode_is_supported(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_BOT_CFG] = {
+            "progress": {
+                "enabled": True,
+                "live_response_preview": True,
+                "native_draft_preview": True,
+                "edit_enabled": True,
+            }
+        }
+
+        with mock.patch.object(handler, "send_telegram_progress_update", new=mock.AsyncMock()) as send_progress, \
+             mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
+            asyncio.run(handler._send_initial_progress_status(ctx))
+
+        send_progress.assert_not_called()
+
+    def test_stream_chunk_does_not_fallback_to_old_progress_bubble_in_native_draft_mode(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_BOT_CFG] = {
+            "progress": {
+                "enabled": True,
+                "live_response_preview": True,
+                "native_draft_preview": True,
+                "edit_enabled": True,
+            }
+        }
+
+        stream_data = {
+            "full": json.dumps({
+                "tool_name": "response",
+                "tool_args": {"text": "Partial answer", "break_loop": True},
+            })
+        }
+
+        with mock.patch.object(handler, "_send_telegram_live_draft_preview", new=mock.AsyncMock(return_value=False)) as send_draft, \
+             mock.patch.object(handler, "send_telegram_progress_update", new=mock.AsyncMock()) as send_progress, \
+             mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
+            asyncio.run(handler.handle_telegram_response_stream_chunk(ctx, stream_data))
+
+        send_draft.assert_awaited_once()
+        send_progress.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
