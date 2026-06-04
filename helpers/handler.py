@@ -52,6 +52,8 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_PROGRESS_LAST_TS,
     CTX_TG_PROGRESS_LINES,
     CTX_TG_PROGRESS_HEADER,
+    CTX_TG_STREAM_PREVIEW,
+    CTX_TG_STREAM_ACTIVE,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
     CTX_TG_TTS_OVERRIDE,
@@ -2483,10 +2485,16 @@ async def send_telegram_ephemeral_status(context: AgentContext, html_body: str) 
 
 def _progress_settings(bot_cfg: dict) -> dict:
     cfg = (bot_cfg or {}).get("progress") or {}
+    try:
+        preview_chars = int(cfg.get("live_response_preview_chars", 1200) or 1200)
+    except (TypeError, ValueError):
+        preview_chars = 1200
     return {
         "enabled": bool(cfg.get("edit_enabled", True)),
         "throttle_ms": int(cfg.get("edit_throttle_ms", 1000) or 1000),
         "final_in_place": bool(cfg.get("final_in_place", True)),
+        "live_response_preview": bool(cfg.get("live_response_preview", True)),
+        "live_response_preview_chars": max(160, min(preview_chars, 4000)),
     }
 
 
@@ -2496,6 +2504,8 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
     context.data.pop(CTX_TG_PROGRESS_LINES, None)
     context.data.pop(CTX_TG_PROGRESS_HEADER, None)
+    context.data.pop(CTX_TG_STREAM_PREVIEW, None)
+    context.data.pop(CTX_TG_STREAM_ACTIVE, None)
 
 
 def _progress_history_limit(bot_cfg: dict, level: str) -> int:
@@ -2539,7 +2549,167 @@ def _render_progress_status_html(context: AgentContext, bot_cfg: dict, *, done: 
     elif not done and level == "off":
         parts.append("")
         parts.append("<i>Processing your request…</i>")
+    preview_html = _render_live_response_preview_html(context, bot_cfg, done=done)
+    if preview_html:
+        parts.append("")
+        parts.append(preview_html)
     return "\n".join(parts)
+
+
+def _render_live_response_preview_html(
+    context: AgentContext, bot_cfg: dict, *, done: bool = False
+) -> str:
+    if done:
+        return ""
+    progress_cfg = _progress_settings(bot_cfg)
+    if not progress_cfg["live_response_preview"]:
+        return ""
+    preview = str(context.data.get(CTX_TG_STREAM_PREVIEW, "") or "").strip()
+    if not preview:
+        return ""
+    limit = int(progress_cfg["live_response_preview_chars"])
+    if len(preview) > limit:
+        preview = "…" + preview[-(limit - 1):]
+    return "\n".join([
+        "<b>💬 Draft reply…</b>",
+        "",
+        html.escape(preview),
+    ])
+
+
+def _parse_partial_json_string(payload: str, start: int) -> tuple[str, bool] | None:
+    chars: list[str] = []
+    i = start
+    closed = False
+    while i < len(payload):
+        ch = payload[i]
+        if ch == '"':
+            closed = True
+            break
+        if ch == "\\":
+            i += 1
+            if i >= len(payload):
+                break
+            esc = payload[i]
+            if esc == "n":
+                chars.append("\n")
+            elif esc == "r":
+                chars.append("\r")
+            elif esc == "t":
+                chars.append("\t")
+            elif esc == "b":
+                chars.append("\b")
+            elif esc == "f":
+                chars.append("\f")
+            elif esc in {'"', "\\", "/"}:
+                chars.append(esc)
+            elif esc == "u":
+                hex_code = payload[i + 1 : i + 5]
+                if len(hex_code) == 4 and re.fullmatch(r"[0-9a-fA-F]{4}", hex_code):
+                    chars.append(chr(int(hex_code, 16)))
+                    i += 4
+                else:
+                    chars.append("u")
+            else:
+                chars.append(esc)
+        else:
+            chars.append(ch)
+        i += 1
+    return "".join(chars), closed
+
+
+def _extract_partial_json_string_field(payload: str, field_name: str) -> tuple[str, bool] | None:
+    if not payload:
+        return None
+    pattern = rf'"{re.escape(field_name)}"\s*:\s*"'
+    match = re.search(pattern, payload)
+    if not match:
+        return None
+    return _parse_partial_json_string(payload, match.end())
+
+
+def _extract_partial_json_bool_field(payload: str, field_name: str) -> bool | None:
+    if not payload:
+        return None
+    pattern = rf'"{re.escape(field_name)}"\s*:\s*(true|false)'
+    match = re.search(pattern, payload, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).lower() == "true"
+
+
+def _extract_live_response_preview(stream_full: str) -> dict | None:
+    raw = str(stream_full or "")
+    if not raw:
+        return None
+
+    parsed = None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+
+    tool_name = None
+    tool_args = {}
+    if isinstance(parsed, dict):
+        tool_name = parsed.get("tool_name") or parsed.get("name")
+        tool_args = parsed.get("tool_args") if isinstance(parsed.get("tool_args"), dict) else {}
+    else:
+        tool_match = _extract_partial_json_string_field(raw, "tool_name")
+        tool_name = tool_match[0] if tool_match else None
+
+    if tool_name != "response":
+        return None
+
+    if tool_args:
+        text = tool_args.get("text") or tool_args.get("message") or ""
+        break_loop = tool_args.get("break_loop")
+        attachments = tool_args.get("attachments") if isinstance(tool_args.get("attachments"), list) else []
+    else:
+        text_match = _extract_partial_json_string_field(raw, "text") or _extract_partial_json_string_field(raw, "message")
+        text = text_match[0] if text_match else ""
+        break_loop = _extract_partial_json_bool_field(raw, "break_loop")
+        attachments = [True] if re.search(r'"attachments"\s*:\s*\[', raw) else []
+
+    text = str(text or "")
+    if not text.strip():
+        return None
+    if break_loop is False:
+        return None
+    if attachments:
+        return None
+
+    return {
+        "text": text,
+        "break_loop": break_loop,
+    }
+
+
+async def handle_telegram_response_stream_chunk(context: AgentContext, stream_data: dict | None):
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    progress_cfg = _progress_settings(bot_cfg)
+    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
+        return
+
+    preview = _extract_live_response_preview((stream_data or {}).get("full", ""))
+    current_preview = str(context.data.get(CTX_TG_STREAM_PREVIEW, "") or "")
+
+    if not preview:
+        return
+
+    next_preview = str(preview.get("text") or "")
+    if not next_preview or next_preview == current_preview:
+        return
+
+    context.data[CTX_TG_STREAM_PREVIEW] = next_preview
+    context.data[CTX_TG_STREAM_ACTIVE] = True
+    html_text = _render_progress_status_html(context, bot_cfg, done=False)
+    await send_telegram_progress_update(context, html_text, text_is_html=True)
+
+
+def handle_telegram_response_stream_end(context: AgentContext):
+    context.data.pop(CTX_TG_STREAM_ACTIVE, None)
+    context.data.pop(CTX_TG_STREAM_PREVIEW, None)
 
 
 def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):

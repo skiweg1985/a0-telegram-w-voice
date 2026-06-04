@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 import types
 import unittest
@@ -208,6 +209,7 @@ def _install_stub_modules():
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
     detail_status.render = lambda *args, **kwargs: None
+    detail_status.effective_detail_level = lambda *args, **kwargs: "info"
     sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"] = detail_status
 
     speech = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.speech")
@@ -348,6 +350,49 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertTrue(old_ctx.killed)
         self.assertEqual(saved_states[-1]["chats"]["mainbot:42:99"], "web")
         self.assertEqual(saved_contexts[-1], target_ctx)
+
+    def test_extract_live_response_preview_from_complete_response_tool_json(self):
+        handler = self.handler
+        payload = json.dumps({
+            "tool_name": "response",
+            "tool_args": {
+                "text": "Hallo **Benji**",
+                "break_loop": True,
+            },
+        })
+
+        preview = handler._extract_live_response_preview(payload)
+
+        self.assertEqual(preview["text"], "Hallo **Benji**")
+
+    def test_extract_live_response_preview_from_partial_stream_json(self):
+        handler = self.handler
+        payload = '{"tool_name":"response","tool_args":{"text":"Hallo\nWelt'
+
+        preview = handler._extract_live_response_preview(payload)
+
+        self.assertEqual(preview["text"], "Hallo\nWelt")
+
+    def test_extract_live_response_preview_skips_inline_progress_updates(self):
+        handler = self.handler
+        payload = json.dumps({
+            "tool_name": "response",
+            "tool_args": {
+                "text": "working on it",
+                "break_loop": False,
+            },
+        })
+
+        self.assertIsNone(handler._extract_live_response_preview(payload))
+
+    def test_render_progress_status_html_includes_live_preview_block(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_STREAM_PREVIEW] = "Partial answer"
+        html_text = handler._render_progress_status_html(ctx, {"progress": {"live_response_preview": True}}, done=False)
+
+        self.assertIn("💬 Draft reply…", html_text)
+        self.assertIn("Partial answer", html_text)
 
 
 if __name__ == "__main__":

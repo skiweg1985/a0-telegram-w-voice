@@ -25,6 +25,8 @@ CTX_TG_PROGRESS_LAST_HASH = "_telegram_progress_last_hash"
 CTX_TG_PROGRESS_LAST_TS = "_telegram_progress_last_ts"
 CTX_TG_PROGRESS_LINES = "_telegram_progress_lines"
 CTX_TG_PROGRESS_HEADER = "_telegram_progress_header"
+CTX_TG_STREAM_PREVIEW = "_telegram_stream_preview"
+CTX_TG_STREAM_ACTIVE = "_telegram_stream_active"
 CTX_TG_LAST_TEXT_RESPONSE = "_telegram_last_text_response"
 CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "_telegram_last_text_response_token"
 

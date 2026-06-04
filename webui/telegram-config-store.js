@@ -67,6 +67,8 @@ export const store = createStore("telegramConfig", {
         edit_enabled: true,
         edit_throttle_ms: 1000,
         final_in_place: true,
+        live_response_preview: true,
+        live_response_preview_chars: 1200,
       },
       speech: {
         stt: {

@@ -308,6 +308,29 @@
                 </div>
               </div>
 
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Live draft reply preview</div>
+                  <div class="field-description">Show streamed response-tool text inside the editable progress message when no attachments are involved</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.progress.live_response_preview" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Live draft preview chars</div>
+                  <div class="field-description">Maximum visible characters for the streamed draft snippet</div>
+                </div>
+                <div class="field-control">
+                  <input type="number" x-model.number="bot.progress.live_response_preview_chars" min="160" step="50" />
+                </div>
+              </div>
+
               <div class="field-divider" style="margin-top:8px;font-weight:600;opacity:.85;">Voice / STT / TTS</div>
 
               <div class="field">
