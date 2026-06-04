@@ -300,7 +300,7 @@ class ProgressUpdateNoSpamTests(unittest.TestCase):
 
         ctx = AgentContext()
         ctx.data[CTX_TG_BOT] = "testbot"
-        ctx.data[CTX_TG_BOT_CFG] = {"progress": {"edit_enabled": True, "edit_throttle_ms": 0}}
+        ctx.data[CTX_TG_BOT_CFG] = {"progress": {"edit_throttle_ms": 0}}
         ctx.data[CTX_TG_CHAT_ID] = 12345
         if with_progress_id:
             ctx.data[CTX_TG_PROGRESS_MESSAGE_ID] = 999

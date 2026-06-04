@@ -57,10 +57,9 @@ export const store = createStore("telegramConfig", {
       attachment_max_age_hours: 0,
       telegram_detail_level: "info",
       progress: {
-        edit_enabled: true,
-        final_in_place: true,
-        native_draft_preview: true,
-        live_response_preview: true,
+        edit_throttle_ms: 200,
+        completed_mode: "delete",
+        live_response_preview_chars: 1200,
         live_response_preview_interval_ms: 800,
         live_response_preview_buffer_threshold: 24,
       },

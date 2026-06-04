@@ -9,7 +9,7 @@
 - Session search is now button-driven: tapping **Search** in the session picker prompts for a term via Telegram's reply box and uses your next message to filter, instead of only showing help text.
 - Unauthorized users now get a clear, throttled reply with their Telegram user ID so they can request access, instead of silence.
 - Visible "still working" notice when live progress edits are repeatedly paused by Telegram rate limits, so a stalled progress message no longer looks frozen. The typing indicator is also refreshed after each new progress message.
-- WebUI: per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`), a **Walkie-talkie preset** button, and operator tuning for live-preview cadence and buffer threshold. Chat-overridable settings are labeled as defaults for new sessions with the matching slash command.
+- WebUI: per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`), plus a **Walkie-talkie preset** button. Chat-overridable settings are labeled as defaults for new sessions with the matching slash command.
 - Emoji icons and human-readable labels for `/detail info` and `/detail debug` steps (e.g. memory tools show a brain icon, code execution a laptop). Icons are resolved by exact match, prefix-before-colon, then prefix rules with a built-in map and configurable overrides.
 - New bot config keys: `telegram_detail_icons_enabled` (default true), `telegram_detail_tool_icons` (override map), `telegram_detail_max_body_chars` (debug JSON truncation limit, default 3200).
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
@@ -17,6 +17,7 @@
 
 ### Removed
 
+- WebUI no longer exposes Progress Message Editing toggles. Progress edits, live reply previews, final in-place edits, and native draft fallback now run automatically; operator tuning remains YAML-only.
 - `/speakstyle` command removed. Use `/optimize_output voice` for a voice-oriented answer style and `/optimize_output off` to turn it off.
 - `/alsotext` command removed. Control text alongside voice via `/voice voice_text` (voice + text) or `/voice voice_only` (voice without text), or set the bot's default **Voice Reply Mode**. Any leftover session override is cleared on `/clear`.
 - Legacy `/tts` session fallback (`telegram_tts_voice_session`) removed. The old TTS inline control is gone; use `/voice`.

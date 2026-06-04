@@ -32,12 +32,8 @@ bots: []
 #
 #   # Voice/STT/TTS
 #   progress:
-#     edit_enabled: true           # Use message edit for break_loop=false progress updates
 #     edit_throttle_ms: 200        # (YAML only) Minimum delay between progress edits
-#     final_in_place: true         # Edit last progress message into final result when possible
 #     completed_mode: delete       # (YAML only) delete | none | edit — cleanup leftover progress; never leave "Completed" by default
-#     native_draft_preview: true   # Prefer Telegram sendMessageDraft in private chats when aiogram supports it
-#     live_response_preview: true  # Async/best-effort preview; never blocks Agent Zero streaming
 #     live_response_preview_interval_ms: 800      # (YAML only) Hermes-style max preview cadence
 #     live_response_preview_buffer_threshold: 24  # (YAML only) Flush early after enough new buffered chars
 #     live_response_preview_chars: 1200           # (YAML only) Cap visible draft text to avoid giant Telegram edits

@@ -582,3 +582,36 @@
   - yes ([Unreleased] Added/Changed)
 - Follow-ups:
   - none
+
+## 2026-06-04 21:51 – GPT-5.5 – Progress Settings WebUI
+
+- Done:
+  - WebUI-Abschnitt "Progress Message Editing" entfernt.
+  - Progress-Verhalten im Handler fest verdrahtet: Progress-Edits, Live-Preview, finales In-Place-Edit und Native-Draft-Fallback laufen automatisch.
+  - Entfernte Progress-Toggles aus Store-Defaults, Beispielkonfiguration und README entfernt; YAML-only Operator-Tuning bleibt erhalten.
+  - Tests auf das neue Config-Modell ohne Progress-Toggles angepasst.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: feat/telegram-native-draft-streaming
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - webui/config.html
+  - webui/telegram-config-store.js
+  - default_config.yaml
+  - README.md
+  - tests/test_telegram_session_picker.py
+  - tests/test_telegram_flood_control.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m pytest tests/test_telegram_session_picker.py tests/test_telegram_flood_control.py -q` (38 passed); `python3 -m pytest tests/ -q` (52 passed)
+  - endpoints: none
+  - UI path: WebUI Telegram bot config; Progress Message Editing section removed
+- Changelog updated:
+  - yes ([Unreleased] Removed)
+- Follow-ups:
+  - none

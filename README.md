@@ -101,13 +101,11 @@ bots:
     # telegram_detail_max_body_chars: 3200       # debug JSON truncation limit
 
     progress:
-      edit_enabled: true
-      final_in_place: true
+      edit_throttle_ms: 200
       completed_mode: delete                     # delete | none | edit; avoids leftover "Completed" bubbles
-      native_draft_preview: true
-      live_response_preview: true                 # async/best-effort; never blocks Agent Zero streaming
       live_response_preview_interval_ms: 800      # Hermes-style max preview cadence
       live_response_preview_buffer_threshold: 24  # flush early after enough buffered chars
+      live_response_preview_chars: 1200           # visible draft text cap
 
     speech:
       stt:

@@ -427,7 +427,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_STREAM_PREVIEW] = "Partial answer"
-        html_text = handler._render_progress_status_html(ctx, {"progress": {"live_response_preview": True}}, done=False)
+        html_text = handler._render_progress_status_html(ctx, {}, done=False)
 
         self.assertIn("💬 Draft reply…", html_text)
         self.assertIn("Partial answer", html_text)
@@ -438,7 +438,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx.data[handler.CTX_TG_STREAM_PREVIEW] = "Partial answer"
         ctx.data[handler.CTX_TG_STREAM_DRAFT_ACTIVE] = True
 
-        html_text = handler._render_progress_status_html(ctx, {"progress": {"live_response_preview": True}}, done=False)
+        html_text = handler._render_progress_status_html(ctx, {}, done=False)
 
         self.assertNotIn("💬 Draft reply…", html_text)
 
@@ -446,7 +446,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
-        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {"live_response_preview": True, "native_draft_preview": True, "edit_enabled": True}}
 
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             self.assertTrue(handler._supports_native_draft_preview(ctx, object()))
@@ -460,7 +459,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
         ctx.data[handler.CTX_TG_STREAM_DRAFT_DISABLED] = True
-        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {"live_response_preview": True, "native_draft_preview": True, "edit_enabled": True}}
 
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
@@ -473,10 +471,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx.data[handler.CTX_TG_STREAM_DRAFT_DISABLED] = True
         ctx.data[handler.CTX_TG_BOT_CFG] = {
             "progress": {
-                "enabled": True,
-                "live_response_preview": True,
-                "native_draft_preview": True,
-                "edit_enabled": True,
                 "edit_throttle_ms": 200,
             }
         }
@@ -521,8 +515,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_BOT_CFG] = {
             "progress": {
-                "edit_enabled": True,
-                "live_response_preview": True,
                 "live_response_preview_interval_ms": 10000,
                 "live_response_preview_buffer_threshold": 9999,
             }
@@ -549,8 +541,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_BOT_CFG] = {
             "progress": {
-                "edit_enabled": True,
-                "live_response_preview": True,
                 "live_response_preview_interval_ms": 10000,
                 "live_response_preview_buffer_threshold": 9999,
             }
@@ -573,8 +563,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_BOT_CFG] = {
             "progress": {
-                "edit_enabled": True,
-                "live_response_preview": True,
                 "live_response_preview_interval_ms": 10000,
                 "live_response_preview_buffer_threshold": 1,
             }
@@ -601,11 +589,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         token = "tok"
         ctx.data[handler.CTX_TG_STREAM_WORKER_TOKEN] = token
         ctx.data[handler.CTX_TG_BOT_CFG] = {
-            "progress": {
-                "edit_enabled": True,
-                "live_response_preview": True,
-                "native_draft_preview": True,
-            }
+            "progress": {}
         }
         ctx.data[handler.CTX_TG_STREAM_PENDING_FULL] = json.dumps({
             "tool_name": "response",
@@ -637,14 +621,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
-        ctx.data[handler.CTX_TG_BOT_CFG] = {
-            "progress": {
-                "enabled": True,
-                "live_response_preview": True,
-                "native_draft_preview": True,
-                "edit_enabled": True,
-            }
-        }
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {}}
 
         with mock.patch.object(handler, "send_telegram_progress_update", new=mock.AsyncMock()) as send_progress, \
              mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
@@ -671,9 +648,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
         ctx.data[handler.CTX_TG_BOT_CFG] = {
             "progress": {
-                "edit_enabled": True,
                 "edit_throttle_ms": 0,
-                "final_in_place": True,
                 **(progress_cfg or {}),
             }
         }
@@ -750,14 +725,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
-        ctx.data[handler.CTX_TG_BOT_CFG] = {
-            "progress": {
-                "enabled": True,
-                "live_response_preview": True,
-                "native_draft_preview": True,
-                "edit_enabled": True,
-            }
-        }
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {}}
 
         stream_data = {
             "full": json.dumps({
@@ -782,14 +750,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
-        ctx.data[handler.CTX_TG_BOT_CFG] = {
-            "progress": {
-                "enabled": True,
-                "live_response_preview": True,
-                "native_draft_preview": True,
-                "edit_enabled": True,
-            }
-        }
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {}}
 
         stream_data = {
             "full": json.dumps({

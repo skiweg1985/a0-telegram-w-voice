@@ -2611,12 +2611,8 @@ def _progress_settings(bot_cfg: dict) -> dict:
     if completed_mode not in {"delete", "none", "edit"}:
         completed_mode = "delete"
     return {
-        "enabled": bool(cfg.get("edit_enabled", True)),
         "throttle_ms": int(cfg.get("edit_throttle_ms", 200) or 200),
-        "final_in_place": bool(cfg.get("final_in_place", True)),
         "completed_mode": completed_mode,
-        "live_response_preview": bool(cfg.get("live_response_preview", True)),
-        "native_draft_preview": bool(cfg.get("native_draft_preview", True)),
         "live_response_preview_chars": max(160, min(preview_chars, 4000)),
         "live_response_preview_interval_ms": max(100, min(preview_interval_ms, 10000)),
         "live_response_preview_buffer_threshold": max(1, min(preview_threshold, 4000)),
@@ -2716,8 +2712,6 @@ def _render_live_response_preview_html(
     if done:
         return ""
     progress_cfg = _progress_settings(bot_cfg)
-    if not progress_cfg["live_response_preview"]:
-        return ""
     if context.data.get(CTX_TG_STREAM_DRAFT_ACTIVE):
         return ""
     preview = str(context.data.get(CTX_TG_STREAM_PREVIEW, "") or "").strip()
@@ -2844,12 +2838,6 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
 
 
 def _supports_native_draft_preview(context: AgentContext, bot) -> bool:
-    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
-    progress_cfg = _progress_settings(bot_cfg)
-    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
-        return False
-    if not progress_cfg["native_draft_preview"]:
-        return False
     if context.data.get(CTX_TG_STREAM_DRAFT_DISABLED):
         return False
     try:
@@ -2920,11 +2908,6 @@ async def _send_telegram_live_draft_preview(
 
 
 async def handle_telegram_response_stream_chunk(context: AgentContext, stream_data: dict | None):
-    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
-    progress_cfg = _progress_settings(bot_cfg)
-    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
-        return
-
     stream_full = str((stream_data or {}).get("full", "") or "")
     if not stream_full:
         return
@@ -3006,10 +2989,6 @@ async def _flush_telegram_live_preview_once(context: AgentContext, token: str) -
         return False
 
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
-    progress_cfg = _progress_settings(bot_cfg)
-    if not progress_cfg["enabled"] or not progress_cfg["live_response_preview"]:
-        return False
-
     preview = _extract_live_response_preview(
         str(context.data.get(CTX_TG_STREAM_PENDING_FULL, "") or "")
     )
@@ -3191,37 +3170,6 @@ async def send_telegram_progress_update(
             cut_pos = safe_cut
         html_text = html_text[:cut_pos] + "\n<i>… truncated</i>"
 
-    # Compatibility mode: progress edits disabled -> always send a new message
-    if not progress_cfg["enabled"]:
-        try:
-            async with _temp_bot(
-                instance.bot.token,
-                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-            ) as reply_bot:
-                if keyboard:
-                    await tc.send_text_with_keyboard(
-                        reply_bot,
-                        chat_id,
-                        html_text,
-                        keyboard,
-                        reply_to_message_id=reply_to,
-                    )
-                else:
-                    await tc.send_text(
-                        reply_bot,
-                        chat_id,
-                        html_text,
-                        reply_to_message_id=reply_to,
-                    )
-                # A new message clears the typing indicator; re-arm it so long
-                # runs keep showing activity (Hermes pattern).
-                await tc.send_typing(reply_bot, chat_id)
-            return None
-        except Exception as e:
-            error = format_error(e)
-            PrintStyle.error(f"Telegram progress send failed: {error}")
-            return error
-
     fp = _progress_fingerprint(response_text, keyboard)
     if context.data.get(CTX_TG_PROGRESS_LAST_HASH) == fp:
         return None
@@ -3323,7 +3271,6 @@ async def send_telegram_reply(
 
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     reply_cfg = speech.voice_reply_settings(bot_cfg)
-    progress_cfg = _progress_settings(bot_cfg)
 
     # Per-response overrides set by the response-tool (tool_execute_after extension).
     # Transient — popped here. The agent may only DE-ESCALATE (force→auto→off),
@@ -3444,9 +3391,7 @@ async def send_telegram_reply(
                 html_text = tc.md_to_telegram_html(text_body)
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 use_final_edit = bool(
-                    progress_cfg["enabled"]
-                    and progress_cfg["final_in_place"]
-                    and progress_message_id
+                    progress_message_id
                     and not attachments
                     and not used_native_draft
                 )
