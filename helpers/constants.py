@@ -39,8 +39,11 @@ CTX_TG_STREAM_WORKER_TOKEN = "_telegram_stream_worker_token"
 CTX_TG_STREAM_LAST_FLUSH_RAW_LEN = "_telegram_stream_last_flush_raw_len"
 CTX_TG_STREAM_LAST_FLUSH_TS = "_telegram_stream_last_flush_ts"
 CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
-CTX_TG_LAST_TEXT_RESPONSE = "_telegram_last_text_response"
-CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "_telegram_last_text_response_token"
+
+# Last text reply + reveal-button token for the voice_only "Text anzeigen" action.
+# Persisted (no leading underscore) so the button survives bot restarts / context reloads.
+CTX_TG_LAST_TEXT_RESPONSE = "telegram_last_text_response"
+CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "telegram_last_text_response_token"
 
 # Per-session voice behaviour: None (missing) = use plugin config;
 # "off" = never send voice; "auto" / "force" = session voice_mode override.
