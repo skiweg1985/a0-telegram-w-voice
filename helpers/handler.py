@@ -41,6 +41,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_USERNAME,
     CTX_TG_TYPING_STOP,
     CTX_TG_REPLY_TO,
+    CTX_TG_REPLY_CONTEXT,
     CTX_TG_ATTACHMENTS,
     CTX_TG_KEYBOARD,
     CTX_TG_VOICE_REPLY_MODE,
@@ -49,7 +50,12 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_PROGRESS_MESSAGE_ID,
     CTX_TG_PROGRESS_LAST_HASH,
     CTX_TG_PROGRESS_LAST_TS,
+    CTX_TG_PROGRESS_LINES,
+    CTX_TG_PROGRESS_HEADER,
+    CTX_TG_LAST_TEXT_RESPONSE,
+    CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
     CTX_TG_TTS_OVERRIDE,
+    CTX_TG_VOICE_CONVERSATION_MODE,
     CTX_TG_OUTPUT_OPTIMIZE,
     CTX_TG_VOICE_TEXT,
     CTX_TG_DETAIL_LEVEL_SESSION,
@@ -143,6 +149,67 @@ def _tts_inline_keyboard() -> list[list[dict]]:
             {"text": "Force", "callback_data": f"{p}t|force"},
         ],
     ]
+
+
+def _voice_mode_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "🎙 Voice only", "callback_data": f"{p}v|voice_only"},
+            {"text": "🎙+📝 Voice + Text", "callback_data": f"{p}v|voice_text"},
+        ],
+        [
+            {"text": "📝 Text only", "callback_data": f"{p}v|text_only"},
+            {"text": "⏹ Off", "callback_data": f"{p}v|off"},
+        ],
+    ]
+
+
+def _show_text_quick_action_keyboard(token: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [[{"text": "📝 Text anzeigen", "callback_data": f"{p}qa|show_text:{token}"}]]
+
+
+def _append_inline_keyboard(
+    base: list[list[dict]] | None,
+    extra: list[list[dict]] | None,
+) -> list[list[dict]] | None:
+    rows = list(base or [])
+    if extra:
+        rows.extend(extra)
+    return rows or None
+
+
+def _voice_conversation_mode(ctx: AgentContext) -> str:
+    return str(ctx.data.get(CTX_TG_VOICE_CONVERSATION_MODE, "off") or "off").strip().lower()
+
+
+def _voice_mode_label(mode: str) -> str:
+    return {
+        "voice_only": "voice only",
+        "voice_text": "voice + text",
+        "text_only": "text only",
+        "off": "off",
+    }.get(str(mode or "off").strip().lower(), "off")
+
+
+def _voice_mode_header(ctx: AgentContext) -> str:
+    mode = _voice_conversation_mode(ctx)
+    if mode == "off":
+        return "🎙 Voice Mode: off"
+    return f"🎙 Voice Mode Active: {_voice_mode_label(mode)}"
+
+
+def _apply_voice_mode_setting(ctx: AgentContext, mode: str) -> str:
+    mode = str(mode or "").strip().lower()
+    if mode in ("start", "on", "enable"):
+        mode = "voice_text"
+    if mode not in ("off", "voice_only", "voice_text", "text_only"):
+        return "Usage: /voice [voice_only|voice_text|text_only|off]"
+    ctx.data[CTX_TG_VOICE_CONVERSATION_MODE] = mode
+    if mode == "off":
+        return "🎙 Voice mode off. Session uses normal TTS/text settings again."
+    return f"🎙 Voice mode active: {_voice_mode_label(mode)}."
 
 
 def _tts_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
@@ -1070,6 +1137,41 @@ async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+async def handle_voice(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /voice — walkie-talkie conversation mode for the current session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message).lower().strip()
+    if not arg:
+        reply = (
+            f"{_voice_mode_header(ctx)}\n"
+            "Choose a mode: voice only, voice + text, text only, or off.\n"
+            "Tip: send a voice message and the session stays in the selected reply style."
+        )
+        kb = _voice_mode_inline_keyboard()
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token, message.chat.id, reply, parse_mode=None, keyboard=kb
+        )
+        return
+
+    if arg in ("start", "on", "enable", "voice_only", "voice_text", "text_only", "off"):
+        reply = _apply_voice_mode_setting(ctx, arg)
+    else:
+        reply = "Usage: /voice [voice_only|voice_text|text_only|off]"
+
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+
+
 async def handle_tts(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /tts — per-session voice reply mode."""
     user = message.from_user
@@ -1305,12 +1407,15 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
 
         vm = speech.effective_voice_reply_mode(bot_cfg, ctx.data)
+        talk_mode = _voice_conversation_mode(ctx)
+        talk_disp = _voice_mode_label(talk_mode)
         tts_ic = "✅" if speech.tts_enabled(bot_cfg) else "❌"
         stt_ic = "✅" if speech.stt_enabled(bot_cfg) else "❌"
+        voice_prefix = "🎙 active" if talk_mode != "off" else "🎙 off"
         lines.append(
             f"🔊 <b>Voice</b>: TTS {tts_ic} {_status_on_off(speech.tts_enabled(bot_cfg))} · "
             f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))} · "
-            f"replies <code>{esc(vm)}</code>"
+            f"replies <code>{esc(vm)}</code> · {voice_prefix} <code>{esc(talk_disp)}</code>"
         )
 
         opt_eff = speech.effective_output_optimize_mode(bot_cfg, ctx.data)
@@ -1340,7 +1445,7 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         lines.append(
             f"🔊 <b>Voice</b>: TTS {tts_ic} {_status_on_off(speech.tts_enabled(bot_cfg))} · "
             f"STT {stt_ic} {_status_on_off(speech.stt_enabled(bot_cfg))} · "
-            f"replies <code>{esc(vm)}</code>"
+            f"replies <code>{esc(vm)}</code> · 🎙 off <code>off</code>"
         )
         def_det = detail_status.normalize_detail_level(bot_cfg.get("telegram_detail_level"))
         def_det_disp = detail_status.detail_level_display(def_det)
@@ -1662,21 +1767,20 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
     # New user turn: clear stale progress message state
     _clear_progress_state(context)
 
+    # Show an immediate live-status placeholder so long agent runs don't look frozen.
+    await _send_initial_progress_status(context)
+
     # Store stop event so send_telegram_reply can cancel typing
     context.data[CTX_TG_TYPING_STOP] = typing_stop
     context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
 
-    # In group chats, if user replied to the bot's message, reply to the user's message
-    reply_to_id = None
-    if message.chat.type != "private" and instance.bot_info:
-        if (message.reply_to_message
-                and message.reply_to_message.from_user
-                and message.reply_to_message.from_user.id == instance.bot_info.id):
-            reply_to_id = message.message_id
+    # Keep Telegram threading visible when the user replied to an earlier message.
+    reply_to_id = message.message_id if message.reply_to_message else None
     context.data[CTX_TG_REPLY_TO] = reply_to_id
 
     # Build user message text
     text = _extract_message_content(message)
+    reply_context = _extract_reply_context(message)
     is_voice_input = _message_has_voice_input(message)
     context.data[CTX_TG_LAST_INPUT_WAS_VOICE] = is_voice_input
 
@@ -1699,6 +1803,12 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             except Exception as e:
                 PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
                 text = text + f"\n[Voice transcript failed: {format_error(e)}]"
+
+    if reply_context:
+        context.data[CTX_TG_REPLY_CONTEXT] = reply_context
+        text = _merge_reply_context(text, reply_context)
+    else:
+        context.data.pop(CTX_TG_REPLY_CONTEXT, None)
 
     # Build user message with prompt
     agent = context.agent0
@@ -1903,6 +2013,36 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             await query.answer("OK")
             await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "v":
+            if payload not in ("voice_only", "voice_text", "text_only", "off"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_voice_mode_setting(context, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            return
+
+        if kind == "qa":
+            action, _, action_token = payload.partition(":")
+            if action != "show_text":
+                await query.answer("Unknown option.")
+                return
+            text_reply = str(context.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+            current_token = str(context.data.get(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, "") or "")
+            if not text_reply or not current_token or current_token != action_token:
+                await query.answer("Text is no longer available.")
+                return
+            async with _temp_bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+                await tc.send_text(
+                    bot,
+                    chat_id,
+                    tc.md_to_telegram_html(text_reply),
+                    reply_to_message_id=(query.message.message_id if query.message else None),
+                )
+            await query.answer("Shown")
             return
 
         if kind == "m":
@@ -2114,6 +2254,15 @@ async def _get_or_create_context_from_user(
 
 # Message content extraction
 
+def _truncate_preview(text: str, limit: int = 280) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not value:
+        return ""
+    if len(value) <= limit:
+        return value
+    return value[: max(1, limit - 1)].rstrip() + "…"
+
+
 def _extract_message_content(message: TgMessage) -> str:
     parts = []
 
@@ -2133,12 +2282,53 @@ def _extract_message_content(message: TgMessage) -> str:
     if message.sticker:
         parts.append(f"[Sticker: {message.sticker.emoji or ''}]")
 
+    if message.photo:
+        parts.append("[Photo attachment]")
+
+    if message.document:
+        name = getattr(message.document, "file_name", None) or "document"
+        parts.append(f"[Document: {name}]")
+
+    if message.audio:
+        name = getattr(message.audio, "file_name", None) or getattr(message.audio, "title", None) or "audio"
+        parts.append(f"[Audio: {name}]")
+
+    if message.video:
+        name = getattr(message.video, "file_name", None) or "video"
+        parts.append(f"[Video: {name}]")
+
     # Simple attachment indicators
     for attr, label in [("voice", "Voice message"), ("video_note", "Video note")]:
         if getattr(message, attr, None):
             parts.append(f"[{label} — see attachment]")
 
     return "\n".join(parts) if parts else "[No text content]"
+
+
+def _extract_reply_context(message: TgMessage) -> str:
+    replied = getattr(message, "reply_to_message", None)
+    if not replied:
+        return ""
+
+    sender = _format_user(getattr(replied, "from_user", None))
+    body = _extract_message_content(replied)
+    body = _truncate_preview(body, 1200)
+    if not body:
+        body = "[No text content]"
+
+    return (
+        "[User replied to this Telegram message]\n"
+        f"From: {sender}\n"
+        f"Quoted message:\n{body}"
+    )
+
+
+def _merge_reply_context(message_text: str, reply_context: str) -> str:
+    text = (message_text or "").strip() or "[No text content]"
+    context_text = (reply_context or "").strip()
+    if not context_text:
+        return text
+    return f"{context_text}\n\n[User message]\n{text}"
 
 
 def _message_has_voice_input(message: TgMessage) -> bool:
@@ -2253,6 +2443,69 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
     context.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
     context.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
+    context.data.pop(CTX_TG_PROGRESS_LINES, None)
+    context.data.pop(CTX_TG_PROGRESS_HEADER, None)
+
+
+def _progress_history_limit(bot_cfg: dict, level: str) -> int:
+    cfg = (bot_cfg or {}).get("progress") or {}
+    key = "history_limit_verbose" if level == "debug" else "history_limit"
+    default = 10 if level == "debug" else 6
+    try:
+        value = int(cfg.get(key, default) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(value, 20))
+
+
+def _progress_status_title(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
+    if done:
+        return "✅ Completed"
+    level = detail_status.effective_detail_level(bot_cfg, context.data)
+    if level == "off":
+        return "🧠 Working…"
+    return "🧠 Working…"
+
+
+def _progress_line_prefix(line_html: str) -> str:
+    text = str(line_html or "")
+    if not text:
+        return text
+    return f"✓ {text}"
+
+
+def _render_progress_status_html(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
+    title = _progress_status_title(context, bot_cfg, done=done)
+    lines = list(context.data.get(CTX_TG_PROGRESS_LINES, []) or [])
+    level = detail_status.effective_detail_level(bot_cfg, context.data)
+    limit = _progress_history_limit(bot_cfg, level)
+    if limit and len(lines) > limit:
+        lines = lines[-limit:]
+    parts = [f"<b>{html.escape(title)}</b>"]
+    if lines and level != "off":
+        parts.append("")
+        parts.extend(_progress_line_prefix(line) for line in lines)
+    elif not done and level == "off":
+        parts.append("")
+        parts.append("<i>Processing your request…</i>")
+    return "\n".join(parts)
+
+
+def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
+    if not line_html:
+        return
+    lines = list(context.data.get(CTX_TG_PROGRESS_LINES, []) or [])
+    lines.append(str(line_html))
+    cap = max(4, _progress_history_limit(bot_cfg, "debug") * 2)
+    if len(lines) > cap:
+        lines = lines[-cap:]
+    context.data[CTX_TG_PROGRESS_LINES] = lines
+
+
+async def _send_initial_progress_status(context: AgentContext):
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    html_text = _render_progress_status_html(context, bot_cfg, done=False)
+    await send_telegram_progress_update(context, html_text, text_is_html=True)
 
 
 def _progress_fingerprint(text: str, keyboard: list[list[dict]] | None) -> str:
@@ -2489,14 +2742,35 @@ async def send_telegram_reply(
                             os.remove(voice_file)
 
             also = speech.effective_also_send_text(bot_cfg, context.data)
+            quick_actions = speech.quick_actions_settings(bot_cfg)
             # If the agent only set voice_text (TTS) and left text empty, response_text is
             # empty but users still expect a text bubble when also_send_text is on.
             text_body = (response_text or "").strip()
-            if not text_body and also and (voice_text or "").strip():
+            if not text_body and (voice_text or "").strip():
                 text_body = (voice_text or "").strip()
 
+            context.data[CTX_TG_LAST_TEXT_RESPONSE] = text_body
+            response_token = ""
+            if text_body:
+                response_token = uuid.uuid4().hex[:12]
+                context.data[CTX_TG_LAST_TEXT_RESPONSE_TOKEN] = response_token
+            else:
+                context.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
+
+            quick_action_keyboard = None
+            if (
+                sent_voice
+                and _voice_conversation_mode(context) == "voice_only"
+                and text_body
+                and quick_actions.get("enabled", True)
+                and quick_actions.get("show_text", True)
+            ):
+                quick_action_keyboard = _show_text_quick_action_keyboard(response_token)
+
+            final_keyboard = _append_inline_keyboard(keyboard, quick_action_keyboard)
+
             should_send_text = bool(text_body) and (
-                keyboard is not None or not sent_voice or also
+                final_keyboard is not None or not sent_voice or also
             )
             if should_send_text:
                 html_text = tc.md_to_telegram_html(text_body)
@@ -2510,9 +2784,9 @@ async def send_telegram_reply(
 
                 edited = False
                 if use_final_edit:
-                    if keyboard:
+                    if final_keyboard:
                         edited = await tc.edit_text_with_keyboard(
-                            reply_bot, chat_id, int(progress_message_id), html_text, keyboard,
+                            reply_bot, chat_id, int(progress_message_id), html_text, final_keyboard,
                         )
                     else:
                         edited = await tc.edit_text(
@@ -2520,10 +2794,18 @@ async def send_telegram_reply(
                         )
 
                 if not edited:
-                    if keyboard:
-                        await tc.send_text_with_keyboard(reply_bot, chat_id, html_text, keyboard, reply_to_message_id=reply_to)
+                    if final_keyboard:
+                        await tc.send_text_with_keyboard(reply_bot, chat_id, html_text, final_keyboard, reply_to_message_id=reply_to)
                     else:
                         await tc.send_text(reply_bot, chat_id, html_text, reply_to_message_id=reply_to)
+            else:
+                progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+                if progress_cfg["enabled"] and progress_cfg["final_in_place"] and progress_message_id:
+                    done_html = _render_progress_status_html(context, bot_cfg, done=True)
+                    if final_keyboard:
+                        await tc.edit_text_with_keyboard(reply_bot, chat_id, int(progress_message_id), done_html, final_keyboard)
+                    else:
+                        await tc.edit_text(reply_bot, chat_id, int(progress_message_id), done_html)
 
             _clear_progress_state(context)
 

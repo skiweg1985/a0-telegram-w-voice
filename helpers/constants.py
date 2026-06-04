@@ -12,6 +12,7 @@ CTX_TG_USER_ID = "telegram_user_id"
 CTX_TG_USERNAME = "telegram_username"
 CTX_TG_TYPING_STOP = "_telegram_typing_stop"
 CTX_TG_REPLY_TO = "_telegram_reply_to_message_id"
+CTX_TG_REPLY_CONTEXT = "_telegram_reply_context"
 
 # Transient
 CTX_TG_ATTACHMENTS = "_telegram_response_attachments"
@@ -22,11 +23,19 @@ CTX_TG_LAST_INPUT_WAS_VOICE = "_telegram_last_input_was_voice"
 CTX_TG_PROGRESS_MESSAGE_ID = "_telegram_progress_message_id"
 CTX_TG_PROGRESS_LAST_HASH = "_telegram_progress_last_hash"
 CTX_TG_PROGRESS_LAST_TS = "_telegram_progress_last_ts"
+CTX_TG_PROGRESS_LINES = "_telegram_progress_lines"
+CTX_TG_PROGRESS_HEADER = "_telegram_progress_header"
+CTX_TG_LAST_TEXT_RESPONSE = "_telegram_last_text_response"
+CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "_telegram_last_text_response_token"
 
 # Per-session voice behaviour: None (missing) = use plugin config;
 # "off" = never send voice; "auto" / "force" = session voice_mode override.
 # Key must not start with "_" so persist_chat includes it in chat.json.
 CTX_TG_TTS_OVERRIDE = "telegram_tts_voice_session"
+
+# Per-session walkie-talkie mode: off | voice_only | voice_text | text_only.
+# Persisted (no leading underscore) so Telegram sessions remember the preferred conversation mode.
+CTX_TG_VOICE_CONVERSATION_MODE = "telegram_voice_conversation_session"
 
 # Per-session response style for system prompt: missing = use speech.reply.optimize_output_default;
 # "auto" | "voice" | "text" | explicit "off" (no optimize snippet).

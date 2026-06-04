@@ -62,6 +62,16 @@ def voice_reply_settings(bot_cfg: dict) -> dict:
         "voice_mode": str(reply.get("voice_mode", "off")).lower(),  # off|auto|force
         "also_send_text": _coerce_bool(reply.get("also_send_text"), True),
         "max_chars": int(reply.get("max_chars", 700) or 700),
+        "quick_actions": quick_actions_settings(bot_cfg),
+    }
+
+
+def quick_actions_settings(bot_cfg: dict) -> dict:
+    reply = (bot_cfg.get("speech") or {}).get("reply") or {}
+    qa = reply.get("quick_actions") or {}
+    return {
+        "enabled": _coerce_bool(qa.get("enabled"), True),
+        "show_text": _coerce_bool(qa.get("show_text"), True),
     }
 
 
@@ -78,7 +88,16 @@ def effective_output_optimize_mode(bot_cfg: dict, ctx_data: dict) -> str:
     May return ``"auto"`` -- callers that need a concrete voice/text decision
     should pass the result through :func:`resolve_auto_optimize_mode`.
     """
-    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_OUTPUT_OPTIMIZE
+    from usr.plugins.telegram_integration_voice.helpers.constants import (
+        CTX_TG_OUTPUT_OPTIMIZE,
+        CTX_TG_VOICE_CONVERSATION_MODE,
+    )
+
+    voice_mode = str(ctx_data.get(CTX_TG_VOICE_CONVERSATION_MODE, "") or "").strip().lower()
+    if voice_mode in ("voice_only", "voice_text"):
+        return "voice"
+    if voice_mode == "text_only":
+        return "text"
 
     v = ctx_data.get(CTX_TG_OUTPUT_OPTIMIZE)
     if v == "off":
@@ -105,7 +124,16 @@ def resolve_auto_optimize_mode(bot_cfg: dict, ctx_data: dict) -> str:
 
 def effective_also_send_text(bot_cfg: dict, ctx_data: dict) -> bool:
     """Resolved also_send_text: session override wins, else config default."""
-    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_ALSO_SEND_TEXT_OVERRIDE
+    from usr.plugins.telegram_integration_voice.helpers.constants import (
+        CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
+        CTX_TG_VOICE_CONVERSATION_MODE,
+    )
+
+    voice_mode = str(ctx_data.get(CTX_TG_VOICE_CONVERSATION_MODE, "") or "").strip().lower()
+    if voice_mode == "voice_only":
+        return False
+    if voice_mode in ("voice_text", "text_only"):
+        return True
 
     sess = ctx_data.get(CTX_TG_ALSO_SEND_TEXT_OVERRIDE)
     if sess == "on":
@@ -116,8 +144,17 @@ def effective_also_send_text(bot_cfg: dict, ctx_data: dict) -> bool:
 
 
 def effective_voice_reply_mode(bot_cfg: dict, ctx_data: dict) -> str:
-    """Resolved voice reply mode: session /tts value wins, else speech.reply.voice_mode."""
-    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_TTS_OVERRIDE
+    """Resolved voice reply mode: walkie-talkie mode wins, else session /tts value, else config."""
+    from usr.plugins.telegram_integration_voice.helpers.constants import (
+        CTX_TG_TTS_OVERRIDE,
+        CTX_TG_VOICE_CONVERSATION_MODE,
+    )
+
+    voice_mode = str(ctx_data.get(CTX_TG_VOICE_CONVERSATION_MODE, "") or "").strip().lower()
+    if voice_mode in ("voice_only", "voice_text"):
+        return "force"
+    if voice_mode == "text_only":
+        return "off"
 
     base = voice_reply_settings(bot_cfg)["voice_mode"]
     sess = ctx_data.get(CTX_TG_TTS_OVERRIDE)

@@ -502,6 +502,32 @@
 
               <div class="field">
                 <div class="field-label">
+                  <div class="field-title">Quick action buttons</div>
+                  <div class="field-description">Optional inline buttons under Telegram replies</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.speech.reply.quick_actions.enabled" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field" x-show="bot.speech.reply.quick_actions.enabled">
+                <div class="field-label">
+                  <div class="field-title">Show text button in voice-only mode</div>
+                  <div class="field-description">Lets users reveal the text version on demand when replies are sent as voice only</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.speech.reply.quick_actions.show_text" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
                   <div class="field-title">Max chars for TTS</div>
                 </div>
                 <div class="field-control">
