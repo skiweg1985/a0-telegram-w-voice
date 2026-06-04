@@ -2,7 +2,10 @@ import os
 import re
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramRetryAfter,
+)
 from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
@@ -194,8 +197,19 @@ async def edit_text(
     message_id: int,
     text: str,
     parse_mode: object = _UNSET,
+    *,
+    rate_limit_is_soft_success: bool = False,
 ) -> bool:
-    """Edit an existing bot message text. Returns True on success (or no-op), False on hard failure."""
+    """Edit an existing bot message text. Returns True on success (or no-op), False on hard failure.
+
+    ``rate_limit_is_soft_success`` controls how ``TelegramRetryAfter`` (flood control on
+    ``editMessageText``) is reported back. The default ``False`` preserves the historical
+    behaviour: the function returns ``False`` so callers that need a guaranteed delivery
+    (e.g. the final reply) can fall back to ``send_message``. Set this to ``True`` for
+    cosmetic in-place updates (progress bubbles, live drafts, status edits) where it is
+    preferable to silently skip a rate-limited edit rather than spam the chat with a new
+    ``send_message`` for every flood-controlled edit.
+    """
     try:
         pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
         await bot.edit_message_text(
@@ -205,6 +219,16 @@ async def edit_text(
             **pm_kwargs,
         )
         return True
+    except TelegramRetryAfter as e:
+        if rate_limit_is_soft_success:
+            PrintStyle.warning(
+                f"Telegram edit_text rate-limited (retry after {getattr(e, 'retry_after', '?')}s); skipping edit."
+            )
+            return True
+        PrintStyle.warning(
+            f"Telegram edit_text rate-limited (retry after {getattr(e, 'retry_after', '?')}s)."
+        )
+        return False
     except TelegramBadRequest as e:
         err = str(e).lower()
         if "message is not modified" in err:
@@ -218,6 +242,16 @@ async def edit_text(
                 parse_mode=None,
             )
             return True
+        except TelegramRetryAfter as ee:
+            if rate_limit_is_soft_success:
+                PrintStyle.warning(
+                    f"Telegram edit_text rate-limited (retry after {getattr(ee, 'retry_after', '?')}s); skipping edit."
+                )
+                return True
+            PrintStyle.warning(
+                f"Telegram edit_text rate-limited (retry after {getattr(ee, 'retry_after', '?')}s)."
+            )
+            return False
         except TelegramBadRequest as ee:
             if "message is not modified" in str(ee).lower():
                 return True
@@ -238,8 +272,14 @@ async def edit_text_with_keyboard(
     text: str,
     buttons: list[list[dict]],
     parse_mode: object = _UNSET,
+    *,
+    rate_limit_is_soft_success: bool = False,
 ) -> bool:
-    """Edit existing text + inline keyboard. Returns True on success (or no-op)."""
+    """Edit existing text + inline keyboard. Returns True on success (or no-op).
+
+    See :func:`edit_text` for the meaning of ``rate_limit_is_soft_success`` and the
+    flood-control rationale.
+    """
     try:
         keyboard = build_inline_keyboard(buttons)
         pm_kwargs: dict = {} if parse_mode is _UNSET else {"parse_mode": parse_mode}
@@ -251,6 +291,16 @@ async def edit_text_with_keyboard(
             **pm_kwargs,
         )
         return True
+    except TelegramRetryAfter as e:
+        if rate_limit_is_soft_success:
+            PrintStyle.warning(
+                f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(e, 'retry_after', '?')}s); skipping edit."
+            )
+            return True
+        PrintStyle.warning(
+            f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(e, 'retry_after', '?')}s)."
+        )
+        return False
     except TelegramBadRequest as e:
         err = str(e).lower()
         if "message is not modified" in err:
@@ -266,6 +316,16 @@ async def edit_text_with_keyboard(
                 parse_mode=None,
             )
             return True
+        except TelegramRetryAfter as ee:
+            if rate_limit_is_soft_success:
+                PrintStyle.warning(
+                    f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(ee, 'retry_after', '?')}s); skipping edit."
+                )
+                return True
+            PrintStyle.warning(
+                f"Telegram edit_text_with_keyboard rate-limited (retry after {getattr(ee, 'retry_after', '?')}s)."
+            )
+            return False
         except TelegramBadRequest as ee:
             if "message is not modified" in str(ee).lower():
                 return True

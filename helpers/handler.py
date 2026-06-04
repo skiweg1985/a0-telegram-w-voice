@@ -2975,11 +2975,13 @@ async def send_telegram_progress_update(
             if message_id:
                 if keyboard:
                     sent_or_edited = await tc.edit_text_with_keyboard(
-                        reply_bot, chat_id, int(message_id), html_text, keyboard
+                        reply_bot, chat_id, int(message_id), html_text, keyboard,
+                        rate_limit_is_soft_success=True,
                     )
                 else:
                     sent_or_edited = await tc.edit_text(
-                        reply_bot, chat_id, int(message_id), html_text
+                        reply_bot, chat_id, int(message_id), html_text,
+                        rate_limit_is_soft_success=True,
                     )
 
             if not sent_or_edited:
