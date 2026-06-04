@@ -2682,7 +2682,9 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
         text_match = _extract_partial_json_string_field(raw, "text") or _extract_partial_json_string_field(raw, "message")
         text = text_match[0] if text_match else ""
         break_loop = _extract_partial_json_bool_field(raw, "break_loop")
-        attachments = [True] if re.search(r'"attachments"\s*:\s*\[', raw) else []
+        # Only treat as "has attachments" if the array is actually non-empty;
+        # an empty `"attachments": []` (common in streamed JSON) must not suppress the preview.
+        attachments = [True] if re.search(r'"attachments"\s*:\s*\[\s*[^\s\]]', raw) else []
 
     text = str(text or "")
     if not text.strip():

@@ -388,6 +388,20 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertIsNone(handler._extract_live_response_preview(payload))
 
+    def test_extract_live_response_preview_keeps_partial_preview_for_empty_attachments_array(self):
+        handler = self.handler
+        payload = '{"tool_name":"response","tool_args":{"text":"Hallo","attachments": []'
+
+        preview = handler._extract_live_response_preview(payload)
+
+        self.assertEqual(preview["text"], "Hallo")
+
+    def test_extract_live_response_preview_skips_when_partial_stream_has_non_empty_attachments_array(self):
+        handler = self.handler
+        payload = '{"tool_name":"response","tool_args":{"text":"Hallo","attachments": ["/tmp/file.ogg"]'
+
+        self.assertIsNone(handler._extract_live_response_preview(payload))
+
     def test_render_progress_status_html_includes_live_preview_block(self):
         handler = self.handler
         ctx = _DummyAgentContext()

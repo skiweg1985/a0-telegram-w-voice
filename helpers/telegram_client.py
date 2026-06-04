@@ -318,6 +318,7 @@ async def send_message_draft(
         PrintStyle.error(f"Telegram send_message_draft failed: {format_error(e)}")
         return False
 
+
 # Chat actions
 
 async def send_chat_action(bot: Bot, chat_id: int, action: str):
