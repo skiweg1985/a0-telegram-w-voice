@@ -65,7 +65,7 @@ export const store = createStore("telegramConfig", {
       telegram_detail_max_body_chars: 3200,
       progress: {
         edit_enabled: true,
-        edit_throttle_ms: 1000,
+        edit_throttle_ms: 200,
         final_in_place: true,
         live_response_preview: true,
         live_response_preview_chars: 1200,

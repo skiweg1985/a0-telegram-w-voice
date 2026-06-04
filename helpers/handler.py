@@ -2491,7 +2491,7 @@ def _progress_settings(bot_cfg: dict) -> dict:
         preview_chars = 1200
     return {
         "enabled": bool(cfg.get("edit_enabled", True)),
-        "throttle_ms": int(cfg.get("edit_throttle_ms", 1000) or 1000),
+        "throttle_ms": int(cfg.get("edit_throttle_ms", 200) or 200),
         "final_in_place": bool(cfg.get("final_in_place", True)),
         "live_response_preview": bool(cfg.get("live_response_preview", True)),
         "live_response_preview_chars": max(160, min(preview_chars, 4000)),
