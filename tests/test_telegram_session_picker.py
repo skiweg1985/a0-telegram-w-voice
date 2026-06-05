@@ -154,6 +154,7 @@ def _install_stub_modules():
 
     files = types.ModuleType("helpers.files")
     files.get_abs_path = lambda *parts: "/" + "/".join(str(p).strip("/") for p in parts if p is not None)
+    files.fix_dev_path = lambda path: str(path)
     files.read_file = lambda path: "{}"
     files.make_dirs = lambda path: None
     files.write_file = lambda path, content: None
@@ -216,6 +217,7 @@ def _install_stub_modules():
     tc.delete_message = lambda *args, **kwargs: None
     tc.supports_message_draft = lambda *args, **kwargs: False
     tc.send_message_draft = lambda *args, **kwargs: None
+    tc.build_reply_keyboard = lambda *args, **kwargs: {"reply_keyboard": True}
 
     async def _tc_send_typing(*args, **kwargs):
         return None
@@ -719,10 +721,23 @@ class TelegramSessionPickerTests(unittest.TestCase):
             mock.patch.object(handler.speech, "synthesize_to_voice_file", return_value=("/tmp/reply.ogg", {}), create=True),
             mock.patch.object(handler.tc, "md_to_telegram_html", side_effect=lambda text: text, create=True),
             mock.patch.object(handler.tc, "MAX_MESSAGE_LENGTH", 4096, create=True),
+            mock.patch.object(handler.tc, "build_reply_keyboard", return_value={"reply_keyboard": True}, create=True),
             mock.patch.object(handler.tc, "edit_text", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "send_text", new=mock.AsyncMock(return_value=888), create=True),
             mock.patch.object(handler.tc, "send_text_with_keyboard", new=mock.AsyncMock(return_value=888), create=True),
+            mock.patch.object(handler.tc, "send_photo", new=mock.AsyncMock(return_value=701), create=True),
+            mock.patch.object(handler.tc, "send_animation", new=mock.AsyncMock(return_value=702), create=True),
+            mock.patch.object(handler.tc, "send_video", new=mock.AsyncMock(return_value=703), create=True),
+            mock.patch.object(handler.tc, "send_video_note", new=mock.AsyncMock(return_value=704), create=True),
+            mock.patch.object(handler.tc, "send_file", new=mock.AsyncMock(return_value=705), create=True),
+            mock.patch.object(handler.tc, "send_media_group", new=mock.AsyncMock(return_value=[801, 802]), create=True),
+            mock.patch.object(handler.tc, "send_location", new=mock.AsyncMock(return_value=706), create=True),
+            mock.patch.object(handler.tc, "send_contact", new=mock.AsyncMock(return_value=707), create=True),
+            mock.patch.object(handler.tc, "send_venue", new=mock.AsyncMock(return_value=708), create=True),
+            mock.patch.object(handler.tc, "is_animation_file", side_effect=lambda path: str(path).lower().endswith(".gif"), create=True),
+            mock.patch.object(handler.tc, "is_image_file", side_effect=lambda path: str(path).lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp")), create=True),
+            mock.patch.object(handler.tc, "is_video_file", side_effect=lambda path: str(path).lower().endswith((".mp4", ".mov", ".m4v", ".webm")), create=True),
             mock.patch.object(handler.tc, "send_record_voice", new=mock.AsyncMock(return_value=None), create=True),
             mock.patch.object(handler.tc, "send_voice", new=mock.AsyncMock(return_value=send_voice_result), create=True),
             mock.patch.object(handler.tc, "delete_message", new=mock.AsyncMock(return_value=True), create=True),
@@ -875,6 +890,142 @@ class TelegramSessionPickerTests(unittest.TestCase):
             handler.tc.delete_message.assert_not_awaited()
 
         self.assertEqual(ctx.data[handler.CTX_TG_PROGRESS_MESSAGE_ID], 777)
+
+    def test_reply_keyboard_action_routes_private_control_pad_buttons(self):
+        handler = self.handler
+        message = types.SimpleNamespace(
+            text="🎙 Voice",
+            chat=types.SimpleNamespace(type="private", id=1),
+            from_user=types.SimpleNamespace(id=1, username="alice"),
+        )
+
+        with mock.patch.object(handler, "handle_voice", new=mock.AsyncMock()) as handle_voice:
+            handled = asyncio.run(
+                handler._handle_reply_keyboard_action(
+                    message,
+                    "mainbot",
+                    {"reply_keyboard": {"enabled": True}},
+                )
+            )
+
+        self.assertTrue(handled)
+        handle_voice.assert_awaited_once_with(message, "mainbot", {"reply_keyboard": {"enabled": True}})
+
+    def test_reply_keyboard_action_is_ignored_when_not_enabled_or_not_private(self):
+        handler = self.handler
+        disabled = types.SimpleNamespace(
+            text="📂 Session",
+            chat=types.SimpleNamespace(type="private", id=1),
+            from_user=types.SimpleNamespace(id=1, username="alice"),
+        )
+        group_msg = types.SimpleNamespace(
+            text="📂 Session",
+            chat=types.SimpleNamespace(type="group", id=1),
+            from_user=types.SimpleNamespace(id=1, username="alice"),
+        )
+
+        with mock.patch.object(handler, "handle_session", new=mock.AsyncMock()) as handle_session:
+            self.assertFalse(asyncio.run(handler._handle_reply_keyboard_action(disabled, "mainbot", {})))
+            self.assertFalse(
+                asyncio.run(
+                    handler._handle_reply_keyboard_action(
+                        group_msg,
+                        "mainbot",
+                        {"reply_keyboard": {"enabled": True}},
+                    )
+                )
+            )
+
+        handle_session.assert_not_awaited()
+
+    def test_send_telegram_reply_uses_media_group_for_multiple_visual_attachments(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "",
+                    attachments=["/tmp/a.jpg", "/tmp/b.png"],
+                )
+            )
+            self.assertIsNone(result)
+            handler.tc.send_media_group.assert_awaited_once()
+            handler.tc.send_photo.assert_not_awaited()
+            handler.tc.send_file.assert_not_awaited()
+            handler.tc.send_text.assert_not_awaited()
+
+    def test_send_telegram_reply_media_group_falls_back_to_single_sends(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True), \
+             mock.patch.object(handler.tc, "send_media_group", new=mock.AsyncMock(return_value=None), create=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "",
+                    attachments=["/tmp/a.jpg", "/tmp/b.png"],
+                )
+            )
+            self.assertIsNone(result)
+            self.assertEqual(handler.tc.send_photo.await_count, 2)
+            handler.tc.send_file.assert_not_awaited()
+
+    def test_send_telegram_reply_video_note_falls_back_to_video(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True), \
+             mock.patch.object(handler.tc, "send_video_note", new=mock.AsyncMock(return_value=None), create=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "",
+                    telegram_items=[{"type": "video_note", "path": "/tmp/videonote_123.mp4"}],
+                )
+            )
+            self.assertIsNone(result)
+            handler.tc.send_video_note.assert_awaited_once()
+            handler.tc.send_video.assert_awaited_once()
+            handler.tc.send_file.assert_not_awaited()
+
+    def test_send_telegram_reply_dispatches_structured_telegram_items(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "",
+                    telegram_items=[
+                        {"type": "location", "latitude": 1.0, "longitude": 2.0},
+                        {
+                            "type": "contact",
+                            "phone_number": "+491234",
+                            "first_name": "Alex",
+                            "last_name": "Meyer",
+                        },
+                        {
+                            "type": "venue",
+                            "latitude": 3.0,
+                            "longitude": 4.0,
+                            "title": "HQ",
+                            "address": "Street 1",
+                        },
+                    ],
+                )
+            )
+            self.assertIsNone(result)
+            handler.tc.send_location.assert_awaited_once()
+            handler.tc.send_contact.assert_awaited_once()
+            handler.tc.send_venue.assert_awaited_once()
 
     def test_stream_chunk_does_not_fallback_to_old_progress_bubble_with_detail_off(self):
         handler = self.handler

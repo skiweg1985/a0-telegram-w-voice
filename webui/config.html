@@ -90,7 +90,7 @@
               </button>
             </div>
 
-            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureProgress(bot); $store.telegramConfig.ensureSpeech(bot)">
+            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureProgress(bot); $store.telegramConfig.ensureSpeech(bot); $store.telegramConfig.ensureReplyKeyboard(bot)">
 
               <div class="field">
                 <div class="field-label">
@@ -476,6 +476,19 @@
                     <option value="info">Info</option>
                     <option value="debug">Verbose</option>
                   </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Persistent mobile control pad</div>
+                  <div class="field-description">Optional DM-only reply keyboard with quick access to Voice, Text, Detail, Stop, and Session</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.reply_keyboard.enabled" />
+                    <span class="toggler"></span>
+                  </label>
                 </div>
               </div>
 

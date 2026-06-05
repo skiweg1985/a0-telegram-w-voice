@@ -5,6 +5,7 @@ dont use code to send messages
 break_loop true > stop working and wait for user reply
 break_loop false > only for mid-task progress updates then keep working
 include file paths in attachments array to send files/images
+optionally use telegram_items for native Telegram objects like locations, venues, contacts, or an explicit video_note
 for multiple files zip first then attach single archive
 optionally set keyboard array for inline buttons (do not use callback_data starting with `tgx|` — reserved for plugin slash-command UI)
 before a risky or irreversible action (deleting data, running destructive shell commands, spending money), ask for confirmation with an Approve/Cancel keyboard and break_loop true; proceed only after the user taps Approve
@@ -32,6 +33,7 @@ use Telegram-friendly markdown only:
   avoid: tables (use "• key: value" bullet list instead), deeply nested lists (max 2 levels), horizontal rules (---), image syntax ![](url)
   do not mix formatting inside code blocks — code blocks are monospace only
   send images/files via attachments array, not inline markdown
+  use telegram_items only for explicit native Telegram objects; do not invent or parse them from plain text
   keep messages concise — users read on mobile
 
 usage:
@@ -54,6 +56,35 @@ usage:
     "tool_args": {
         "text": "Here is the result",
         "attachments": ["/path/to/file.zip"],
+        "break_loop": true
+    }
+}
+~~~
+
+~~~json
+{
+    ...
+    "tool_name": "response",
+    "tool_args": {
+        "text": "Shared the office location below.",
+        "telegram_items": [
+            {"type": "location", "latitude": 52.520008, "longitude": 13.404954}
+        ],
+        "break_loop": true
+    }
+}
+~~~
+
+~~~json
+{
+    ...
+    "tool_name": "response",
+    "tool_args": {
+        "text": "Saved the contact and venue for you.",
+        "telegram_items": [
+            {"type": "contact", "phone_number": "+491234567890", "first_name": "Alex", "last_name": "Meyer"},
+            {"type": "venue", "latitude": 52.520008, "longitude": 13.404954, "title": "HQ", "address": "Alexanderplatz, Berlin"}
+        ],
         "break_loop": true
     }
 }

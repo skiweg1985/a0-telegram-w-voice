@@ -10,6 +10,11 @@ from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaDocument,
+    InputMediaPhoto,
+    InputMediaVideo,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
 )
 
 from helpers.errors import format_error
@@ -39,6 +44,7 @@ async def send_text(
     text: str,
     reply_to_message_id: int | None = None,
     parse_mode: object = _UNSET,
+    reply_markup=None,
 ) -> int | None:
     """Send text message, splitting if too long. Returns last message_id or None on error.
 
@@ -57,9 +63,11 @@ async def send_text(
                     chat_id=chat_id,
                     text=chunk,
                     reply_to_message_id=reply_to_message_id,
+                    reply_markup=reply_markup,
                     **pm_kwargs,
                 )
                 last_msg_id = msg.message_id
+                reply_markup = None
             except TelegramBadRequest:
                 # Retry as plain text, stripping HTML tags
                 plain = re.sub(r"<[^>]+>", "", chunk)
@@ -68,8 +76,10 @@ async def send_text(
                     text=plain,
                     reply_to_message_id=reply_to_message_id,
                     parse_mode=None,
+                    reply_markup=reply_markup,
                 )
                 last_msg_id = msg.message_id
+                reply_markup = None
         return last_msg_id
     except Exception as e:
         PrintStyle.error(f"Telegram send_text failed: {format_error(e)}")
@@ -83,6 +93,7 @@ async def send_file(
     file_path: str,
     caption: str = "",
     reply_to_message_id: int | None = None,
+    reply_markup=None,
 ) -> int | None:
     """Send a file from local path. Returns message_id or None on error."""
     try:
@@ -95,6 +106,7 @@ async def send_file(
             document=input_file,
             caption=caption[:1024] if caption else None,
             reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
         )
         return msg.message_id
     except Exception as e:
@@ -108,6 +120,7 @@ async def send_photo(
     photo_path: str,
     caption: str = "",
     reply_to_message_id: int | None = None,
+    reply_markup=None,
 ) -> int | None:
     """Send a photo from local path. Returns message_id or None on error."""
     try:
@@ -120,10 +133,91 @@ async def send_photo(
             photo=input_file,
             caption=caption[:1024] if caption else None,
             reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
         )
         return msg.message_id
     except Exception as e:
         PrintStyle.error(f"Telegram send_photo failed: {format_error(e)}")
+        return None
+
+
+async def send_video(
+    bot: Bot,
+    chat_id: int,
+    video_path: str,
+    caption: str = "",
+    reply_to_message_id: int | None = None,
+    reply_markup=None,
+) -> int | None:
+    """Send a video from local path. Returns message_id or None on error."""
+    try:
+        if not os.path.isfile(video_path):
+            PrintStyle.error(f"Telegram: video not found: {video_path}")
+            return None
+        input_file = FSInputFile(video_path)
+        msg = await bot.send_video(
+            chat_id=chat_id,
+            video=input_file,
+            caption=caption[:1024] if caption else None,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
+            supports_streaming=True,
+        )
+        return msg.message_id
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_video failed: {format_error(e)}")
+        return None
+
+
+async def send_animation(
+    bot: Bot,
+    chat_id: int,
+    animation_path: str,
+    caption: str = "",
+    reply_to_message_id: int | None = None,
+    reply_markup=None,
+) -> int | None:
+    """Send an animation (e.g. GIF) from local path. Returns message_id or None on error."""
+    try:
+        if not os.path.isfile(animation_path):
+            PrintStyle.error(f"Telegram: animation not found: {animation_path}")
+            return None
+        input_file = FSInputFile(animation_path)
+        msg = await bot.send_animation(
+            chat_id=chat_id,
+            animation=input_file,
+            caption=caption[:1024] if caption else None,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
+        )
+        return msg.message_id
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_animation failed: {format_error(e)}")
+        return None
+
+
+async def send_video_note(
+    bot: Bot,
+    chat_id: int,
+    video_note_path: str,
+    reply_to_message_id: int | None = None,
+    reply_markup=None,
+) -> int | None:
+    """Send a Telegram-native video note from local path."""
+    try:
+        if not os.path.isfile(video_note_path):
+            PrintStyle.error(f"Telegram: video note not found: {video_note_path}")
+            return None
+        input_file = FSInputFile(video_note_path)
+        msg = await bot.send_video_note(
+            chat_id=chat_id,
+            video_note=input_file,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
+        )
+        return msg.message_id
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_video_note failed: {format_error(e)}")
         return None
 
 
@@ -178,6 +272,24 @@ def build_inline_keyboard(
                 ))
         rows.append(row_buttons)
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_reply_keyboard(
+    buttons: list[list[str]],
+    *,
+    placeholder: str = "Quick actions",
+) -> ReplyKeyboardMarkup:
+    """Build a compact persistent reply keyboard."""
+    rows = []
+    for row in buttons:
+        rows.append([KeyboardButton(text=str(btn)) for btn in row])
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        one_time_keyboard=False,
+        input_field_placeholder=placeholder or None,
+    )
 
 
 async def send_text_with_keyboard(
@@ -434,6 +546,129 @@ async def send_record_voice(bot: Bot, chat_id: int):
     """Send 'recording voice' action to chat."""
     await send_chat_action(bot, chat_id, "record_voice")
 
+
+async def send_location(
+    bot: Bot,
+    chat_id: int,
+    latitude: float,
+    longitude: float,
+    reply_to_message_id: int | None = None,
+    reply_markup=None,
+    **kwargs,
+) -> int | None:
+    """Send a native Telegram location message."""
+    try:
+        msg = await bot.send_location(
+            chat_id=chat_id,
+            latitude=float(latitude),
+            longitude=float(longitude),
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+        return msg.message_id
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_location failed: {format_error(e)}")
+        return None
+
+
+async def send_contact(
+    bot: Bot,
+    chat_id: int,
+    phone_number: str,
+    first_name: str,
+    reply_to_message_id: int | None = None,
+    reply_markup=None,
+    **kwargs,
+) -> int | None:
+    """Send a native Telegram contact message."""
+    try:
+        msg = await bot.send_contact(
+            chat_id=chat_id,
+            phone_number=phone_number,
+            first_name=first_name,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+        return msg.message_id
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_contact failed: {format_error(e)}")
+        return None
+
+
+async def send_venue(
+    bot: Bot,
+    chat_id: int,
+    latitude: float,
+    longitude: float,
+    title: str,
+    address: str,
+    reply_to_message_id: int | None = None,
+    reply_markup=None,
+    **kwargs,
+) -> int | None:
+    """Send a native Telegram venue message."""
+    try:
+        msg = await bot.send_venue(
+            chat_id=chat_id,
+            latitude=float(latitude),
+            longitude=float(longitude),
+            title=title,
+            address=address,
+            reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+        return msg.message_id
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_venue failed: {format_error(e)}")
+        return None
+
+
+async def send_media_group(
+    bot: Bot,
+    chat_id: int,
+    items: list[dict],
+    reply_to_message_id: int | None = None,
+) -> list[int] | None:
+    """Send a Telegram media group. Items must be photo/video/document dicts."""
+    media = []
+    for idx, item in enumerate(items):
+        item_type = str(item.get("type") or "").strip().lower()
+        path = str(item.get("path") or "").strip()
+        if not path or not os.path.isfile(path):
+            PrintStyle.error(f"Telegram media group item not found: {path}")
+            return None
+        input_file = FSInputFile(path)
+        caption = str(item.get("caption") or "")
+        common = {
+            "media": input_file,
+        }
+        if idx == 0 and caption:
+            common["caption"] = caption[:1024]
+        if item_type == "photo":
+            media.append(InputMediaPhoto(**common))
+        elif item_type == "video":
+            common["supports_streaming"] = True
+            media.append(InputMediaVideo(**common))
+        elif item_type == "document":
+            media.append(InputMediaDocument(**common))
+        else:
+            PrintStyle.error(f"Telegram media group unsupported item type: {item_type}")
+            return None
+
+    try:
+        messages = await bot.send_media_group(
+            chat_id=chat_id,
+            media=media,
+            reply_to_message_id=reply_to_message_id,
+        )
+        return [msg.message_id for msg in messages]
+    except Exception as e:
+        PrintStyle.error(f"Telegram send_media_group failed: {format_error(e)}")
+        return None
+
 # File download
 
 async def download_file(
@@ -472,12 +707,24 @@ def _split_text(text: str, max_len: int) -> list[str]:
     return chunks
 
 
-_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+_ANIMATION_EXTENSIONS = {".gif"}
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 
 
 def is_image_file(path: str) -> bool:
     _, ext = os.path.splitext(path.lower())
     return ext in _IMAGE_EXTENSIONS
+
+
+def is_animation_file(path: str) -> bool:
+    _, ext = os.path.splitext(path.lower())
+    return ext in _ANIMATION_EXTENSIONS
+
+
+def is_video_file(path: str) -> bool:
+    _, ext = os.path.splitext(path.lower())
+    return ext in _VIDEO_EXTENSIONS
 
 
 def md_to_telegram_html(text: str) -> str:

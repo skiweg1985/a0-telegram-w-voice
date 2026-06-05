@@ -37,12 +37,14 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_BOT,
     CTX_TG_BOT_CFG,
     CTX_TG_CHAT_ID,
+    CTX_TG_CHAT_TYPE,
     CTX_TG_USER_ID,
     CTX_TG_USERNAME,
     CTX_TG_TYPING_STOP,
     CTX_TG_REPLY_TO,
     CTX_TG_REPLY_CONTEXT,
     CTX_TG_ATTACHMENTS,
+    CTX_TG_ITEMS,
     CTX_TG_KEYBOARD,
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_FORCE_VOICE_REPLY,
@@ -184,6 +186,40 @@ def _append_inline_keyboard(
     if extra:
         rows.extend(extra)
     return rows or None
+
+
+_REPLY_KEYBOARD_ROWS = [
+    ["🎙 Voice", "📝 Text", "🧠 Detail"],
+    ["⛔ Stop", "📂 Session"],
+]
+
+
+def _reply_keyboard_settings(bot_cfg: dict) -> dict:
+    cfg = (bot_cfg or {}).get("reply_keyboard") or {}
+    if not isinstance(cfg, dict):
+        return {"enabled": False, "placeholder": "Quick actions"}
+    return {
+        "enabled": bool(cfg.get("enabled", False)),
+        "placeholder": str(cfg.get("placeholder") or "Quick actions"),
+    }
+
+
+def _reply_keyboard_enabled(bot_cfg: dict, chat_type: object) -> bool:
+    chat_type_str = str(chat_type or "").strip().lower()
+    return bool(
+        chat_type_str == "private"
+        and _reply_keyboard_settings(bot_cfg).get("enabled", False)
+    )
+
+
+def _build_reply_keyboard(bot_cfg: dict, chat_type: object):
+    if not _reply_keyboard_enabled(bot_cfg, chat_type):
+        return None
+    settings = _reply_keyboard_settings(bot_cfg)
+    return tc.build_reply_keyboard(
+        _REPLY_KEYBOARD_ROWS,
+        placeholder=settings["placeholder"],
+    )
 
 
 def _voice_conversation_mode(ctx: AgentContext) -> str:
@@ -890,6 +926,7 @@ async def _start_new_session_for_user(
     user_id: int,
     username: str | None,
     chat_id: int,
+    chat_type: str | None = None,
 ) -> tuple[bool, str, AgentContext | None]:
     key = _map_key(bot_name, user_id, chat_id)
 
@@ -904,7 +941,9 @@ async def _start_new_session_for_user(
                 save_tmp_chat(old_ctx)
             _save_state(state)
 
-    ctx = await _get_or_create_context_from_user(bot_name, bot_cfg, user_id, username, chat_id)
+    ctx = await _get_or_create_context_from_user(
+        bot_name, bot_cfg, user_id, username, chat_id, chat_type=chat_type,
+    )
     if not ctx:
         return False, "Failed to create a new session.", None
     return True, "New chat started. Previous conversation is still available in the session list.", ctx
@@ -1105,6 +1144,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
     instance = get_bot(bot_name)
     if not instance:
         return
+    reply_markup = _build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None))
 
     await _send_with_temp_bot(
         instance.bot.token, message.chat.id,
@@ -1114,6 +1154,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         "\u2699\ufe0f /status shows the current modes.\n"
         "\U0001f5d1 /clear resets this conversation. /help lists all commands.",
         parse_mode=None,
+        reply_markup=reply_markup,
     )
 
     # Ensure a chat context exists
@@ -1154,10 +1195,12 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     instance = get_bot(bot_name)
     if instance:
+        reply_markup = _build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None))
         await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Chat cleared. Send a new message to start fresh.",
             parse_mode=None,
+            reply_markup=reply_markup,
         )
 
     # Send notification
@@ -1183,10 +1226,19 @@ async def handle_newchat(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     _, reply, _ = await _start_new_session_for_user(
-        bot_name, bot_cfg, user.id, user.username, message.chat.id
+        bot_name,
+        bot_cfg,
+        user.id,
+        user.username,
+        message.chat.id,
+        chat_type=getattr(message.chat, "type", None),
     )
     await _send_with_temp_bot(
-        instance.bot.token, message.chat.id, reply, parse_mode=None
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1203,6 +1255,7 @@ async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         format_help_text(),
         parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1238,7 +1291,13 @@ async def handle_voice(message: TgMessage, bot_name: str, bot_cfg: dict):
         reply = "Usage: /voice [voice_only|voice_text|auto|text_only|off]"
 
     save_tmp_chat(ctx)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
+    )
 
 
 async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1269,7 +1328,13 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     reply = _apply_detail_level(ctx, bot_cfg, arg)
     save_tmp_chat(ctx)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
+    )
 
 
 async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1307,7 +1372,13 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
         reply = "Usage: /optimize_output auto|voice|text|off"
 
     save_tmp_chat(ctx)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
+    )
 
 
 def _status_on_off(enabled: bool) -> str:
@@ -1438,7 +1509,11 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     text = header + "\n\n" + "\n".join(lines)
     await _send_with_temp_bot(
-        instance.bot.token, message.chat.id, text, parse_mode=ParseMode.HTML
+        instance.bot.token,
+        message.chat.id,
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1466,7 +1541,13 @@ async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):
         reply = f"Compress failed: {format_error(e)}"
         PrintStyle.error(f"Telegram /compact: {format_error(e)}")
 
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
+    )
 
 
 async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1588,6 +1669,7 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
             message.chat.id,
             "No active session.",
             parse_mode=None,
+            reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
         )
         return
     ctx.kill_process()
@@ -1597,6 +1679,7 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         "Stopped the running task (if any).",
         parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1617,6 +1700,7 @@ async def handle_pause(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         "Agent paused. Use /resume to continue.",
         parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1634,6 +1718,7 @@ async def handle_resume(message: TgMessage, bot_name: str, bot_cfg: dict):
             message.chat.id,
             "No active session.",
             parse_mode=None,
+            reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
         )
         return
     ctx.paused = False
@@ -1643,6 +1728,7 @@ async def handle_resume(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         "Agent resumed.",
         parse_mode=None,
+        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1888,6 +1974,32 @@ async def handle_model(message: TgMessage, bot_name: str, bot_cfg: dict):
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
 
+async def _handle_reply_keyboard_action(
+    message: TgMessage,
+    bot_name: str,
+    bot_cfg: dict,
+) -> bool:
+    if not _reply_keyboard_enabled(bot_cfg, getattr(message.chat, "type", None)):
+        return False
+    text = (message.text or "").strip()
+    if text == "🎙 Voice":
+        await handle_voice(message, bot_name, bot_cfg)
+        return True
+    if text == "📝 Text":
+        await handle_optimize_output(message, bot_name, bot_cfg)
+        return True
+    if text == "🧠 Detail":
+        await handle_detail(message, bot_name, bot_cfg)
+        return True
+    if text == "⛔ Stop":
+        await handle_stop(message, bot_name, bot_cfg)
+        return True
+    if text == "📂 Session":
+        await handle_session(message, bot_name, bot_cfg)
+        return True
+    return False
+
+
 async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle incoming user message."""
     user = message.from_user
@@ -1908,6 +2020,9 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     instance = get_bot(bot_name)
     if not instance:
+        return
+
+    if await _handle_reply_keyboard_action(message, bot_name, bot_cfg):
         return
 
     # The session picker's Search button arms a one-shot capture: the next plain
@@ -1949,6 +2064,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     # Store stop event so send_telegram_reply can cancel typing
     context.data[CTX_TG_TYPING_STOP] = typing_stop
+    context.data[CTX_TG_CHAT_TYPE] = str(getattr(message.chat, "type", "") or "")
     context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
 
     # Keep Telegram threading visible when the user replied to an earlier message.
@@ -2344,7 +2460,12 @@ async def _get_or_create_context(
     if not user:
         return None
     return await _get_or_create_context_from_user(
-        bot_name, bot_cfg, user.id, user.username, message.chat.id,
+        bot_name,
+        bot_cfg,
+        user.id,
+        user.username,
+        message.chat.id,
+        chat_type=getattr(message.chat, "type", None),
     )
 
 
@@ -2354,6 +2475,7 @@ async def _get_or_create_context_from_user(
     user_id: int,
     username: str | None,
     chat_id: int,
+    chat_type: str | None = None,
 ) -> AgentContext | None:
     key = _map_key(bot_name, user_id, chat_id)
 
@@ -2375,6 +2497,8 @@ async def _get_or_create_context_from_user(
                 # Keep snapshot in sync with current plugin external config (handlers pass fresh bot_cfg).
                 # Without this, TTS/STT/progress/system prompt keep using values from first session creation.
                 ctx.data[CTX_TG_BOT_CFG] = bot_cfg
+                if chat_type:
+                    ctx.data[CTX_TG_CHAT_TYPE] = str(chat_type)
                 return ctx
             # Context no longer exists on disk or in memory, remove stale mapping
             chats.pop(key, None)
@@ -2388,6 +2512,7 @@ async def _get_or_create_context_from_user(
             ctx.data[CTX_TG_BOT] = bot_name
             ctx.data[CTX_TG_BOT_CFG] = bot_cfg
             ctx.data[CTX_TG_CHAT_ID] = chat_id
+            ctx.data[CTX_TG_CHAT_TYPE] = str(chat_type or "")
             ctx.data[CTX_TG_USER_ID] = user_id
             ctx.data[CTX_TG_USERNAME] = username or ""
 
@@ -3319,6 +3444,7 @@ async def _send_telegram_text_message(
     text_body: str,
     keyboard: list[list[dict]] | None,
     reply_to: int | None,
+    reply_markup=None,
 ) -> int | None:
     html_text = tc.md_to_telegram_html(text_body)
     if keyboard:
@@ -3334,7 +3460,286 @@ async def _send_telegram_text_message(
         chat_id,
         html_text,
         reply_to_message_id=reply_to,
+        reply_markup=reply_markup,
     )
+
+
+def _attachment_media_type(path: str) -> str:
+    name = os.path.basename(path).lower()
+    if name.startswith("videonote_"):
+        return "video_note"
+    if tc.is_animation_file(path):
+        return "animation"
+    if tc.is_image_file(path):
+        return "photo"
+    if tc.is_video_file(path):
+        return "video"
+    return "document"
+
+
+def _normalize_outbound_items(
+    attachments: list[str] | None = None,
+    telegram_items: list[dict] | None = None,
+) -> list[dict]:
+    items: list[dict] = []
+
+    for raw in telegram_items or []:
+        if not isinstance(raw, dict):
+            continue
+        item_type = str(raw.get("type") or "").strip().lower()
+        if item_type == "location":
+            try:
+                items.append(
+                    {
+                        "type": "location",
+                        "latitude": float(raw["latitude"]),
+                        "longitude": float(raw["longitude"]),
+                        "horizontal_accuracy": raw.get("horizontal_accuracy"),
+                    }
+                )
+            except Exception:
+                PrintStyle.warning(f"Telegram: skipping invalid location item: {raw!r}")
+        elif item_type == "contact":
+            phone_number = str(raw.get("phone_number") or "").strip()
+            first_name = str(raw.get("first_name") or "").strip()
+            if phone_number and first_name:
+                items.append(
+                    {
+                        "type": "contact",
+                        "phone_number": phone_number,
+                        "first_name": first_name,
+                        "last_name": str(raw.get("last_name") or "").strip(),
+                        "vcard": str(raw.get("vcard") or "").strip(),
+                    }
+                )
+            else:
+                PrintStyle.warning(f"Telegram: skipping invalid contact item: {raw!r}")
+        elif item_type == "venue":
+            title = str(raw.get("title") or "").strip()
+            address = str(raw.get("address") or "").strip()
+            try:
+                latitude = float(raw["latitude"])
+                longitude = float(raw["longitude"])
+            except Exception:
+                PrintStyle.warning(f"Telegram: skipping invalid venue item: {raw!r}")
+                continue
+            if title and address:
+                item = {
+                    "type": "venue",
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "title": title,
+                    "address": address,
+                }
+                for key in (
+                    "foursquare_id",
+                    "foursquare_type",
+                    "google_place_id",
+                    "google_place_type",
+                ):
+                    value = str(raw.get(key) or "").strip()
+                    if value:
+                        item[key] = value
+                items.append(item)
+            else:
+                PrintStyle.warning(f"Telegram: skipping invalid venue item: {raw!r}")
+        elif item_type == "video_note":
+            path = str(raw.get("path") or "").strip()
+            if path:
+                local_path = files.fix_dev_path(path)
+                items.append({"type": "video_note", "path": local_path})
+            else:
+                PrintStyle.warning(f"Telegram: skipping invalid video_note item: {raw!r}")
+        else:
+            PrintStyle.warning(f"Telegram: unsupported telegram_items type skipped: {item_type!r}")
+
+    for path in attachments or []:
+        local_path = files.fix_dev_path(path)
+        items.append(
+            {
+                "type": _attachment_media_type(local_path),
+                "path": local_path,
+            }
+        )
+
+    return items
+
+
+def _outbound_album_bucket(item: dict) -> str | None:
+    item_type = str(item.get("type") or "").strip().lower()
+    if item_type in {"photo", "video"}:
+        return "visual"
+    if item_type == "document":
+        return "document"
+    return None
+
+
+def _group_outbound_items(items: list[dict]) -> list[list[dict]]:
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    current_bucket: str | None = None
+
+    for item in items:
+        bucket = _outbound_album_bucket(item)
+        if bucket is None:
+            if current:
+                groups.append(current)
+                current = []
+                current_bucket = None
+            groups.append([item])
+            continue
+        if current and bucket == current_bucket:
+            current.append(item)
+            continue
+        if current:
+            groups.append(current)
+        current = [item]
+        current_bucket = bucket
+
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _chunk_outbound_group(items: list[dict], size: int = 10) -> list[list[dict]]:
+    size = max(2, min(int(size or 10), 10))
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+async def _send_single_outbound_item(
+    reply_bot: Bot,
+    chat_id: int,
+    item: dict,
+    reply_to: int | None,
+    reply_markup=None,
+) -> int | None:
+    item_type = str(item.get("type") or "").strip().lower()
+    if item_type == "photo":
+        return await tc.send_photo(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+    if item_type == "animation":
+        return await tc.send_animation(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+    if item_type == "video":
+        return await tc.send_video(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+    if item_type == "video_note":
+        msg_id = await tc.send_video_note(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+        if msg_id:
+            return msg_id
+        msg_id = await tc.send_video(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+        if msg_id:
+            return msg_id
+        return await tc.send_file(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+    if item_type == "document":
+        return await tc.send_file(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+    if item_type == "location":
+        kwargs = {}
+        if item.get("horizontal_accuracy") is not None:
+            kwargs["horizontal_accuracy"] = float(item["horizontal_accuracy"])
+        return await tc.send_location(
+            reply_bot,
+            chat_id,
+            item["latitude"],
+            item["longitude"],
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    if item_type == "contact":
+        kwargs = {}
+        if item.get("last_name"):
+            kwargs["last_name"] = item["last_name"]
+        if item.get("vcard"):
+            kwargs["vcard"] = item["vcard"]
+        return await tc.send_contact(
+            reply_bot,
+            chat_id,
+            item["phone_number"],
+            item["first_name"],
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    if item_type == "venue":
+        kwargs = {}
+        for key in (
+            "foursquare_id",
+            "foursquare_type",
+            "google_place_id",
+            "google_place_type",
+        ):
+            if item.get(key):
+                kwargs[key] = item[key]
+        return await tc.send_venue(
+            reply_bot,
+            chat_id,
+            item["latitude"],
+            item["longitude"],
+            item["title"],
+            item["address"],
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    PrintStyle.warning(f"Telegram: unsupported outbound item skipped: {item_type!r}")
+    return None
+
+
+async def _send_outbound_items(
+    reply_bot: Bot,
+    chat_id: int,
+    items: list[dict],
+    reply_to: int | None,
+    reply_markup=None,
+) -> None:
+    pending_reply_markup = reply_markup
+
+    for group in _group_outbound_items(items):
+        bucket = _outbound_album_bucket(group[0])
+        if bucket and len(group) >= 2:
+            for chunk in _chunk_outbound_group(group):
+                if len(chunk) >= 2:
+                    media_group_ids = await tc.send_media_group(
+                        reply_bot,
+                        chat_id,
+                        chunk,
+                        reply_to_message_id=reply_to,
+                    )
+                    if media_group_ids:
+                        continue
+                for item in chunk:
+                    msg_id = await _send_single_outbound_item(
+                        reply_bot,
+                        chat_id,
+                        item,
+                        reply_to,
+                        reply_markup=pending_reply_markup,
+                    )
+                    if msg_id and pending_reply_markup is not None:
+                        pending_reply_markup = None
+            continue
+
+        msg_id = await _send_single_outbound_item(
+            reply_bot,
+            chat_id,
+            group[0],
+            reply_to,
+            reply_markup=pending_reply_markup,
+        )
+        if msg_id and pending_reply_markup is not None:
+            pending_reply_markup = None
 
 
 async def send_telegram_inline_response(
@@ -3342,6 +3747,7 @@ async def send_telegram_inline_response(
     response_text: str,
     attachments: list[str] | None = None,
     keyboard: list[list[dict]] | None = None,
+    telegram_items: list[dict] | None = None,
 ) -> str | None:
     """Send a persistent intermediate Telegram reply without touching progress state."""
     bot_name = context.data.get(CTX_TG_BOT)
@@ -3356,31 +3762,26 @@ async def send_telegram_inline_response(
     if not chat_id:
         return "No chat_id on context"
 
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    chat_type = context.data.get(CTX_TG_CHAT_TYPE)
     reply_to = context.data.get(CTX_TG_REPLY_TO)
     text_body = (response_text or "").strip()
+    outbound_items = _normalize_outbound_items(attachments, telegram_items)
+    reply_keyboard = None if keyboard else _build_reply_keyboard(bot_cfg, chat_type)
 
     try:
         async with _temp_bot(
             instance.bot.token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         ) as reply_bot:
-            if attachments:
-                for path in attachments:
-                    local_path = files.fix_dev_path(path)
-                    if tc.is_image_file(local_path):
-                        await tc.send_photo(
-                            reply_bot,
-                            chat_id,
-                            local_path,
-                            reply_to_message_id=reply_to,
-                        )
-                    else:
-                        await tc.send_file(
-                            reply_bot,
-                            chat_id,
-                            local_path,
-                            reply_to_message_id=reply_to,
-                        )
+            if outbound_items:
+                await _send_outbound_items(
+                    reply_bot,
+                    chat_id,
+                    outbound_items,
+                    reply_to,
+                    reply_markup=reply_keyboard if not text_body else None,
+                )
 
             if text_body:
                 await _send_telegram_text_message(
@@ -3389,6 +3790,7 @@ async def send_telegram_inline_response(
                     text_body,
                     keyboard,
                     reply_to,
+                    reply_markup=reply_keyboard,
                 )
 
         return None
@@ -3405,6 +3807,7 @@ async def send_telegram_reply(
     attachments: list[str] | None = None,
     keyboard: list[list[dict]] | None = None,
     voice_text: str | None = None,
+    telegram_items: list[dict] | None = None,
 ) -> str | None:
     """Send reply to Telegram user. Returns error string or None on success."""
     bot_name = context.data.get(CTX_TG_BOT)
@@ -3420,6 +3823,7 @@ async def send_telegram_reply(
         return "No chat_id on context"
 
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    chat_type = context.data.get(CTX_TG_CHAT_TYPE)
     reply_cfg = speech.voice_reply_settings(bot_cfg)
 
     # Per-response overrides set by the response-tool (tool_execute_after extension).
@@ -3440,6 +3844,7 @@ async def send_telegram_reply(
     want_voice = mode == "force" or (mode == "auto" and last_input_was_voice)
 
     reply_to = context.data.get(CTX_TG_REPLY_TO)
+    outbound_items = _normalize_outbound_items(attachments, telegram_items)
 
     tts_raw = ((voice_text or "").strip() or (response_text or "").strip())
 
@@ -3463,14 +3868,6 @@ async def send_telegram_reply(
 
     try:
         async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as reply_bot:
-            if attachments:
-                for path in attachments:
-                    local_path = files.fix_dev_path(path)
-                    if tc.is_image_file(local_path):
-                        await tc.send_photo(reply_bot, chat_id, local_path, reply_to_message_id=reply_to)
-                    else:
-                        await tc.send_file(reply_bot, chat_id, local_path, reply_to_message_id=reply_to)
-
             also = speech.effective_also_send_text(bot_cfg, context.data)
             quick_actions = speech.quick_actions_settings(bot_cfg)
             # If the agent only set voice_text (TTS) and left text empty, response_text is
@@ -3490,6 +3887,7 @@ async def send_telegram_reply(
             # Offer "Show text" whenever a voice reply is expected to be the only
             # visible response; if voice send fails we still fall back to a text bubble.
             final_keyboard = _append_inline_keyboard(keyboard, None)
+            reply_keyboard = None if final_keyboard else _build_reply_keyboard(bot_cfg, chat_type)
             should_send_text_with_voice = bool(text_body) and (
                 final_keyboard is not None or also
             )
@@ -3505,6 +3903,15 @@ async def send_telegram_reply(
                 if want_show_text_button
                 else None
             )
+
+            if outbound_items:
+                await _send_outbound_items(
+                    reply_bot,
+                    chat_id,
+                    outbound_items,
+                    reply_to,
+                    reply_markup=reply_keyboard if not text_body else None,
+                )
 
             sent_voice = False
             voice_file: str | None = None
@@ -3543,7 +3950,7 @@ async def send_telegram_reply(
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 use_final_edit = bool(
                     progress_message_id
-                    and not attachments
+                    and not outbound_items
                     and not used_native_draft
                 )
 
@@ -3567,6 +3974,7 @@ async def send_telegram_reply(
                         text_body,
                         final_keyboard,
                         reply_to,
+                        reply_markup=reply_keyboard,
                     )
 
             if not progress_message_became_final:
@@ -3602,6 +4010,7 @@ async def _send_with_temp_bot(
     text: str,
     parse_mode: str | ParseMode | None = None,
     keyboard: list[list[dict]] | None = None,
+    reply_markup=None,
 ):
     """Send text using a temporary Bot to avoid cross-event-loop session issues."""
     async with _temp_bot(token) as bot:
@@ -3610,7 +4019,9 @@ async def _send_with_temp_bot(
                 bot, chat_id, text, keyboard, parse_mode=parse_mode
             )
         else:
-            await tc.send_text(bot, chat_id, text, parse_mode=parse_mode)
+            await tc.send_text(
+                bot, chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup,
+            )
 
 
 def _start_typing(token: str, chat_id: int) -> threading.Event:

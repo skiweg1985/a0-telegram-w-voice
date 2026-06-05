@@ -187,6 +187,7 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
             ["/tmp/a.txt"],
             [[{"text": "Open", "url": "https://example.com"}]],
             voice_text="Final voice",
+            telegram_items=None,
         )
         self.assertTrue(context.data[constants.CTX_TG_FINAL_REPLY_SENT])
         self.assertNotIn(constants.CTX_TG_ATTACHMENTS, context.data)
@@ -211,12 +212,78 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
             "Working",
             None,
             None,
+            telegram_items=None,
         )
         handler.send_telegram_progress_update.assert_not_awaited()
         handler.send_telegram_reply.assert_not_awaited()
         self.assertFalse(response.break_loop)
         self.assertEqual(response.message, "ok")
         agent.hist_add_tool_result.assert_called_once_with("response", "ok")
+
+    def test_telegram_items_are_forwarded_for_final_and_inline_replies(self):
+        constants, handler = _install_stubs()
+        module = _load_module(TOOL_HOOK_PATH, "telegram_response_hook_items_under_test")
+
+        final_context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+            },
+            log=_Log(),
+            agent0=types.SimpleNamespace(read_prompt=lambda *a, **k: "retry"),
+            communicate=mock.Mock(),
+        )
+        final_ext = module.TelegramResponseIntercept()
+        final_ext.agent = _fake_agent(
+            {
+                "text": "Pinned",
+                "telegram_items": [
+                    {"type": "location", "latitude": 1, "longitude": 2},
+                ],
+                "break_loop": True,
+            },
+            final_context,
+        )
+
+        asyncio.run(final_ext.execute(tool_name="response", response=_Response()))
+
+        handler.send_telegram_reply.assert_awaited_once_with(
+            final_context,
+            "Pinned",
+            None,
+            None,
+            voice_text=None,
+            telegram_items=[{"type": "location", "latitude": 1, "longitude": 2}],
+        )
+        self.assertNotIn(constants.CTX_TG_ITEMS, final_context.data)
+
+        handler.send_telegram_reply.reset_mock()
+        handler.send_telegram_inline_response.reset_mock()
+        handler.handle_telegram_response_stream_end.reset_mock()
+
+        inline_context = types.SimpleNamespace(data={constants.CTX_TG_BOT: "mainbot"})
+        inline_response = _Response()
+        inline_ext = module.TelegramResponseIntercept()
+        inline_ext.agent = _fake_agent(
+            {
+                "text": "Map",
+                "telegram_items": [
+                    {"type": "venue", "latitude": 1, "longitude": 2, "title": "HQ", "address": "Street"},
+                ],
+                "break_loop": False,
+            },
+            inline_context,
+        )
+
+        asyncio.run(inline_ext.execute(tool_name="response", response=inline_response))
+
+        handler.send_telegram_inline_response.assert_awaited_once_with(
+            inline_context,
+            "Map",
+            None,
+            None,
+            telegram_items=[{"type": "venue", "latitude": 1, "longitude": 2, "title": "HQ", "address": "Street"}],
+        )
 
     def test_break_loop_true_clears_gen_phase_before_final_reply(self):
         constants, handler = _install_stubs()
