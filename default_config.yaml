@@ -69,4 +69,4 @@ bots: []
 #       max_chars: 700                # cap text length for TTS
 #       quick_actions:
 #         enabled: true               # show optional inline UX buttons under Telegram replies
-#         show_text: true             # in voice_only mode, offer a button that reveals the text reply on demand
+#         show_text: true             # for voice replies without a visible text bubble, offer a button that reveals the text reply on demand

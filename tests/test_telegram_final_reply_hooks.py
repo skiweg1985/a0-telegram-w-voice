@@ -9,6 +9,7 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "tool_execute_after" / "_50_telegram_response.py"
+DETAIL_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "tool_execute_after" / "_45_telegram_detail_status.py"
 CHAIN_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "process_chain_end" / "_55_telegram_reply.py"
 
 
@@ -108,9 +109,23 @@ def _install_stubs():
     dependencies.ensure_dependencies = lambda: None
     sys.modules["usr.plugins.telegram_integration_voice.helpers.dependencies"] = dependencies
 
+    detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
+    detail_status.effective_detail_level = lambda bot_cfg, ctx_data: "info"
+    detail_status.detail_exclude_set = lambda bot_cfg: set()
+    detail_status.detail_throttle_sec = lambda bot_cfg, level: 5.0
+    detail_status.format_step_html = lambda name, bot_cfg, level="info", tool_args=None: f"step:{name}"
+    sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"] = detail_status
+
     handler = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.handler")
+    handler._append_progress_line = mock.Mock()
+    handler.handle_telegram_response_stream_end = mock.Mock()
+    handler.send_telegram_inline_response = mock.AsyncMock(return_value=None)
     handler.send_telegram_reply = mock.AsyncMock(return_value=None)
     handler.send_telegram_progress_update = mock.AsyncMock(return_value=None)
+    handler._refresh_progress_status = mock.AsyncMock(return_value=None)
+    handler._render_progress_status_html = mock.Mock(return_value="<b>status</b>")
+    handler.schedule_telegram_progress_update = mock.Mock(return_value=False)
+    handler._set_progress_phase = mock.Mock(return_value=True)
     handler._clear_progress_state = mock.Mock()
     sys.modules["usr.plugins.telegram_integration_voice.helpers.handler"] = handler
 
@@ -178,7 +193,7 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         self.assertNotIn(constants.CTX_TG_KEYBOARD, context.data)
         self.assertNotIn(constants.CTX_TG_VOICE_TEXT, context.data)
 
-    def test_break_loop_false_still_uses_inline_progress_update(self):
+    def test_break_loop_false_sends_persistent_inline_message(self):
         constants, handler = _install_stubs()
         module = _load_module(TOOL_HOOK_PATH, "telegram_response_hook_inline_under_test")
 
@@ -190,11 +205,38 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
 
         asyncio.run(ext.execute(tool_name="response", response=response))
 
-        handler.send_telegram_progress_update.assert_awaited_once_with(context, "Working", None)
+        handler.handle_telegram_response_stream_end.assert_called_once_with(context)
+        handler.send_telegram_inline_response.assert_awaited_once_with(
+            context,
+            "Working",
+            None,
+            None,
+        )
+        handler.send_telegram_progress_update.assert_not_awaited()
         handler.send_telegram_reply.assert_not_awaited()
         self.assertFalse(response.break_loop)
         self.assertEqual(response.message, "ok")
         agent.hist_add_tool_result.assert_called_once_with("response", "ok")
+
+    def test_break_loop_true_clears_gen_phase_before_final_reply(self):
+        constants, handler = _install_stubs()
+        module = _load_module(TOOL_HOOK_PATH, "telegram_response_hook_final_phase_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+            },
+            log=_Log(),
+            agent0=types.SimpleNamespace(read_prompt=lambda *a, **k: "retry"),
+            communicate=mock.Mock(),
+        )
+        ext = module.TelegramResponseIntercept()
+        ext.agent = _fake_agent({"text": "Final answer", "break_loop": True}, context)
+
+        asyncio.run(ext.execute(tool_name="response", response=_Response()))
+
+        handler._set_progress_phase.assert_called_once_with(context, None)
 
     def test_process_chain_end_skips_when_final_response_already_sent(self):
         constants, handler = _install_stubs()
@@ -217,6 +259,37 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         ext._send_reply.assert_not_awaited()
         self.assertNotIn(constants.CTX_TG_FINAL_REPLY_SENT, context.data)
         handler._clear_progress_state.assert_called_once_with(context)
+
+    def test_detail_status_clears_gen_phase_even_when_tool_line_is_throttled(self):
+        constants, handler = _install_stubs()
+        module = _load_module(DETAIL_HOOK_PATH, "telegram_detail_hook_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+                constants.CTX_TG_BOT_CFG: {},
+                constants.CTX_TG_DETAIL_LAST_SENT_TS: 0.0,
+            },
+            log=_Log(),
+        )
+        ext = module.TelegramDetailStatus()
+        ext.agent = types.SimpleNamespace(
+            context=context,
+            number=0,
+            loop_data=types.SimpleNamespace(current_tool=types.SimpleNamespace(args={})),
+        )
+
+        with mock.patch.object(module.time, "monotonic", return_value=1.0):
+            asyncio.run(ext.execute(tool_name="search_engine"))
+
+        handler._set_progress_phase.assert_called_once_with(context, None)
+        handler._refresh_progress_status.assert_awaited_once_with(
+            context,
+            {},
+            require_existing_message=True,
+        )
+        handler.send_telegram_progress_update.assert_not_awaited()
 
 
 if __name__ == "__main__":

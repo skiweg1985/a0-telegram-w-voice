@@ -65,8 +65,8 @@ class TelegramResponseIntercept(Extension):
     async def _send_inline(self, context, tool, response: Response):
         ensure_dependencies()
         from usr.plugins.telegram_integration_voice.helpers.handler import (
-            send_telegram_reply,
-            send_telegram_progress_update,
+            handle_telegram_response_stream_end,
+            send_telegram_inline_response,
         )
 
         agent = self.agent
@@ -75,16 +75,14 @@ class TelegramResponseIntercept(Extension):
         text = tool.args.get("text", tool.args.get("message", ""))
         attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])
         keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
-        voice_for_tts = context.data.pop(CTX_TG_VOICE_TEXT, None)
-
-        # Inline progress updates use message editing when possible.
-        # If attachments are included, fallback to normal send flow.
-        if attachments:
-            error = await send_telegram_reply(
-                context, text, attachments or None, keyboard, voice_text=voice_for_tts,
-            )
-        else:
-            error = await send_telegram_progress_update(context, text, keyboard)
+        context.data.pop(CTX_TG_VOICE_TEXT, None)
+        handle_telegram_response_stream_end(context)
+        error = await send_telegram_inline_response(
+            context,
+            text,
+            attachments or None,
+            keyboard,
+        )
 
         if error:
             result = agent.read_prompt("fw.telegram.update_error.md", error=error)
@@ -98,13 +96,17 @@ class TelegramResponseIntercept(Extension):
 
     async def _send_final(self, context, tool):
         ensure_dependencies()
-        from usr.plugins.telegram_integration_voice.helpers.handler import send_telegram_reply
+        from usr.plugins.telegram_integration_voice.helpers.handler import (
+            _set_progress_phase,
+            send_telegram_reply,
+        )
 
         text = tool.args.get("text", tool.args.get("message", ""))
         attachments = context.data.get(CTX_TG_ATTACHMENTS, [])
         keyboard = context.data.get(CTX_TG_KEYBOARD, None)
         voice_for_tts = context.data.get(CTX_TG_VOICE_TEXT, None)
         voice_mode = context.data.get(CTX_TG_VOICE_REPLY_MODE, None)
+        _set_progress_phase(context, None)
 
         error = await send_telegram_reply(
             context,

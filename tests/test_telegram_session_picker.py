@@ -389,6 +389,12 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertEqual(preview["text"], "Hallo\nWelt")
 
+    def test_extract_live_response_preview_skips_markdown_only_partial_fragments(self):
+        handler = self.handler
+        payload = '{"tool_name":"response","tool_args":{"text":"**'
+
+        self.assertIsNone(handler._extract_live_response_preview(payload))
+
     def test_extract_live_response_preview_skips_inline_progress_updates(self):
         handler = self.handler
         payload = json.dumps({
@@ -422,6 +428,15 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertIn("🔄 In progress…", html_text)
         self.assertNotIn("Working", html_text)
+
+    def test_render_progress_status_html_shows_gen_phase_in_header(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_PROGRESS_PHASE] = "gen"
+
+        html_text = handler._render_progress_status_html(ctx, {}, done=False)
+
+        self.assertIn("🔄 In progress… [GEN…]", html_text)
 
     def test_render_progress_status_html_includes_live_preview_block(self):
         handler = self.handler
@@ -527,11 +542,14 @@ class TelegramSessionPickerTests(unittest.TestCase):
         }
 
         async def scenario():
-            with mock.patch.object(handler, "_send_telegram_live_draft_preview", new=mock.AsyncMock()) as send_draft:
+            with mock.patch.object(handler, "_send_telegram_live_draft_preview", new=mock.AsyncMock()) as send_draft, \
+                 mock.patch.object(handler, "_refresh_progress_status", new=mock.AsyncMock()) as refresh_progress:
                 await handler.handle_telegram_response_stream_chunk(ctx, stream_data)
                 send_draft.assert_not_awaited()
+                refresh_progress.assert_awaited_once_with(ctx, ctx.data[handler.CTX_TG_BOT_CFG])
                 self.assertIn(handler.CTX_TG_STREAM_WORKER_TASK, ctx.data)
                 self.assertEqual(ctx.data[handler.CTX_TG_STREAM_PENDING_FULL], stream_data["full"])
+                self.assertEqual(ctx.data[handler.CTX_TG_PROGRESS_PHASE], "gen")
                 handler._cancel_stream_preview_worker(ctx)
 
         asyncio.run(scenario())
@@ -602,6 +620,24 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertTrue(ok)
         send_draft.assert_awaited_once_with(ctx, "Latest answer")
 
+    def test_handle_stream_end_clears_gen_phase(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_PROGRESS_PHASE] = "gen"
+        ctx.data[handler.CTX_TG_STREAM_ACTIVE] = True
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {}}
+        ctx.data[handler.CTX_TG_PROGRESS_MESSAGE_ID] = 777
+
+        with mock.patch.object(handler, "_schedule_progress_status_refresh", return_value=True) as refresh_progress:
+            handler.handle_telegram_response_stream_end(ctx)
+
+        self.assertNotIn(handler.CTX_TG_PROGRESS_PHASE, ctx.data)
+        refresh_progress.assert_called_once_with(
+            ctx,
+            ctx.data[handler.CTX_TG_BOT_CFG],
+            require_existing_message=True,
+        )
+
     def test_flush_live_preview_ignores_stale_token(self):
         handler = self.handler
         ctx = _DummyAgentContext()
@@ -655,7 +691,16 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx.data[handler.CTX_TG_PROGRESS_MESSAGE_ID] = 777
         return ctx
 
-    def _patch_reply_dependencies(self, handler, *, edit_ok=True):
+    def _patch_reply_dependencies(
+        self,
+        handler,
+        *,
+        edit_ok=True,
+        voice_mode="off",
+        tts_enabled=False,
+        also_send_text=True,
+        send_voice_result=999,
+    ):
         class _AsyncBotCM:
             async def __aenter__(self):
                 return types.SimpleNamespace(token="t")
@@ -667,16 +712,19 @@ class TelegramSessionPickerTests(unittest.TestCase):
             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="token"))),
             mock.patch.object(handler, "_temp_bot", lambda *a, **k: _AsyncBotCM()),
             mock.patch.object(handler.speech, "voice_reply_settings", return_value={"max_chars": 700}, create=True),
-            mock.patch.object(handler.speech, "effective_voice_reply_mode", return_value="off", create=True),
-            mock.patch.object(handler.speech, "tts_enabled", return_value=False, create=True),
-            mock.patch.object(handler.speech, "effective_also_send_text", return_value=True, create=True),
+            mock.patch.object(handler.speech, "effective_voice_reply_mode", return_value=voice_mode, create=True),
+            mock.patch.object(handler.speech, "tts_enabled", return_value=tts_enabled, create=True),
+            mock.patch.object(handler.speech, "effective_also_send_text", return_value=also_send_text, create=True),
             mock.patch.object(handler.speech, "quick_actions_settings", return_value={"enabled": True, "show_text": True}, create=True),
+            mock.patch.object(handler.speech, "synthesize_to_voice_file", return_value=("/tmp/reply.ogg", {}), create=True),
             mock.patch.object(handler.tc, "md_to_telegram_html", side_effect=lambda text: text, create=True),
             mock.patch.object(handler.tc, "MAX_MESSAGE_LENGTH", 4096, create=True),
             mock.patch.object(handler.tc, "edit_text", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "send_text", new=mock.AsyncMock(return_value=888), create=True),
             mock.patch.object(handler.tc, "send_text_with_keyboard", new=mock.AsyncMock(return_value=888), create=True),
+            mock.patch.object(handler.tc, "send_record_voice", new=mock.AsyncMock(return_value=None), create=True),
+            mock.patch.object(handler.tc, "send_voice", new=mock.AsyncMock(return_value=send_voice_result), create=True),
             mock.patch.object(handler.tc, "delete_message", new=mock.AsyncMock(return_value=True), create=True),
         ]
         @contextlib.contextmanager
@@ -720,6 +768,113 @@ class TelegramSessionPickerTests(unittest.TestCase):
                     for call in handler.tc.edit_text.await_args_list
                 )
             )
+
+    def test_send_telegram_reply_auto_voice_without_visible_text_adds_show_text_button(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE] = True
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="auto",
+            tts_enabled=True,
+            also_send_text=False,
+        ):
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
+            self.assertIsNone(result)
+            handler.tc.send_voice.assert_awaited_once()
+            handler.tc.send_text.assert_not_awaited()
+            handler.tc.edit_text.assert_not_awaited()
+
+            voice_kwargs = handler.tc.send_voice.await_args.kwargs
+            self.assertIsNotNone(voice_kwargs.get("buttons"))
+            self.assertEqual(voice_kwargs["buttons"][0][0]["text"], "📝 Show text")
+            self.assertTrue(
+                voice_kwargs["buttons"][0][0]["callback_data"].startswith(
+                    f"{handler.TG_UI_CALLBACK_PREFIX}qa|show_text:"
+                )
+            )
+
+    def test_send_telegram_reply_auto_voice_with_visible_text_skips_show_text_button(self):
+        handler = self.handler
+        ctx = self._reply_context()
+        ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE] = True
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="auto",
+            tts_enabled=True,
+            also_send_text=True,
+        ):
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
+            self.assertIsNone(result)
+            handler.tc.send_voice.assert_awaited_once()
+            self.assertIsNone(handler.tc.send_voice.await_args.kwargs.get("buttons"))
+            handler.tc.edit_text.assert_awaited_once()
+
+    def test_send_telegram_reply_voice_only_still_adds_show_text_button(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+        ctx.data[handler.CTX_TG_VOICE_CONVERSATION_MODE] = "voice_only"
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="force",
+            tts_enabled=True,
+            also_send_text=False,
+        ):
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
+            self.assertIsNone(result)
+            handler.tc.send_voice.assert_awaited_once()
+            self.assertEqual(
+                handler.tc.send_voice.await_args.kwargs["buttons"][0][0]["text"],
+                "📝 Show text",
+            )
+            handler.tc.send_text.assert_not_awaited()
+
+    def test_send_telegram_reply_empty_text_body_skips_show_text_button(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+        ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE] = True
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="auto",
+            tts_enabled=True,
+            also_send_text=False,
+        ):
+            result = asyncio.run(handler.send_telegram_reply(ctx, ""))
+            self.assertIsNone(result)
+            handler.tc.send_voice.assert_not_awaited()
+            handler.tc.send_text.assert_not_awaited()
+            self.assertEqual(ctx.data.get(handler.CTX_TG_LAST_TEXT_RESPONSE, None), "")
+            self.assertNotIn(handler.CTX_TG_LAST_TEXT_RESPONSE_TOKEN, ctx.data)
+
+    def test_send_telegram_inline_response_sends_separate_message_without_touching_progress(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+
+        with self._patch_reply_dependencies(handler, edit_ok=True):
+            result = asyncio.run(
+                handler.send_telegram_inline_response(
+                    ctx,
+                    "Working",
+                    keyboard=[[{"text": "Open", "url": "https://example.com"}]],
+                )
+            )
+            self.assertIsNone(result)
+            handler.tc.send_text_with_keyboard.assert_awaited_once()
+            handler.tc.edit_text.assert_not_awaited()
+            handler.tc.delete_message.assert_not_awaited()
+
+        self.assertEqual(ctx.data[handler.CTX_TG_PROGRESS_MESSAGE_ID], 777)
 
     def test_stream_chunk_does_not_fallback_to_old_progress_bubble_with_detail_off(self):
         handler = self.handler

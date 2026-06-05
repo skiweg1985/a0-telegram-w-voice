@@ -25,6 +25,7 @@ CTX_TG_PROGRESS_LAST_HASH = "_telegram_progress_last_hash"
 CTX_TG_PROGRESS_LAST_TS = "_telegram_progress_last_ts"
 CTX_TG_PROGRESS_LINES = "_telegram_progress_lines"
 CTX_TG_PROGRESS_HEADER = "_telegram_progress_header"
+CTX_TG_PROGRESS_PHASE = "_telegram_progress_phase"
 # Consecutive flood-control skips of progress edits, and whether the user has
 # already been told that live updates are paused (transient per run).
 CTX_TG_PROGRESS_RL_SKIPS = "_telegram_progress_rate_limit_skips"
@@ -44,7 +45,7 @@ CTX_TG_STREAM_LAST_FLUSH_RAW_LEN = "_telegram_stream_last_flush_raw_len"
 CTX_TG_STREAM_LAST_FLUSH_TS = "_telegram_stream_last_flush_ts"
 CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 
-# Last text reply + reveal-button token for the voice_only "Show text" action.
+# Last text reply + reveal-button token for voice replies whose text stays hidden.
 # Persisted (no leading underscore) so the button survives bot restarts / context reloads.
 CTX_TG_LAST_TEXT_RESPONSE = "telegram_last_text_response"
 CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "telegram_last_text_response_token"

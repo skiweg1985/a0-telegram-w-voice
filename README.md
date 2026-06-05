@@ -184,6 +184,7 @@ bots:
 - `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat. Supports inline details navigation and **button-driven search**: tap Search, send a search term, and results filter inline without typing a command.
 - `/topic [name]` opens or resumes a named thread within the same chat; without a name it lists existing topics.
 - Session switching is scoped to the same Telegram bot, Telegram user, and Telegram chat for safety.
+- When a reply is delivered as voice without a visible text bubble, the optional `📝 Show text` quick action can reveal the text version on demand, including `auto` after voice input.
 
 ## Notes
 
