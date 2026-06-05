@@ -166,9 +166,11 @@ def _install_stub_modules():
 
     tc = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.telegram_client")
     tc.build_reply_keyboard = lambda *args, **kwargs: {"reply_keyboard": True}
+    tc.build_inline_keyboard = lambda *args, **kwargs: {"inline_keyboard": True}
     tc.is_animation_file = lambda path: str(path).lower().endswith(".gif")
     tc.is_image_file = lambda path: str(path).lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp"))
     tc.is_video_file = lambda path: str(path).lower().endswith((".mp4", ".mov", ".m4v", ".webm"))
+    tc.md_to_telegram_html = lambda text: text
     sys.modules["usr.plugins.telegram_integration_voice.helpers.telegram_client"] = tc
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
@@ -264,6 +266,51 @@ class TelegramMediaRoutingTests(unittest.TestCase):
             self.assertIsNone(handler._build_reply_keyboard({}, "private"))
 
         build_keyboard.assert_called_once()
+
+    def test_plan_outbound_delivery_uses_caption_and_inline_keyboard_for_single_media_item(self):
+        handler = self.handler
+
+        items, text_body, media_markup, text_in_caption = handler._plan_outbound_delivery(
+            [{"type": "photo", "path": "/tmp/a.jpg"}],
+            "Preview **this**",
+            keyboard=[[{"text": "Open", "url": "https://example.com"}]],
+        )
+
+        self.assertEqual(items[0]["caption"], "Preview **this**")
+        self.assertEqual(text_body, "")
+        self.assertEqual(media_markup, {"inline_keyboard": True})
+        self.assertTrue(text_in_caption)
+
+    def test_plan_outbound_delivery_keeps_text_message_for_multi_item_keyboard_payloads(self):
+        handler = self.handler
+
+        items, text_body, media_markup, text_in_caption = handler._plan_outbound_delivery(
+            [
+                {"type": "photo", "path": "/tmp/a.jpg"},
+                {"type": "photo", "path": "/tmp/b.jpg"},
+            ],
+            "",
+            keyboard=[[{"text": "Next", "callback_data": "next"}]],
+        )
+
+        self.assertEqual([item["type"] for item in items], ["photo", "photo"])
+        self.assertEqual(text_body, "Choose an option:")
+        self.assertIsNone(media_markup)
+        self.assertFalse(text_in_caption)
+
+    def test_plan_outbound_delivery_skips_caption_when_text_exceeds_telegram_limit(self):
+        handler = self.handler
+
+        items, text_body, media_markup, text_in_caption = handler._plan_outbound_delivery(
+            [{"type": "photo", "path": "/tmp/a.jpg"}],
+            "x" * 1025,
+            keyboard=None,
+        )
+
+        self.assertNotIn("caption", items[0])
+        self.assertEqual(text_body, "x" * 1025)
+        self.assertIsNone(media_markup)
+        self.assertFalse(text_in_caption)
 
 
 if __name__ == "__main__":

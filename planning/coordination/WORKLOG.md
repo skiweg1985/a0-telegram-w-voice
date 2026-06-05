@@ -615,3 +615,35 @@
   - yes ([Unreleased] Removed)
 - Follow-ups:
   - none
+
+## 2026-06-05 – Auto – Telegram reply keyboard & media delivery polish
+
+- Done:
+  - Reply keyboard bleibt bei Slash-Commands und Inline-Picker-Antworten sichtbar (`_reply_keyboard_for_chat`).
+  - Outbound-Planung für Captions, Inline-Keyboards und Albums (`_plan_outbound_delivery`).
+  - `send_voice` unterstützt `reply_markup` für Voice-only mit Reply-Keyboard.
+  - Agent-Prompt für Attachments, Captions und Keyboard-Muster erweitert.
+  - Unit-Tests für Keyboard-Persistenz, Caption-Routing und Voice-only-Keyboard ergänzt.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: codex/upgrade
+  - PR: https://github.com/skiweg1985/a0-telegram-w-voice/pull/6
+- Files touched:
+  - helpers/handler.py
+  - helpers/telegram_client.py
+  - prompts/fw.telegram.system_context_reply.md
+  - tests/test_telegram_media_routing.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python -m pytest tests/test_telegram_media_routing.py tests/test_telegram_session_picker.py -q` (53 passed)
+  - endpoints: none
+  - UI path: Telegram DM reply keyboard + media replies
+- Changelog updated:
+  - yes ([Unreleased] Changed)
+- Follow-ups:
+  - none

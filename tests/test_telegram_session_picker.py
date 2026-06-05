@@ -218,6 +218,8 @@ def _install_stub_modules():
     tc.supports_message_draft = lambda *args, **kwargs: False
     tc.send_message_draft = lambda *args, **kwargs: None
     tc.build_reply_keyboard = lambda *args, **kwargs: {"reply_keyboard": True}
+    tc.build_inline_keyboard = lambda *args, **kwargs: {"inline_keyboard": True}
+    tc.md_to_telegram_html = lambda text: text
 
     async def _tc_send_typing(*args, **kwargs):
         return None
@@ -722,6 +724,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
             mock.patch.object(handler.tc, "md_to_telegram_html", side_effect=lambda text: text, create=True),
             mock.patch.object(handler.tc, "MAX_MESSAGE_LENGTH", 4096, create=True),
             mock.patch.object(handler.tc, "build_reply_keyboard", return_value={"reply_keyboard": True}, create=True),
+            mock.patch.object(handler.tc, "build_inline_keyboard", return_value={"inline_keyboard": True}, create=True),
             mock.patch.object(handler.tc, "edit_text", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "send_text", new=mock.AsyncMock(return_value=888), create=True),
@@ -938,6 +941,57 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         handle_session.assert_not_awaited()
 
+    def test_handle_start_attaches_reply_keyboard_in_private_chat(self):
+        handler = self.handler
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=7, type="private"),
+            from_user=types.SimpleNamespace(id=42, username="alice", first_name="Alice"),
+            reply=mock.AsyncMock(),
+        )
+
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="token"))), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()) as send_temp, \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=object())), \
+             mock.patch.object(handler.tc, "build_reply_keyboard", return_value={"reply_keyboard": True}, create=True):
+            asyncio.run(handler.handle_start(message, "mainbot", {"reply_keyboard": {"enabled": True}}))
+
+        self.assertEqual(send_temp.await_args.kwargs["reply_markup"], {"reply_keyboard": True})
+
+    def test_handle_clear_and_newchat_refresh_reply_keyboard(self):
+        handler = self.handler
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=7, type="private"),
+            from_user=types.SimpleNamespace(id=42, username="alice"),
+        )
+        ctx = types.SimpleNamespace(data={}, reset=mock.Mock())
+
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:7": "ctx-1"}}), \
+             mock.patch.object(handler.AgentContext, "get", return_value=ctx), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="token"))), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()) as send_temp, \
+             mock.patch.object(handler.tc, "build_reply_keyboard", return_value={"reply_keyboard": True}, create=True):
+            asyncio.run(handler.handle_clear(message, "mainbot", {"reply_keyboard": {"enabled": True}}))
+
+        self.assertEqual(send_temp.await_args.kwargs["reply_markup"], {"reply_keyboard": True})
+        ctx.reset.assert_called_once()
+
+        send_temp.reset_mock()
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="token"))), \
+             mock.patch.object(
+                 handler,
+                 "_start_new_session_for_user",
+                 new=mock.AsyncMock(return_value=(True, "Started a fresh chat.", object())),
+             ), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=send_temp), \
+             mock.patch.object(handler.tc, "build_reply_keyboard", return_value={"reply_keyboard": True}, create=True):
+            asyncio.run(handler.handle_newchat(message, "mainbot", {"reply_keyboard": {"enabled": True}}))
+
+        self.assertEqual(send_temp.await_args.kwargs["reply_markup"], {"reply_keyboard": True})
+
     def test_send_telegram_reply_uses_media_group_for_multiple_visual_attachments(self):
         handler = self.handler
         ctx = self._reply_context({"completed_mode": "delete"})
@@ -974,6 +1028,86 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertIsNone(result)
             self.assertEqual(handler.tc.send_photo.await_count, 2)
             handler.tc.send_file.assert_not_awaited()
+
+    def test_send_telegram_reply_single_photo_uses_caption_without_extra_text_message(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "Here is the preview",
+                    attachments=["/tmp/a.jpg"],
+                )
+            )
+            self.assertIsNone(result)
+            self.assertEqual(handler.tc.send_photo.await_args.kwargs["caption"], "Here is the preview")
+            handler.tc.send_text.assert_not_awaited()
+
+    def test_send_telegram_reply_single_photo_with_keyboard_uses_media_as_the_keyboard_carrier(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "Open this image",
+                    attachments=["/tmp/a.jpg"],
+                    keyboard=[[{"text": "Open", "url": "https://example.com"}]],
+                )
+            )
+            self.assertIsNone(result)
+            self.assertEqual(handler.tc.send_photo.await_args.kwargs["caption"], "Open this image")
+            self.assertEqual(handler.tc.send_photo.await_args.kwargs["reply_markup"], {"inline_keyboard": True})
+            handler.tc.send_text.assert_not_awaited()
+            handler.tc.send_text_with_keyboard.assert_not_awaited()
+
+    def test_send_telegram_reply_multi_media_keyboard_without_text_uses_short_companion_message(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "",
+                    attachments=["/tmp/a.jpg", "/tmp/b.jpg"],
+                    keyboard=[[{"text": "Next", "callback_data": "next"}]],
+                )
+            )
+            self.assertIsNone(result)
+            handler.tc.send_media_group.assert_awaited_once()
+            self.assertEqual(handler.tc.send_text_with_keyboard.await_args.args[2], "Choose an option:")
+
+    def test_send_telegram_reply_voice_only_refreshes_reply_keyboard_when_no_text_is_visible(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+        ctx.data[handler.CTX_TG_CHAT_TYPE] = "private"
+        ctx.data[handler.CTX_TG_BOT_CFG]["reply_keyboard"] = {"enabled": True}
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="force",
+            tts_enabled=True,
+            also_send_text=False,
+        ), mock.patch.object(
+            handler.speech,
+            "quick_actions_settings",
+            return_value={"enabled": False, "show_text": False},
+            create=True,
+        ):
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Voice only"))
+            self.assertIsNone(result)
+            self.assertEqual(handler.tc.send_voice.await_args.kwargs["reply_markup"], {"reply_keyboard": True})
+            self.assertIsNone(handler.tc.send_voice.await_args.kwargs.get("buttons"))
+            handler.tc.send_text.assert_not_awaited()
 
     def test_send_telegram_reply_video_note_falls_back_to_video(self):
         handler = self.handler

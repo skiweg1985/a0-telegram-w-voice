@@ -222,6 +222,10 @@ def _build_reply_keyboard(bot_cfg: dict, chat_type: object):
     )
 
 
+def _reply_keyboard_for_chat(bot_cfg: dict, chat) -> object | None:
+    return _build_reply_keyboard(bot_cfg, getattr(chat, "type", None) if chat else None)
+
+
 def _voice_conversation_mode(ctx: AgentContext) -> str:
     return str(ctx.data.get(CTX_TG_VOICE_CONVERSATION_MODE, "off") or "off").strip().lower()
 
@@ -1144,7 +1148,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
     instance = get_bot(bot_name)
     if not instance:
         return
-    reply_markup = _build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None))
+    reply_markup = _reply_keyboard_for_chat(bot_cfg, message.chat)
 
     await _send_with_temp_bot(
         instance.bot.token, message.chat.id,
@@ -1195,7 +1199,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     instance = get_bot(bot_name)
     if instance:
-        reply_markup = _build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None))
+        reply_markup = _reply_keyboard_for_chat(bot_cfg, message.chat)
         await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Chat cleared. Send a new message to start fresh.",
@@ -1238,7 +1242,7 @@ async def handle_newchat(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
+        reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
     )
 
 
@@ -1567,6 +1571,7 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Agent is still working — use /stop first, then /retry.",
             parse_mode=None,
+            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
         )
         return
 
@@ -1576,6 +1581,7 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Nothing to retry yet — send a message first.",
             parse_mode=None,
+            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
         )
         return
 
@@ -1620,7 +1626,11 @@ async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
     if not ctx:
         await _send_with_temp_bot(
-            instance.bot.token, message.chat.id, "No active session.", parse_mode=None
+            instance.bot.token,
+            message.chat.id,
+            "No active session.",
+            parse_mode=None,
+            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
         )
         return
     if ctx.is_running():
@@ -1628,6 +1638,7 @@ async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Agent is still working — use /stop first, then /undo.",
             parse_mode=None,
+            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
         )
         return
 
@@ -1651,7 +1662,13 @@ async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
         reply = "↩️ Removed the last exchange from this chat's history."
     else:
         reply = "Nothing to undo yet."
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+        reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
+    )
 
 
 async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1772,7 +1789,13 @@ async def handle_project(message: TgMessage, bot_name: str, bot_cfg: dict):
         except Exception as e:
             reply = f"Failed to switch project: {format_error(e)}"
 
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+        reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
+    )
 
 
 async def handle_session(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -2053,6 +2076,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Failed to create chat session.",
             parse_mode=None,
+            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
         )
         return
 
@@ -2162,6 +2186,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
         token = instance.bot.token
         chat_id = query.message.chat.id
+        reply_markup = _reply_keyboard_for_chat(bot_cfg, query.message.chat)
 
         if kind in {"s", "ss"}:
             ok, reply, target_ctx = _activate_existing_session(
@@ -2184,10 +2209,14 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                         message_id=query.message.message_id,
                     )
                 else:
-                    await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+                    await _send_with_temp_bot(
+                        token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                    )
             else:
                 await query.answer("Failed")
-                await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                )
             return
 
         if kind == "sv":
@@ -2285,7 +2314,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 message_id=query.message.message_id,
             )
             await query.answer("Started" if ok else "Failed")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+            )
             return
 
         context = await _get_or_create_context_from_user(
@@ -2302,7 +2333,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_output_optimize_mode(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("Updated")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+            )
             return
 
         if kind == "v":
@@ -2312,7 +2345,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_voice_mode_setting(context, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+            )
             return
 
         if kind == "qa":
@@ -2362,7 +2397,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             reply = f"Model preset set to: {pname}"
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+            )
             return
 
         if kind == "d":
@@ -2372,7 +2409,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_detail_level(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+            )
             return
 
         if kind == "p":
@@ -2393,7 +2432,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             except Exception as e:
                 reply = f"Failed to switch project: {format_error(e)}"
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+            )
             return
 
         await query.answer("Unknown action.")
@@ -3477,6 +3518,49 @@ def _attachment_media_type(path: str) -> str:
     return "document"
 
 
+def _outbound_item_supports_caption(item: dict) -> bool:
+    return str(item.get("type") or "").strip().lower() in {
+        "photo",
+        "animation",
+        "video",
+        "document",
+    }
+
+
+def _plan_outbound_delivery(
+    items: list[dict],
+    response_text: str,
+    keyboard: list[list[dict]] | None = None,
+) -> tuple[list[dict], str, object | None, bool]:
+    planned_items = [dict(item) for item in (items or [])]
+    planned_text = (response_text or "").strip()
+    media_reply_markup = None
+    response_text_in_caption = False
+    single_item = len(planned_items) == 1
+
+    if keyboard and single_item and not planned_text:
+        media_reply_markup = tc.build_inline_keyboard(keyboard)
+
+    if (
+        planned_text
+        and planned_items
+        and _outbound_item_supports_caption(planned_items[0])
+        and (not keyboard or single_item)
+    ):
+        caption_html = tc.md_to_telegram_html(planned_text)
+        if len(caption_html) <= 1024:
+            planned_items[0]["caption"] = caption_html
+            planned_text = ""
+            response_text_in_caption = True
+            if keyboard and single_item:
+                media_reply_markup = tc.build_inline_keyboard(keyboard)
+
+    if keyboard and not planned_text and len(planned_items) >= 2:
+        planned_text = "Choose an option:"
+
+    return planned_items, planned_text, media_reply_markup, response_text_in_caption
+
+
 def _normalize_outbound_items(
     attachments: list[str] | None = None,
     telegram_items: list[dict] | None = None,
@@ -3614,17 +3698,33 @@ async def _send_single_outbound_item(
     reply_markup=None,
 ) -> int | None:
     item_type = str(item.get("type") or "").strip().lower()
+    caption = str(item.get("caption") or "")
     if item_type == "photo":
         return await tc.send_photo(
-            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
         )
     if item_type == "animation":
         return await tc.send_animation(
-            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
         )
     if item_type == "video":
         return await tc.send_video(
-            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
         )
     if item_type == "video_note":
         msg_id = await tc.send_video_note(
@@ -3633,16 +3733,31 @@ async def _send_single_outbound_item(
         if msg_id:
             return msg_id
         msg_id = await tc.send_video(
-            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
         )
         if msg_id:
             return msg_id
         return await tc.send_file(
-            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
         )
     if item_type == "document":
         return await tc.send_file(
-            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
         )
     if item_type == "location":
         kwargs = {}
@@ -3765,22 +3880,29 @@ async def send_telegram_inline_response(
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     chat_type = context.data.get(CTX_TG_CHAT_TYPE)
     reply_to = context.data.get(CTX_TG_REPLY_TO)
-    text_body = (response_text or "").strip()
     outbound_items = _normalize_outbound_items(attachments, telegram_items)
     reply_keyboard = None if keyboard else _build_reply_keyboard(bot_cfg, chat_type)
+    planned_items, text_body, media_reply_markup, _response_text_in_caption = _plan_outbound_delivery(
+        outbound_items,
+        response_text,
+        keyboard,
+    )
 
     try:
         async with _temp_bot(
             instance.bot.token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         ) as reply_bot:
-            if outbound_items:
+            if planned_items:
+                outbound_reply_markup = media_reply_markup
+                if outbound_reply_markup is None and not text_body:
+                    outbound_reply_markup = reply_keyboard
                 await _send_outbound_items(
                     reply_bot,
                     chat_id,
-                    outbound_items,
+                    planned_items,
                     reply_to,
-                    reply_markup=reply_keyboard if not text_body else None,
+                    reply_markup=outbound_reply_markup,
                 )
 
             if text_body:
@@ -3872,29 +3994,39 @@ async def send_telegram_reply(
             quick_actions = speech.quick_actions_settings(bot_cfg)
             # If the agent only set voice_text (TTS) and left text empty, response_text is
             # empty but users still expect a text bubble when also_send_text is on.
-            text_body = (response_text or "").strip()
-            if not text_body and (voice_text or "").strip():
-                text_body = (voice_text or "").strip()
+            logical_text_body = (response_text or "").strip()
+            if not logical_text_body and (voice_text or "").strip():
+                logical_text_body = (voice_text or "").strip()
 
-            context.data[CTX_TG_LAST_TEXT_RESPONSE] = text_body
+            context.data[CTX_TG_LAST_TEXT_RESPONSE] = logical_text_body
             response_token = ""
-            if text_body:
+            if logical_text_body:
                 response_token = uuid.uuid4().hex[:12]
                 context.data[CTX_TG_LAST_TEXT_RESPONSE_TOKEN] = response_token
             else:
                 context.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
 
-            # Offer "Show text" whenever a voice reply is expected to be the only
-            # visible response; if voice send fails we still fall back to a text bubble.
             final_keyboard = _append_inline_keyboard(keyboard, None)
             reply_keyboard = None if final_keyboard else _build_reply_keyboard(bot_cfg, chat_type)
+            planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(
+                outbound_items,
+                logical_text_body,
+                final_keyboard,
+            )
             should_send_text_with_voice = bool(text_body) and (
-                final_keyboard is not None or also
+                final_keyboard is not None
+                or also
+                or text_body != logical_text_body
+            )
+            response_text_visible = bool(response_text_in_caption) or bool(
+                logical_text_body
+                and text_body == logical_text_body
+                and should_send_text_with_voice
             )
             want_show_text_button = bool(
-                text_body
+                logical_text_body
                 and want_voice
-                and not should_send_text_with_voice
+                and not response_text_visible
                 and quick_actions.get("enabled", True)
                 and quick_actions.get("show_text", True)
             )
@@ -3904,13 +4036,16 @@ async def send_telegram_reply(
                 else None
             )
 
-            if outbound_items:
+            if planned_items:
+                outbound_reply_markup = media_reply_markup
+                if outbound_reply_markup is None and not text_body:
+                    outbound_reply_markup = reply_keyboard
                 await _send_outbound_items(
                     reply_bot,
                     chat_id,
-                    outbound_items,
+                    planned_items,
                     reply_to,
-                    reply_markup=reply_keyboard if not text_body else None,
+                    reply_markup=outbound_reply_markup,
                 )
 
             sent_voice = False
@@ -3927,6 +4062,16 @@ async def send_telegram_reply(
                         voice_file,
                         reply_to_message_id=reply_to,
                         buttons=voice_buttons,
+                        reply_markup=(
+                            reply_keyboard
+                            if (
+                                reply_keyboard
+                                and not voice_buttons
+                                and not planned_items
+                                and not should_send_text_with_voice
+                            )
+                            else None
+                        ),
                     )
                     sent_voice = bool(msg_id)
                     if sent_voice:
@@ -3943,14 +4088,17 @@ async def send_telegram_reply(
             used_native_draft = bool(context.data.get(CTX_TG_STREAM_DRAFT_USED))
 
             should_send_text = bool(text_body) and (
-                final_keyboard is not None or not sent_voice or also
+                final_keyboard is not None
+                or not sent_voice
+                or also
+                or text_body != logical_text_body
             )
             progress_message_became_final = False
             if should_send_text:
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 use_final_edit = bool(
                     progress_message_id
-                    and not outbound_items
+                    and not planned_items
                     and not used_native_draft
                 )
 

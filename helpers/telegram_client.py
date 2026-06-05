@@ -228,6 +228,7 @@ async def send_voice(
     caption: str = "",
     reply_to_message_id: int | None = None,
     buttons: list[list[dict]] | None = None,
+    reply_markup=None,
 ) -> int | None:
     """Send a Telegram voice message (.ogg/opus preferred)."""
     try:
@@ -235,7 +236,8 @@ async def send_voice(
             PrintStyle.error(f"Telegram: voice file not found: {voice_path}")
             return None
         input_file = FSInputFile(voice_path)
-        reply_markup = build_inline_keyboard(buttons) if buttons else None
+        if buttons:
+            reply_markup = build_inline_keyboard(buttons)
         msg = await bot.send_voice(
             chat_id=chat_id,
             voice=input_file,

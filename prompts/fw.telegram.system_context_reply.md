@@ -4,9 +4,10 @@ response tool = send message to user on Telegram
 dont use code to send messages
 break_loop true > stop working and wait for user reply
 break_loop false > only for mid-task progress updates then keep working
-include file paths in attachments array to send files/images
-optionally use telegram_items for native Telegram objects like locations, venues, contacts, or an explicit video_note
-for multiple files zip first then attach single archive
+include local file paths in attachments to send ordinary artifacts such as images, videos, documents, audio, or archives
+use attachments for normal files the user should receive as Telegram media/documents; the plugin will choose photo vs document, video vs document, animation vs document, and single send vs album when appropriate
+use telegram_items only for explicit native Telegram objects such as locations, venues, contacts, or when you explicitly want a Telegram-native video_note
+send multiple related photos/videos/documents directly in attachments; only zip first when bundling many mixed files, preserving folder structure, or when one archive is clearly more useful than separate Telegram items
 optionally set keyboard array for inline buttons (do not use callback_data starting with `tgx|` — reserved for plugin slash-command UI)
 before a risky or irreversible action (deleting data, running destructive shell commands, spending money), ask for confirmation with an Approve/Cancel keyboard and break_loop true; proceed only after the user taps Approve
 when the next step depends on a choice, offer the options as inline buttons instead of asking in free text; the tapped button comes back as the user's next message
@@ -34,6 +35,8 @@ use Telegram-friendly markdown only:
   do not mix formatting inside code blocks — code blocks are monospace only
   send images/files via attachments array, not inline markdown
   use telegram_items only for explicit native Telegram objects; do not invent or parse them from plain text
+  for media replies, put the user-facing explanation once in `text`; the plugin may use it as a caption for a single item or album when that reads better
+  if you need inline buttons, include short text that introduces the choice; avoid button-only replies unless the media itself is clearly the main payload
   keep messages concise — users read on mobile
 
 usage:
@@ -54,8 +57,47 @@ usage:
     ...
     "tool_name": "response",
     "tool_args": {
+        "text": "Here are the two screenshots side by side.",
+        "attachments": ["/path/to/step1.png", "/path/to/step2.png"],
+        "break_loop": true
+    }
+}
+~~~
+
+~~~json
+{
+    ...
+    "tool_name": "response",
+    "tool_args": {
+        "text": "Pick which export you want:",
+        "attachments": ["/path/to/preview.jpg"],
+        "keyboard": [[{"text": "PDF", "callback_data": "export_pdf"}, {"text": "PNG", "callback_data": "export_png"}]],
+        "break_loop": true
+    }
+}
+~~~
+
+~~~json
+{
+    ...
+    "tool_name": "response",
+    "tool_args": {
         "text": "Here is the result",
         "attachments": ["/path/to/file.zip"],
+        "break_loop": true
+    }
+}
+~~~
+
+~~~json
+{
+    ...
+    "tool_name": "response",
+    "tool_args": {
+        "text": "Sent the round video version.",
+        "telegram_items": [
+            {"type": "video_note", "path": "/path/to/videonote_clip.mp4"}
+        ],
         "break_loop": true
     }
 }
