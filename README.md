@@ -139,6 +139,7 @@ bots:
 - `/newchat` creates a fresh session and keeps older sessions available in Agent Zero/browser history.
 - `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat, supports inline details navigation, and accepts `/session search <term>` for filtering.
 - Session switching is scoped to the same Telegram bot, Telegram user, and Telegram chat for safety.
+- When a reply is delivered as voice without a visible text bubble, the optional `📝 Show text` quick action can reveal the text version on demand, including `auto` after voice input.
 
 ## Notes
 

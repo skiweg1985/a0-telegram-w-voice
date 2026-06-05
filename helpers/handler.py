@@ -52,6 +52,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_PROGRESS_LAST_TS,
     CTX_TG_PROGRESS_LINES,
     CTX_TG_PROGRESS_HEADER,
+    CTX_TG_PROGRESS_PHASE,
     CTX_TG_PROGRESS_RL_SKIPS,
     CTX_TG_PROGRESS_RL_NOTIFIED,
     CTX_TG_STREAM_PREVIEW,
@@ -2626,6 +2627,7 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
     context.data.pop(CTX_TG_PROGRESS_LINES, None)
     context.data.pop(CTX_TG_PROGRESS_HEADER, None)
+    context.data.pop(CTX_TG_PROGRESS_PHASE, None)
     context.data.pop(CTX_TG_STREAM_PREVIEW, None)
     context.data.pop(CTX_TG_STREAM_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_ID, None)
@@ -2675,7 +2677,22 @@ def _progress_history_limit(bot_cfg: dict, level: str) -> int:
 def _progress_status_title(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
     if done:
         return "Done"
+    phase = str(context.data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
+    if phase == "gen":
+        return "🔄 In progress… [GEN…]"
     return "🔄 In progress…"
+
+
+def _set_progress_phase(context: AgentContext, phase: str | None) -> bool:
+    current = str(context.data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
+    normalized = str(phase or "").strip().lower()
+    if current == normalized:
+        return False
+    if normalized:
+        context.data[CTX_TG_PROGRESS_PHASE] = normalized
+    else:
+        context.data.pop(CTX_TG_PROGRESS_PHASE, None)
+    return True
 
 
 def _progress_line_prefix(line_html: str) -> str:
@@ -2804,9 +2821,11 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
     if isinstance(parsed, dict):
         tool_name = parsed.get("tool_name") or parsed.get("name")
         tool_args = parsed.get("tool_args") if isinstance(parsed.get("tool_args"), dict) else {}
+        text_closed = True
     else:
         tool_match = _extract_partial_json_string_field(raw, "tool_name")
         tool_name = tool_match[0] if tool_match else None
+        text_closed = False
 
     if tool_name != "response":
         return None
@@ -2818,6 +2837,7 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
     else:
         text_match = _extract_partial_json_string_field(raw, "text") or _extract_partial_json_string_field(raw, "message")
         text = text_match[0] if text_match else ""
+        text_closed = bool(text_match and text_match[1])
         break_loop = _extract_partial_json_bool_field(raw, "break_loop")
         # Only treat as "has attachments" if the array is actually non-empty;
         # an empty `"attachments": []` (common in streamed JSON) must not suppress the preview.
@@ -2825,6 +2845,8 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
 
     text = str(text or "")
     if not text.strip():
+        return None
+    if (not text_closed) and not _preview_has_meaningful_visible_text(text):
         return None
     if break_loop is False:
         return None
@@ -2835,6 +2857,11 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
         "text": text,
         "break_loop": break_loop,
     }
+
+
+def _preview_has_meaningful_visible_text(text: str) -> bool:
+    visible = re.sub(r"[\s\*_`~#>\-\+\|\.]+", "", str(text or ""))
+    return bool(visible)
 
 
 def _supports_native_draft_preview(context: AgentContext, bot) -> bool:
@@ -2912,8 +2939,12 @@ async def handle_telegram_response_stream_chunk(context: AgentContext, stream_da
     if not stream_full:
         return
 
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     context.data[CTX_TG_STREAM_PENDING_FULL] = stream_full
     context.data[CTX_TG_STREAM_ACTIVE] = True
+    phase_changed = _set_progress_phase(context, "gen")
+    if phase_changed:
+        await _refresh_progress_status(context, bot_cfg)
 
     try:
         loop = asyncio.get_running_loop()
@@ -3016,12 +3047,16 @@ async def _flush_telegram_live_preview_once(context: AgentContext, token: str) -
 
 def handle_telegram_response_stream_end(context: AgentContext):
     _cancel_stream_preview_worker(context)
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    phase_changed = _set_progress_phase(context, None)
     context.data.pop(CTX_TG_STREAM_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
     context.data.pop(CTX_TG_STREAM_PREVIEW, None)
     context.data.pop(CTX_TG_STREAM_PENDING_FULL, None)
     context.data.pop(CTX_TG_STREAM_LAST_FLUSH_RAW_LEN, None)
     context.data.pop(CTX_TG_STREAM_LAST_FLUSH_TS, None)
+    if phase_changed:
+        _schedule_progress_status_refresh(context, bot_cfg, require_existing_message=True)
 
 
 async def _cleanup_progress_message_after_final(
@@ -3058,6 +3093,35 @@ async def _send_initial_progress_status(context: AgentContext):
         return
     html_text = _render_progress_status_html(context, bot_cfg, done=False)
     await send_telegram_progress_update(context, html_text, text_is_html=True)
+
+
+async def _refresh_progress_status(
+    context: AgentContext,
+    bot_cfg: dict,
+    *,
+    require_existing_message: bool = False,
+):
+    if detail_status.effective_detail_level(bot_cfg, context.data) == "off":
+        return
+    if require_existing_message and not context.data.get(CTX_TG_PROGRESS_MESSAGE_ID):
+        return
+    html_text = _render_progress_status_html(context, bot_cfg, done=False)
+    if not schedule_telegram_progress_update(context, html_text, text_is_html=True):
+        await send_telegram_progress_update(context, html_text, text_is_html=True)
+
+
+def _schedule_progress_status_refresh(
+    context: AgentContext,
+    bot_cfg: dict,
+    *,
+    require_existing_message: bool = False,
+) -> bool:
+    if detail_status.effective_detail_level(bot_cfg, context.data) == "off":
+        return False
+    if require_existing_message and not context.data.get(CTX_TG_PROGRESS_MESSAGE_ID):
+        return False
+    html_text = _render_progress_status_html(context, bot_cfg, done=False)
+    return schedule_telegram_progress_update(context, html_text, text_is_html=True)
 
 
 def _progress_fingerprint(text: str, keyboard: list[list[dict]] | None) -> str:
@@ -3249,6 +3313,92 @@ async def send_telegram_progress_update(
         return error
 
 
+async def _send_telegram_text_message(
+    reply_bot: Bot,
+    chat_id: int,
+    text_body: str,
+    keyboard: list[list[dict]] | None,
+    reply_to: int | None,
+) -> int | None:
+    html_text = tc.md_to_telegram_html(text_body)
+    if keyboard:
+        return await tc.send_text_with_keyboard(
+            reply_bot,
+            chat_id,
+            html_text,
+            keyboard,
+            reply_to_message_id=reply_to,
+        )
+    return await tc.send_text(
+        reply_bot,
+        chat_id,
+        html_text,
+        reply_to_message_id=reply_to,
+    )
+
+
+async def send_telegram_inline_response(
+    context: AgentContext,
+    response_text: str,
+    attachments: list[str] | None = None,
+    keyboard: list[list[dict]] | None = None,
+) -> str | None:
+    """Send a persistent intermediate Telegram reply without touching progress state."""
+    bot_name = context.data.get(CTX_TG_BOT)
+    if not bot_name:
+        return "No Telegram bot configured on context"
+
+    instance = get_bot(bot_name)
+    if not instance:
+        return f"Bot '{bot_name}' not running"
+
+    chat_id = context.data.get(CTX_TG_CHAT_ID)
+    if not chat_id:
+        return "No chat_id on context"
+
+    reply_to = context.data.get(CTX_TG_REPLY_TO)
+    text_body = (response_text or "").strip()
+
+    try:
+        async with _temp_bot(
+            instance.bot.token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        ) as reply_bot:
+            if attachments:
+                for path in attachments:
+                    local_path = files.fix_dev_path(path)
+                    if tc.is_image_file(local_path):
+                        await tc.send_photo(
+                            reply_bot,
+                            chat_id,
+                            local_path,
+                            reply_to_message_id=reply_to,
+                        )
+                    else:
+                        await tc.send_file(
+                            reply_bot,
+                            chat_id,
+                            local_path,
+                            reply_to_message_id=reply_to,
+                        )
+
+            if text_body:
+                await _send_telegram_text_message(
+                    reply_bot,
+                    chat_id,
+                    text_body,
+                    keyboard,
+                    reply_to,
+                )
+
+        return None
+
+    except Exception as e:
+        error = format_error(e)
+        PrintStyle.error(f"Telegram inline reply failed: {error}")
+        return error
+
+
 async def send_telegram_reply(
     context: AgentContext,
     response_text: str,
@@ -3337,11 +3487,16 @@ async def send_telegram_reply(
             else:
                 context.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
 
-            # In voice_only mode the text reply stays hidden behind a reveal button that
-            # is attached directly to the voice message, so no separate text bubble is sent.
+            # Offer "Show text" whenever a voice reply is expected to be the only
+            # visible response; if voice send fails we still fall back to a text bubble.
+            final_keyboard = _append_inline_keyboard(keyboard, None)
+            should_send_text_with_voice = bool(text_body) and (
+                final_keyboard is not None or also
+            )
             want_show_text_button = bool(
                 text_body
-                and _voice_conversation_mode(context) == "voice_only"
+                and want_voice
+                and not should_send_text_with_voice
                 and quick_actions.get("enabled", True)
                 and quick_actions.get("show_text", True)
             )
@@ -3378,9 +3533,6 @@ async def send_telegram_reply(
                         with suppress(Exception):
                             os.remove(voice_file)
 
-            # The reveal button only lives on the voice message; the agent-provided
-            # keyboard (if any) still goes on the text bubble.
-            final_keyboard = _append_inline_keyboard(keyboard, None)
             used_native_draft = bool(context.data.get(CTX_TG_STREAM_DRAFT_USED))
 
             should_send_text = bool(text_body) and (
@@ -3388,7 +3540,6 @@ async def send_telegram_reply(
             )
             progress_message_became_final = False
             if should_send_text:
-                html_text = tc.md_to_telegram_html(text_body)
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 use_final_edit = bool(
                     progress_message_id
@@ -3398,6 +3549,7 @@ async def send_telegram_reply(
 
                 edited = False
                 if use_final_edit:
+                    html_text = tc.md_to_telegram_html(text_body)
                     if final_keyboard:
                         edited = await tc.edit_text_with_keyboard(
                             reply_bot, chat_id, int(progress_message_id), html_text, final_keyboard,
@@ -3409,10 +3561,13 @@ async def send_telegram_reply(
                     progress_message_became_final = bool(edited)
 
                 if not edited:
-                    if final_keyboard:
-                        await tc.send_text_with_keyboard(reply_bot, chat_id, html_text, final_keyboard, reply_to_message_id=reply_to)
-                    else:
-                        await tc.send_text(reply_bot, chat_id, html_text, reply_to_message_id=reply_to)
+                    await _send_telegram_text_message(
+                        reply_bot,
+                        chat_id,
+                        text_body,
+                        final_keyboard,
+                        reply_to,
+                    )
 
             if not progress_message_became_final:
                 await _cleanup_progress_message_after_final(reply_bot, context, bot_cfg)
