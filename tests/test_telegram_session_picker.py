@@ -66,10 +66,14 @@ class _DummyAgentContext:
     def communicate(self, *args, **kwargs):
         return None
 
+    def is_running(self):
+        return False
+
 
 class _DummyUserMessage:
-    def __init__(self, message=None, id=None):
+    def __init__(self, message=None, attachments=None, id=None):
         self.message = message
+        self.attachments = attachments
         self.id = id
 
 
@@ -776,10 +780,16 @@ class TelegramSessionPickerTests(unittest.TestCase):
         with self._patch_reply_dependencies(handler, edit_ok=True):
             result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
             self.assertIsNone(result)
-            handler.tc.edit_text.assert_awaited_once()
-            edit_args = handler.tc.edit_text.await_args.args
+            handler.tc.edit_text.assert_not_awaited()
+            handler.tc.edit_text_with_keyboard.assert_awaited_once()
+            edit_args = handler.tc.edit_text_with_keyboard.await_args.args
             self.assertEqual(edit_args[3], "Final answer")
+            self.assertEqual(
+                [btn["text"] for btn in edit_args[4][0]],
+                ["🔁 Retry", "✏️ Continue", "➕ New session"],
+            )
             handler.tc.send_text.assert_not_awaited()
+            handler.tc.send_text_with_keyboard.assert_not_awaited()
             handler.tc.delete_message.assert_not_awaited()
         self.assertNotIn(handler.CTX_TG_PROGRESS_MESSAGE_ID, ctx.data)
 
@@ -791,7 +801,8 @@ class TelegramSessionPickerTests(unittest.TestCase):
         with self._patch_reply_dependencies(handler, edit_ok=True):
             result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
             self.assertIsNone(result)
-            handler.tc.send_text.assert_awaited_once()
+            handler.tc.send_text.assert_not_awaited()
+            handler.tc.send_text_with_keyboard.assert_awaited_once()
             handler.tc.delete_message.assert_awaited_once()
             deleted_args = handler.tc.delete_message.await_args.args
             self.assertEqual(deleted_args[2], 777)
@@ -819,6 +830,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertIsNone(result)
             handler.tc.send_voice.assert_awaited_once()
             handler.tc.send_text.assert_not_awaited()
+            handler.tc.send_text_with_keyboard.assert_not_awaited()
             handler.tc.edit_text.assert_not_awaited()
 
             voice_kwargs = handler.tc.send_voice.await_args.kwargs
@@ -828,6 +840,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
                 voice_kwargs["buttons"][0][0]["callback_data"].startswith(
                     f"{handler.TG_UI_CALLBACK_PREFIX}qa|show_text:"
                 )
+            )
+            self.assertEqual(
+                [btn["text"] for btn in voice_kwargs["buttons"][1]],
+                ["🔁 Retry", "✏️ Continue", "➕ New session"],
             )
 
     def test_send_telegram_reply_auto_voice_with_visible_text_skips_show_text_button(self):
@@ -846,7 +862,8 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertIsNone(result)
             handler.tc.send_voice.assert_awaited_once()
             self.assertIsNone(handler.tc.send_voice.await_args.kwargs.get("buttons"))
-            handler.tc.edit_text.assert_awaited_once()
+            handler.tc.edit_text.assert_not_awaited()
+            handler.tc.edit_text_with_keyboard.assert_awaited_once()
 
     def test_send_telegram_reply_voice_only_still_adds_show_text_button(self):
         handler = self.handler
@@ -869,6 +886,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
                 "📝 Show text",
             )
             handler.tc.send_text.assert_not_awaited()
+            self.assertEqual(
+                [btn["text"] for btn in handler.tc.send_voice.await_args.kwargs["buttons"][1]],
+                ["🔁 Retry", "✏️ Continue", "➕ New session"],
+            )
 
     def test_send_telegram_reply_empty_text_body_skips_show_text_button(self):
         handler = self.handler
@@ -962,6 +983,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertIsNone(result)
             self.assertEqual(handler.tc.send_photo.await_args.kwargs["caption"], "Here is the preview")
             handler.tc.send_text.assert_not_awaited()
+            self.assertEqual(handler.tc.send_photo.await_args.kwargs["reply_markup"], {"inline_keyboard": True})
 
     def test_send_telegram_reply_single_photo_with_keyboard_uses_media_as_the_keyboard_carrier(self):
         handler = self.handler
@@ -1001,6 +1023,65 @@ class TelegramSessionPickerTests(unittest.TestCase):
             handler.tc.send_media_group.assert_awaited_once()
             self.assertEqual(handler.tc.send_text_with_keyboard.await_args.args[2], "Choose an option:")
 
+    def test_handle_callback_query_response_continue_dispatches_follow_up_turn(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "resp123"
+        ctx.data[handler.CTX_TG_CHAT_ID] = 99
+        ctx.data[handler.CTX_TG_BOT] = "mainbot"
+        ctx.data[handler.CTX_TG_BOT_CFG] = {}
+        ctx.agent0 = types.SimpleNamespace(
+            read_prompt=lambda template, sender, body: f"{sender}|{body}",
+            history=types.SimpleNamespace(compress=lambda: False),
+        )
+        communicated = []
+        ctx.communicate = lambda msg: communicated.append(msg)
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ra|continue:resp123",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock(return_value=None)), \
+             mock.patch.object(handler, "_start_typing", return_value=object()), \
+             mock.patch.object(handler.mq, "log_user_message") as log_user_message, \
+             mock.patch.object(handler, "save_tmp_chat") as save_tmp_chat:
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        query.answer.assert_awaited_once_with("Continuing")
+        self.assertEqual(ctx.data[handler.CTX_TG_LAST_USER_BODY], "Continue from here.")
+        self.assertEqual(ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE], False)
+        self.assertEqual(ctx.data[handler.CTX_TG_REPLY_TO], None)
+        self.assertEqual(len(communicated), 1)
+        self.assertEqual(communicated[0].message, "Benji (@benji)|Continue from here.")
+        log_user_message.assert_called_once()
+        save_tmp_chat.assert_called()
+
+    def test_handle_callback_query_response_action_rejects_stale_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "fresh123"
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ra|retry:stale999",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
+             mock.patch.object(handler.mq, "log_user_message") as log_user_message:
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        query.answer.assert_awaited_once_with("Action is no longer available.")
+        log_user_message.assert_not_called()
 
     def test_handle_title_sets_manual_chat_title_and_lock(self):
         handler = self.handler

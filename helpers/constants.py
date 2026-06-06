@@ -51,6 +51,7 @@ CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 # Persisted (no leading underscore) so the button survives bot restarts / context reloads.
 CTX_TG_LAST_TEXT_RESPONSE = "telegram_last_text_response"
 CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "telegram_last_text_response_token"
+CTX_TG_LAST_RESPONSE_ACTION_TOKEN = "telegram_last_response_action_token"
 
 # Last user turn (body, sender, attachment paths) so /retry can re-run it.
 # Persisted (no leading underscore) so /retry survives bot restarts / context reloads.

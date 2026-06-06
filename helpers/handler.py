@@ -73,6 +73,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_FINAL_REPLY_SENT,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
+    CTX_TG_LAST_RESPONSE_ACTION_TOKEN,
     CTX_TG_LAST_USER_BODY,
     CTX_TG_LAST_USER_SENDER,
     CTX_TG_LAST_USER_ATTACHMENTS,
@@ -227,10 +228,22 @@ def _voice_mode_inline_keyboard() -> list[list[dict]]:
         ],
     ]
 
-
-def _show_text_quick_action_keyboard(token: str) -> list[list[dict]]:
+def _response_action_keyboard(
+    token: str,
+    *,
+    include_continue: bool,
+    include_show_text: bool = False,
+) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
-    return [[{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}]]
+    rows: list[list[dict]] = []
+    if include_show_text:
+        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
+    action_row = [{"text": "🔁 Retry", "callback_data": f"{p}ra|retry:{token}"}]
+    if include_continue:
+        action_row.append({"text": "✏️ Continue", "callback_data": f"{p}ra|continue:{token}"})
+    action_row.append({"text": "➕ New session", "callback_data": f"{p}ra|new_session:{token}"})
+    rows.append(action_row)
+    return rows
 
 
 def _append_inline_keyboard(
@@ -255,6 +268,19 @@ def _voice_mode_label(mode: str) -> str:
         "text_only": "text only",
         "off": "off",
     }.get(str(mode or "off").strip().lower(), "off")
+
+
+def _current_response_action_token(ctx: AgentContext) -> str:
+    return str(
+        ctx.data.get(CTX_TG_LAST_RESPONSE_ACTION_TOKEN)
+        or ctx.data.get(CTX_TG_LAST_TEXT_RESPONSE_TOKEN)
+        or ""
+    ).strip()
+
+
+def _response_action_is_current(ctx: AgentContext, token: str) -> bool:
+    current = _current_response_action_token(ctx)
+    return bool(token and current and token == current)
 
 
 def _voice_mode_header(ctx: AgentContext) -> str:
@@ -1210,6 +1236,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
                 ctx.data.pop(CTX_TG_LAST_TEXT_RESPONSE, None)
                 ctx.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
+                ctx.data.pop(CTX_TG_LAST_RESPONSE_ACTION_TOKEN, None)
                 save_tmp_chat(ctx)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
@@ -1652,27 +1679,23 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
         if isinstance(a, str) and os.path.isfile(files.fix_dev_path(a))
     ]
 
-    typing_stop = _start_typing(instance.bot.token, message.chat.id)
-    _clear_progress_state(ctx)
-    await _send_initial_progress_status(ctx)
-    ctx.data[CTX_TG_TYPING_STOP] = typing_stop
-    ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
-    ctx.data[CTX_TG_REPLY_TO] = None
-    ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
-
-    user_msg = ctx.agent0.read_prompt(
-        "fw.telegram.user_message.md",
+    err = await _dispatch_telegram_user_turn(
+        ctx,
+        bot_token=instance.bot.token,
+        chat_id=message.chat.id,
         sender=sender,
         body=body,
-    )
-    msg_id = str(uuid.uuid4())
-    mq.log_user_message(ctx, user_msg, attachments, message_id=msg_id, source=" (telegram retry)")
-    ctx.communicate(UserMessage(
-        message=user_msg,
         attachments=attachments,
-        id=msg_id,
-    ))
-    save_tmp_chat(ctx)
+        source=" (telegram retry)",
+        busy_message="Agent is still working — use /stop first, then /retry.",
+    )
+    if err:
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            err,
+            parse_mode=None,
+        )
 
 
 async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -2339,6 +2362,82 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             )
             return
 
+        if kind == "ra":
+            ctx_id = _mapped_context_id(bot_name, user.id, chat_id)
+            if not ctx_id:
+                await query.answer("Action is no longer available.")
+                return
+            context = AgentContext.get(ctx_id) or _load_persisted_context(
+                ctx_id,
+                bot_cfg,
+                expected_bot_name=bot_name,
+                expected_user_id=user.id,
+                expected_chat_id=chat_id,
+            )
+            if not context:
+                await query.answer("Action is no longer available.")
+                return
+            context.data[CTX_TG_BOT_CFG] = bot_cfg
+            action, _, action_token = payload.partition(":")
+            if not _response_action_is_current(context, action_token):
+                await query.answer("Action is no longer available.")
+                return
+            if action == "retry":
+                body = str(context.data.get(CTX_TG_LAST_USER_BODY) or "").strip()
+                if not body:
+                    await query.answer("Nothing to retry yet.")
+                    return
+                sender = str(context.data.get(CTX_TG_LAST_USER_SENDER) or _format_user(user))
+                stored = context.data.get(CTX_TG_LAST_USER_ATTACHMENTS) or []
+                attachments = [
+                    a for a in stored
+                    if isinstance(a, str) and os.path.isfile(files.fix_dev_path(a))
+                ]
+                err = await _dispatch_telegram_user_turn(
+                    context,
+                    bot_token=token,
+                    chat_id=chat_id,
+                    sender=sender,
+                    body=body,
+                    attachments=attachments,
+                    source=" (telegram retry action)",
+                    busy_message="Agent is still working — use /stop first, then retry again.",
+                )
+                await query.answer("Retrying" if not err else err)
+                return
+            if action == "continue":
+                err = await _dispatch_telegram_user_turn(
+                    context,
+                    bot_token=token,
+                    chat_id=chat_id,
+                    sender=_format_user(user),
+                    body="Continue from here.",
+                    attachments=[],
+                    source=" (telegram continue action)",
+                    busy_message="Agent is still working — use /stop first, then continue again.",
+                )
+                await query.answer("Continuing" if not err else err)
+                return
+            if action == "new_session":
+                ok, reply, _new_ctx = await _start_new_session_for_user(
+                    bot_name,
+                    bot_cfg,
+                    user.id,
+                    user.username,
+                    chat_id,
+                    getattr(query.message.chat, "type", None),
+                )
+                await query.answer("Started" if ok else "Failed")
+                await _send_with_temp_bot(
+                    token,
+                    chat_id,
+                    reply,
+                    parse_mode=None,
+                )
+                return
+            await query.answer("Unknown option.")
+            return
+
         context = await _get_or_create_context_from_user(
             bot_name, bot_cfg, user.id, user.username, chat_id,
         )
@@ -2603,6 +2702,59 @@ async def _get_or_create_context_from_user(
             return None
 
 # Message content extraction
+
+
+async def _dispatch_telegram_user_turn(
+    ctx: AgentContext,
+    *,
+    bot_token: str,
+    chat_id: int,
+    sender: str,
+    body: str,
+    attachments: list[str] | None,
+    source: str,
+    busy_message: str = "Agent is still working. Use /stop first.",
+) -> str | None:
+    if ctx.is_running():
+        return busy_message
+
+    typing_stop = _start_typing(bot_token, chat_id)
+    _clear_progress_state(ctx)
+    await _send_initial_progress_status(ctx)
+    ctx.data[CTX_TG_TYPING_STOP] = typing_stop
+    ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
+    ctx.data[CTX_TG_REPLY_TO] = None
+    ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
+
+    clean_body = str(body or "").strip()
+    clean_sender = str(sender or "").strip()
+    clean_attachments = list(attachments or [])
+
+    user_msg = ctx.agent0.read_prompt(
+        "fw.telegram.user_message.md",
+        sender=clean_sender,
+        body=clean_body,
+    )
+    ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
+    ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
+    ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
+
+    msg_id = str(uuid.uuid4())
+    mq.log_user_message(
+        ctx,
+        user_msg,
+        clean_attachments,
+        message_id=msg_id,
+        source=source,
+    )
+    ctx.communicate(UserMessage(
+        message=user_msg,
+        attachments=clean_attachments,
+        id=msg_id,
+    ))
+    save_tmp_chat(ctx)
+    return None
+
 
 def _truncate_preview(text: str, limit: int = 280) -> str:
     value = re.sub(r"\s+", " ", str(text or "")).strip()
@@ -4020,14 +4172,70 @@ async def send_telegram_reply(
 
             context.data[CTX_TG_LAST_TEXT_RESPONSE] = logical_text_body
             response_token = ""
-            if logical_text_body:
+            has_answer_payload = bool(logical_text_body or outbound_items or (want_voice and tts_raw and tts_on))
+            if has_answer_payload:
                 response_token = uuid.uuid4().hex[:12]
+                context.data[CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = response_token
+            else:
+                context.data.pop(CTX_TG_LAST_RESPONSE_ACTION_TOKEN, None)
+            if logical_text_body and response_token:
                 context.data[CTX_TG_LAST_TEXT_RESPONSE_TOKEN] = response_token
             else:
                 context.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
 
-            final_keyboard = _append_inline_keyboard(keyboard, None)
+            base_keyboard = _append_inline_keyboard(keyboard, None)
             reply_keyboard = None
+            base_planned_items, base_text_body, _base_media_reply_markup, base_response_text_in_caption = _plan_outbound_delivery(
+                outbound_items,
+                logical_text_body,
+                base_keyboard,
+            )
+            base_should_send_text_with_voice = bool(base_text_body) and (
+                base_keyboard is not None
+                or also
+                or base_text_body != logical_text_body
+            )
+            base_response_text_visible = bool(base_response_text_in_caption) or bool(
+                logical_text_body
+                and base_text_body == logical_text_body
+                and base_should_send_text_with_voice
+            )
+            want_show_text_button = bool(
+                logical_text_body
+                and want_voice
+                and not base_response_text_visible
+                and quick_actions.get("enabled", True)
+                and quick_actions.get("show_text", True)
+            )
+            hidden_voice_action_host = bool(
+                response_token
+                and want_voice
+                and logical_text_body
+                and not base_response_text_visible
+            )
+            delivery_can_host_actions = bool(
+                response_token
+                and (
+                    logical_text_body
+                    or len(base_planned_items) <= 1
+                    or base_keyboard is not None
+                )
+            )
+            response_action_rows = None
+            if response_token and hidden_voice_action_host:
+                voice_buttons = _response_action_keyboard(
+                    response_token,
+                    include_continue=bool(logical_text_body),
+                    include_show_text=want_show_text_button,
+                )
+            else:
+                voice_buttons = None
+                if delivery_can_host_actions:
+                    response_action_rows = _response_action_keyboard(
+                        response_token,
+                        include_continue=bool(logical_text_body),
+                    )
+            final_keyboard = _append_inline_keyboard(base_keyboard, response_action_rows)
             planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(
                 outbound_items,
                 logical_text_body,
@@ -4042,18 +4250,6 @@ async def send_telegram_reply(
                 logical_text_body
                 and text_body == logical_text_body
                 and should_send_text_with_voice
-            )
-            want_show_text_button = bool(
-                logical_text_body
-                and want_voice
-                and not response_text_visible
-                and quick_actions.get("enabled", True)
-                and quick_actions.get("show_text", True)
-            )
-            voice_buttons = (
-                _show_text_quick_action_keyboard(response_token)
-                if want_show_text_button
-                else None
             )
 
             if planned_items:
