@@ -13,8 +13,6 @@ from aiogram.types import (
     InputMediaDocument,
     InputMediaPhoto,
     InputMediaVideo,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
 )
 
 from helpers.errors import format_error
@@ -274,24 +272,6 @@ def build_inline_keyboard(
                 ))
         rows.append(row_buttons)
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def build_reply_keyboard(
-    buttons: list[list[str]],
-    *,
-    placeholder: str = "Quick actions",
-) -> ReplyKeyboardMarkup:
-    """Build a compact persistent reply keyboard."""
-    rows = []
-    for row in buttons:
-        rows.append([KeyboardButton(text=str(btn)) for btn in row])
-    return ReplyKeyboardMarkup(
-        keyboard=rows,
-        resize_keyboard=True,
-        is_persistent=True,
-        one_time_keyboard=False,
-        input_field_placeholder=placeholder or None,
-    )
 
 
 async def send_text_with_keyboard(

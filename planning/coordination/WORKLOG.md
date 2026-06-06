@@ -619,7 +619,6 @@
 ## 2026-06-05 – Auto – Telegram reply keyboard & media delivery polish
 
 - Done:
-  - Reply keyboard bleibt bei Slash-Commands und Inline-Picker-Antworten sichtbar (`_reply_keyboard_for_chat`).
   - Outbound-Planung für Captions, Inline-Keyboards und Albums (`_plan_outbound_delivery`).
   - `send_voice` unterstützt `reply_markup` für Voice-only mit Reply-Keyboard.
   - Agent-Prompt für Attachments, Captions und Keyboard-Muster erweitert.

@@ -55,10 +55,6 @@ export const store = createStore("telegramConfig", {
       default_project: "",
       agent_instructions: "",
       attachment_max_age_hours: 0,
-      reply_keyboard: {
-        enabled: false,
-        placeholder: "Quick actions",
-      },
       telegram_detail_level: "info",
       progress: {
         edit_throttle_ms: 200,
@@ -119,10 +115,6 @@ export const store = createStore("telegramConfig", {
     bot.progress = { ...d, ...(bot.progress || {}) };
   },
 
-  ensureReplyKeyboard(bot) {
-    const d = this.defaultBot().reply_keyboard;
-    bot.reply_keyboard = { ...d, ...(bot.reply_keyboard || {}) };
-  },
 
   addBot(config) {
     if (!config.bots) config.bots = [];
@@ -130,7 +122,6 @@ export const store = createStore("telegramConfig", {
     bot.name = "bot_" + (config.bots.length + 1);
     this.ensureProgress(bot);
     this.ensureSpeech(bot);
-    this.ensureReplyKeyboard(bot);
     config.bots.push(bot);
     this.expandedIdx = config.bots.length - 1;
   },

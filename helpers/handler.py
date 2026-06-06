@@ -188,44 +188,6 @@ def _append_inline_keyboard(
     return rows or None
 
 
-_REPLY_KEYBOARD_ROWS = [
-    ["🎙 Voice", "📝 Text", "🧠 Detail"],
-    ["⛔ Stop", "📂 Session"],
-]
-
-
-def _reply_keyboard_settings(bot_cfg: dict) -> dict:
-    cfg = (bot_cfg or {}).get("reply_keyboard") or {}
-    if not isinstance(cfg, dict):
-        return {"enabled": False, "placeholder": "Quick actions"}
-    return {
-        "enabled": bool(cfg.get("enabled", False)),
-        "placeholder": str(cfg.get("placeholder") or "Quick actions"),
-    }
-
-
-def _reply_keyboard_enabled(bot_cfg: dict, chat_type: object) -> bool:
-    chat_type_str = str(chat_type or "").strip().lower()
-    return bool(
-        chat_type_str == "private"
-        and _reply_keyboard_settings(bot_cfg).get("enabled", False)
-    )
-
-
-def _build_reply_keyboard(bot_cfg: dict, chat_type: object):
-    if not _reply_keyboard_enabled(bot_cfg, chat_type):
-        return None
-    settings = _reply_keyboard_settings(bot_cfg)
-    return tc.build_reply_keyboard(
-        _REPLY_KEYBOARD_ROWS,
-        placeholder=settings["placeholder"],
-    )
-
-
-def _reply_keyboard_for_chat(bot_cfg: dict, chat) -> object | None:
-    return _build_reply_keyboard(bot_cfg, getattr(chat, "type", None) if chat else None)
-
-
 def _voice_conversation_mode(ctx: AgentContext) -> str:
     return str(ctx.data.get(CTX_TG_VOICE_CONVERSATION_MODE, "off") or "off").strip().lower()
 
@@ -1148,7 +1110,6 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
     instance = get_bot(bot_name)
     if not instance:
         return
-    reply_markup = _reply_keyboard_for_chat(bot_cfg, message.chat)
 
     await _send_with_temp_bot(
         instance.bot.token, message.chat.id,
@@ -1199,8 +1160,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     instance = get_bot(bot_name)
     if instance:
-        reply_markup = _reply_keyboard_for_chat(bot_cfg, message.chat)
-        await _send_with_temp_bot(
+            await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Chat cleared. Send a new message to start fresh.",
             parse_mode=None,
@@ -1242,7 +1202,6 @@ async def handle_newchat(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
     )
 
 
@@ -1259,7 +1218,6 @@ async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         format_help_text(),
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1300,7 +1258,6 @@ async def handle_voice(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1337,7 +1294,6 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1381,7 +1337,6 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1517,7 +1472,6 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1550,7 +1504,6 @@ async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1571,8 +1524,7 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Agent is still working — use /stop first, then /retry.",
             parse_mode=None,
-            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
-        )
+            )
         return
 
     body = str(ctx.data.get(CTX_TG_LAST_USER_BODY) or "").strip()
@@ -1581,8 +1533,7 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Nothing to retry yet — send a message first.",
             parse_mode=None,
-            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
-        )
+            )
         return
 
     sender = str(ctx.data.get(CTX_TG_LAST_USER_SENDER) or _format_user(user))
@@ -1630,16 +1581,14 @@ async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
             message.chat.id,
             "No active session.",
             parse_mode=None,
-            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
-        )
+            )
         return
     if ctx.is_running():
         await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Agent is still working — use /stop first, then /undo.",
             parse_mode=None,
-            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
-        )
+            )
         return
 
     removed = False
@@ -1667,7 +1616,6 @@ async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
     )
 
 
@@ -1686,8 +1634,7 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
             message.chat.id,
             "No active session.",
             parse_mode=None,
-            reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
-        )
+            )
         return
     ctx.kill_process()
     save_tmp_chat(ctx)
@@ -1696,7 +1643,6 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         "Stopped the running task (if any).",
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1717,7 +1663,6 @@ async def handle_pause(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         "Agent paused. Use /resume to continue.",
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1735,8 +1680,7 @@ async def handle_resume(message: TgMessage, bot_name: str, bot_cfg: dict):
             message.chat.id,
             "No active session.",
             parse_mode=None,
-            reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
-        )
+            )
         return
     ctx.paused = False
     save_tmp_chat(ctx)
@@ -1745,7 +1689,6 @@ async def handle_resume(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         "Agent resumed.",
         parse_mode=None,
-        reply_markup=_build_reply_keyboard(bot_cfg, getattr(message.chat, "type", None)),
     )
 
 
@@ -1794,7 +1737,6 @@ async def handle_project(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
-        reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
     )
 
 
@@ -1997,32 +1939,6 @@ async def handle_model(message: TgMessage, bot_name: str, bot_cfg: dict):
     await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
 
 
-async def _handle_reply_keyboard_action(
-    message: TgMessage,
-    bot_name: str,
-    bot_cfg: dict,
-) -> bool:
-    if not _reply_keyboard_enabled(bot_cfg, getattr(message.chat, "type", None)):
-        return False
-    text = (message.text or "").strip()
-    if text == "🎙 Voice":
-        await handle_voice(message, bot_name, bot_cfg)
-        return True
-    if text == "📝 Text":
-        await handle_optimize_output(message, bot_name, bot_cfg)
-        return True
-    if text == "🧠 Detail":
-        await handle_detail(message, bot_name, bot_cfg)
-        return True
-    if text == "⛔ Stop":
-        await handle_stop(message, bot_name, bot_cfg)
-        return True
-    if text == "📂 Session":
-        await handle_session(message, bot_name, bot_cfg)
-        return True
-    return False
-
-
 async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle incoming user message."""
     user = message.from_user
@@ -2043,9 +1959,6 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     instance = get_bot(bot_name)
     if not instance:
-        return
-
-    if await _handle_reply_keyboard_action(message, bot_name, bot_cfg):
         return
 
     # The session picker's Search button arms a one-shot capture: the next plain
@@ -2076,8 +1989,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Failed to create chat session.",
             parse_mode=None,
-            reply_markup=_reply_keyboard_for_chat(bot_cfg, message.chat),
-        )
+            )
         return
 
     # New user turn: clear stale progress message state
@@ -2186,7 +2098,6 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
         token = instance.bot.token
         chat_id = query.message.chat.id
-        reply_markup = _reply_keyboard_for_chat(bot_cfg, query.message.chat)
 
         if kind in {"s", "ss"}:
             ok, reply, target_ctx = _activate_existing_session(
@@ -2210,12 +2121,12 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     )
                 else:
                     await _send_with_temp_bot(
-                        token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                        token, chat_id, reply, parse_mode=None
                     )
             else:
                 await query.answer("Failed")
                 await _send_with_temp_bot(
-                    token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                    token, chat_id, reply, parse_mode=None
                 )
             return
 
@@ -2315,7 +2226,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             )
             await query.answer("Started" if ok else "Failed")
             await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                token, chat_id, reply, parse_mode=None
             )
             return
 
@@ -2334,7 +2245,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             await query.answer("Updated")
             await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                token, chat_id, reply, parse_mode=None
             )
             return
 
@@ -2346,7 +2257,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             await query.answer("OK")
             await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                token, chat_id, reply, parse_mode=None
             )
             return
 
@@ -2398,7 +2309,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = f"Model preset set to: {pname}"
             await query.answer("OK")
             await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                token, chat_id, reply, parse_mode=None
             )
             return
 
@@ -2410,7 +2321,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             await query.answer("OK")
             await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                token, chat_id, reply, parse_mode=None
             )
             return
 
@@ -2433,7 +2344,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 reply = f"Failed to switch project: {format_error(e)}"
             await query.answer("OK")
             await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None, reply_markup=reply_markup
+                token, chat_id, reply, parse_mode=None
             )
             return
 
@@ -3881,7 +3792,7 @@ async def send_telegram_inline_response(
     chat_type = context.data.get(CTX_TG_CHAT_TYPE)
     reply_to = context.data.get(CTX_TG_REPLY_TO)
     outbound_items = _normalize_outbound_items(attachments, telegram_items)
-    reply_keyboard = None if keyboard else _build_reply_keyboard(bot_cfg, chat_type)
+    reply_keyboard = None
     planned_items, text_body, media_reply_markup, _response_text_in_caption = _plan_outbound_delivery(
         outbound_items,
         response_text,
@@ -4007,7 +3918,7 @@ async def send_telegram_reply(
                 context.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
 
             final_keyboard = _append_inline_keyboard(keyboard, None)
-            reply_keyboard = None if final_keyboard else _build_reply_keyboard(bot_cfg, chat_type)
+            reply_keyboard = None
             planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(
                 outbound_items,
                 logical_text_body,

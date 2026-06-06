@@ -165,7 +165,6 @@ def _install_stub_modules():
     sys.modules["usr.plugins.telegram_integration_voice.helpers"] = telegram_helpers_pkg
 
     tc = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.telegram_client")
-    tc.build_reply_keyboard = lambda *args, **kwargs: {"reply_keyboard": True}
     tc.build_inline_keyboard = lambda *args, **kwargs: {"inline_keyboard": True}
     tc.is_animation_file = lambda path: str(path).lower().endswith(".gif")
     tc.is_image_file = lambda path: str(path).lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp"))
@@ -253,19 +252,6 @@ class TelegramMediaRoutingTests(unittest.TestCase):
             [[item["type"] for item in group] for group in groups],
             [["photo", "video"], ["animation"], ["document", "document"], ["photo"]],
         )
-
-    def test_build_reply_keyboard_is_private_only(self):
-        handler = self.handler
-
-        with mock.patch.object(handler.tc, "build_reply_keyboard", return_value={"ok": True}) as build_keyboard:
-            self.assertEqual(
-                handler._build_reply_keyboard({"reply_keyboard": {"enabled": True}}, "private"),
-                {"ok": True},
-            )
-            self.assertIsNone(handler._build_reply_keyboard({"reply_keyboard": {"enabled": True}}, "group"))
-            self.assertIsNone(handler._build_reply_keyboard({}, "private"))
-
-        build_keyboard.assert_called_once()
 
     def test_plan_outbound_delivery_uses_caption_and_inline_keyboard_for_single_media_item(self):
         handler = self.handler

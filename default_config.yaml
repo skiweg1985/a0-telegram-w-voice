@@ -15,10 +15,6 @@ bots: []
 #   default_project: ""          # Fallback project if user not in user_projects
 #   attachment_max_age_hours: 0  # Hours to keep downloaded attachments. 0 = keep forever.
 #   agent_instructions: ""       # Extra instructions for the agent in Telegram chats
-#   reply_keyboard:
-#     enabled: false             # Optional persistent DM control pad with Voice/Text/Detail/Stop/Session shortcuts
-#     placeholder: "Quick actions"  # (YAML only)
-#
 #   # The WebUI exposes the common settings below. Keys marked "(YAML only)" are not
 #   # shown in the WebUI but are read from this file and preserved across UI edits.
 #
