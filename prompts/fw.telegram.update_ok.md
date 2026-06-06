@@ -1,1 +1,1 @@
-telegram update sent, continue working
+update delivered. keep going

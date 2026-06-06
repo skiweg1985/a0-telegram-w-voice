@@ -272,6 +272,14 @@ def _install_stub_modules():
     sys.modules[constants_spec.name] = constants_module
     constants_spec.loader.exec_module(constants_module)
 
+    status_copy_spec = importlib.util.spec_from_file_location(
+        "usr.plugins.telegram_integration_voice.helpers.status_copy",
+        REPO_ROOT / "helpers" / "status_copy.py",
+    )
+    status_copy_module = importlib.util.module_from_spec(status_copy_spec)
+    sys.modules[status_copy_spec.name] = status_copy_module
+    status_copy_spec.loader.exec_module(status_copy_module)
+
 
 
 def _load_handler_module():
@@ -452,6 +460,15 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertIn("⏳ Working on it…", html_text)
         self.assertNotIn("In progress", html_text)
+
+    def test_render_progress_status_html_uses_done_copy_for_completed_state(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+
+        html_text = handler._render_progress_status_html(ctx, {}, done=True)
+
+        self.assertIn("✅ Done", html_text)
+        self.assertNotIn("✅ Ready", html_text)
 
     def test_render_progress_status_html_shows_gen_phase_in_header(self):
         handler = self.handler
@@ -942,6 +959,30 @@ class TelegramSessionPickerTests(unittest.TestCase):
             )
             self.assertNotIn(handler.CTX_TG_PROGRESS_PHASE, ctx.data)
 
+    def test_send_telegram_reply_voice_only_edits_progress_with_voice_completion_copy(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "edit"})
+        ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE] = True
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="auto",
+            tts_enabled=True,
+            also_send_text=False,
+        ):
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
+            self.assertIsNone(result)
+            handler.tc.send_voice.assert_awaited_once()
+            handler.tc.send_text.assert_not_awaited()
+            handler.tc.send_text_with_keyboard.assert_not_awaited()
+            self.assertGreaterEqual(handler.tc.edit_text.await_count, 1)
+            self.assertEqual(
+                handler.tc.edit_text.await_args_list[-1].args[3],
+                "🎙 Voice reply sent",
+            )
+
     def test_send_telegram_reply_auto_voice_with_visible_text_skips_show_text_button(self):
         handler = self.handler
         ctx = self._reply_context()
@@ -1079,6 +1120,28 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertEqual(handler.tc.send_photo.await_args.kwargs["caption"], "Here is the preview")
             handler.tc.send_text.assert_not_awaited()
             self.assertEqual(handler.tc.send_photo.await_args.kwargs["reply_markup"], {"inline_keyboard": True})
+
+    def test_send_telegram_reply_attachment_only_edits_progress_with_artifact_completion_copy(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "edit"})
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(handler, edit_ok=True):
+            result = asyncio.run(
+                handler.send_telegram_reply(
+                    ctx,
+                    "",
+                    attachments=["/tmp/a.jpg", "/tmp/b.png"],
+                )
+            )
+            self.assertIsNone(result)
+            handler.tc.send_media_group.assert_awaited_once()
+            handler.tc.send_text.assert_not_awaited()
+            handler.tc.edit_text.assert_awaited_once()
+            self.assertEqual(
+                handler.tc.edit_text.await_args.args[3],
+                "📎 Sent 2 attachments",
+            )
 
     def test_send_telegram_reply_single_photo_with_keyboard_uses_media_as_the_keyboard_carrier(self):
         handler = self.handler

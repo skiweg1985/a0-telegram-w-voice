@@ -1,1 +1,1 @@
-telegram update failed: {{error}}
+update could not be delivered: {{error}}

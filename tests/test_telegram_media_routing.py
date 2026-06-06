@@ -198,6 +198,14 @@ def _install_stub_modules():
     sys.modules[constants_spec.name] = constants_module
     constants_spec.loader.exec_module(constants_module)
 
+    status_copy_spec = importlib.util.spec_from_file_location(
+        "usr.plugins.telegram_integration_voice.helpers.status_copy",
+        REPO_ROOT / "helpers" / "status_copy.py",
+    )
+    status_copy_module = importlib.util.module_from_spec(status_copy_spec)
+    sys.modules[status_copy_spec.name] = status_copy_module
+    status_copy_spec.loader.exec_module(status_copy_module)
+
 
 def _load_handler_module():
     _install_stub_modules()

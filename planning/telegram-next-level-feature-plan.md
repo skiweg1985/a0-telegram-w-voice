@@ -2,6 +2,12 @@
 
 > Focus branch: `codex/upgrade`
 
+## Status-Legende
+
+- `[x]` fertig
+- `[-]` teilweise umgesetzt
+- `[ ]` offen
+
 ## Ausgangslage
 
 Der aktuelle Stand hat bereits mehrere starke UX-Bausteine:
@@ -29,22 +35,26 @@ Wichtig fuer die Priorisierung: `Session umbenennen` ist bereits umgesetzt und s
 
 ### Release 1: Navigation & Context
 
-- Session UX Layer
-- Session-Header / Memory-Hinweise
-- Bessere System-/Status-Messages
+- `[-]` Session UX Layer
+- `[-]` Session-Header / Memory-Hinweise
+- `[x]` Bessere System-/Status-Messages
 
 ### Release 2: Response Interaction
 
-- Inline Action Bar pro Antwort
-- Antwort-Detailgrad pro Antwort
-- Antworten transformierbar machen
+- `[x]` Inline Action Bar pro Antwort
+- `[ ]` Antwort-Detailgrad pro Antwort
+- `[ ]` Antworten transformierbar machen
 
 ### Release 3: Output Quality & Operational Flows
 
-- Smarter Artifact Presentation
-- Message-to-Action Flows
+- `[x]` Smarter Artifact Presentation
+- `[-]` Message-to-Action Flows
 
 ## Feature 1: Session UX Layer
+
+**Status**
+
+- `[-]` Teilweise umgesetzt
 
 **Ziel**
 
@@ -58,10 +68,10 @@ Sessions sollen sich wie echte Arbeitskontexte anfuehlen und schneller wiederauf
 
 **MVP**
 
-- `continue last session`
-- `recent sessions` im Picker sichtbar machen
-- `pinned sessions`
-- `1-Zeilen-Vorschau` pro Session
+- `[ ]` `continue last session`
+- `[ ]` `recent sessions` im Picker sichtbar machen
+- `[ ]` `pinned sessions`
+- `[ ]` `1-Zeilen-Vorschau` pro Session
 
 **V2**
 
@@ -91,7 +101,17 @@ Sessions sollen sich wie echte Arbeitskontexte anfuehlen und schneller wiederauf
 - Angeheftete Sessions bleiben stabil sichtbar
 - Jede Session zeigt eine kurze, hilfreiche Vorschau
 
+**Stand heute**
+
+- `[x]` Session-Picker mit Pagination, Suche und Detailansicht ist vorhanden
+- `[x]` Session-Wechsel und neue Session sind per Inline-Buttons erreichbar
+- `[ ]` Die geplanten Metadaten `last_used_at`, `pinned`, `preview_text` fehlen noch
+
 ## Feature 2: Inline Action Bar pro Antwort
+
+**Status**
+
+- `[x]` Fertig
 
 **Ziel**
 
@@ -99,16 +119,16 @@ Aktionen sollen direkt dort auftauchen, wo die Entscheidung faellt: an der konkr
 
 **MVP**
 
-- `Retry`
-- `Continue`
-- `New session`
-- `Show text`
+- `[x]` `Retry`
+- `[x]` `Continue`
+- `[x]` `New session`
+- `[x]` `Show text`
 
 **V2**
 
-- `Pin session`
-- `Summarize`
-- `Read aloud`
+- `[ ]` `Pin session`
+- `[ ]` `Summarize`
+- `[ ]` `Read aloud`
 
 **Technischer Schnitt**
 
@@ -131,7 +151,16 @@ Aktionen sollen direkt dort auftauchen, wo die Entscheidung faellt: an der konkr
 - Antworten zeigen nur kontextrelevante Aktionen
 - Haeufige Folgewuensche funktionieren ohne neue freie Texteingabe
 
+**Stand heute**
+
+- `[x]` Antwortbezogene Inline-Buttons werden direkt an Text- oder Voice-Antworten gehaengt
+- `[x]` Antwort-Tokens sichern, dass Folgeaktionen deterministisch auf die letzte Antwort zeigen
+
 ## Feature 3: Smarter Artifact Presentation
+
+**Status**
+
+- `[x]` MVP fertig
 
 **Ziel**
 
@@ -139,15 +168,15 @@ Artefakte sollen hochwertig, absichtsvoll und Telegram-nativ praesentiert werden
 
 **MVP**
 
-- bessere Entscheidung zwischen `photo` und `file`
-- Caption statt doppelter Textblase
-- saubere Kombination aus Text und Artefakt
+- `[x]` bessere Entscheidung zwischen `photo` und `file`
+- `[x]` Caption statt doppelter Textblase
+- `[x]` saubere Kombination aus Text und Artefakt
 
 **V2**
 
-- mehrere Bilder als Album
-- verbesserte Auswahl zwischen `photo`, `file`, `video`, `animation`, `voice`
-- kurze, sinnvolle Captions statt Redundanz
+- `[x]` mehrere Bilder als Album
+- `[-]` verbesserte Auswahl zwischen `photo`, `file`, `video`, `animation`, `voice`
+- `[-]` kurze, sinnvolle Captions statt Redundanz
 
 **Technischer Schnitt**
 
@@ -171,7 +200,16 @@ Artefakte sollen hochwertig, absichtsvoll und Telegram-nativ praesentiert werden
 - Mehrere Bilder koennen als Album gesendet werden
 - Die Wahl des Telegram-Formats wirkt fuer Nutzer nachvollziehbar und hochwertig
 
+**Stand heute**
+
+- `[x]` Medienrouting deckt Photo, Animation, Video, Video-Note, Dokument und strukturierte `telegram_items` ab
+- `[x]` Multi-Image-Antworten koennen als Media Group gesendet werden
+
 ## Feature 4: Message-to-Action Flows
+
+**Status**
+
+- `[-]` Teilweise umgesetzt
 
 **Ziel**
 
@@ -179,13 +217,13 @@ Antworten sollen direkt in den naechsten sinnvollen Schritt ueberfuehren.
 
 **MVP**
 
-- nach Code/Datei-Antwort: `Open session`, `Run again`, `Retry with changes`
-- nach Voice: `Show text`
+- `[ ]` nach Code/Datei-Antwort: `Open session`, `Run again`, `Retry with changes`
+- `[x]` nach Voice: `Show text`
 
 **V2**
 
-- nach Voice: `Re-speak shorter`
-- nach Medien: `Send as files`, `Send as album`
+- `[ ]` nach Voice: `Re-speak shorter`
+- `[ ]` nach Medien: `Send as files`, `Send as album`
 
 **Technischer Schnitt**
 
@@ -208,7 +246,16 @@ Antworten sollen direkt in den naechsten sinnvollen Schritt ueberfuehren.
 - Fuer definierte Antworttypen gibt es mindestens einen klaren Next Step
 - Nutzer koennen haeufige Folgeaktionen per Tap ausloesen
 
+**Stand heute**
+
+- `[x]` Voice-Antworten ohne sichtbare Textblase bieten `Show text`
+- `[-]` Allgemeine Folgeaktionen `Retry`, `Continue`, `New session` existieren bereits, sind aber noch nicht feingranular nach Antwortklasse gemappt
+
 ## Feature 5: Antwort-Detailgrad pro Antwort
+
+**Status**
+
+- `[ ]` Offen
 
 **Ziel**
 
@@ -247,14 +294,18 @@ Nutzer sollen die Tiefe einer Antwort situativ anpassen koennen, ohne globalen M
 
 ## Feature 6: Bessere System-/Status-Messages
 
+**Status**
+
+- `[x]` Fertig
+
 **Ziel**
 
 Systemmeldungen sollen kuerzer, klarer und produktartiger wirken.
 
 **MVP**
 
-- einheitliche Texte fuer `running`, `done`, `failed`, `voice processing`, `artifact sent`
-- redundante technische Texte reduzieren
+- `[x]` einheitliche Texte fuer `running`, `done`, `failed`, `voice processing`, `artifact sent`
+- `[x]` redundante technische Texte reduzieren
 
 **V2**
 
@@ -279,7 +330,16 @@ Systemmeldungen sollen kuerzer, klarer und produktartiger wirken.
 - Statusmeldungen sind konsistent formuliert
 - Help-artige oder debughafte Systemtexte werden sichtbar reduziert
 
+**Stand heute**
+
+- `[x]` Zentrale Status-Copy wurde in einen gemeinsamen Helper gezogen
+- `[x]` Progress-, Completion- und Failure-Texte nutzen denselben Copy-Layer
+
 ## Feature 7: Antworten transformierbar machen
+
+**Status**
+
+- `[ ]` Offen
 
 **Ziel**
 
@@ -318,15 +378,19 @@ Bestehende Antworten sollen weiterbearbeitet werden koennen, statt immer neu gef
 
 ## Feature 8: Session-Header / Memory-Hinweise
 
+**Status**
+
+- `[-]` Teilweise umgesetzt
+
 **Ziel**
 
 Der aktive Kontext soll im Chat jederzeit leicht erkennbar sein.
 
 **MVP**
 
-- aktive Session sichtbar machen
-- Voice/Text-Modus klarer kennzeichnen
-- Session-Wechsel kurz bestaetigen
+- `[-]` aktive Session sichtbar machen
+- `[x]` Voice/Text-Modus klarer kennzeichnen
+- `[x]` Session-Wechsel kurz bestaetigen
 
 **V2**
 
@@ -351,6 +415,12 @@ Der aktive Kontext soll im Chat jederzeit leicht erkennbar sein.
 
 - Nutzer sehen bei Session-Wechseln klar, welcher Kontext aktiv ist
 - Voice/Text-Modus ist ohne Nachdenken erkennbar
+
+**Stand heute**
+
+- `[x]` `/status` zeigt Session, Voice-Modus und Reply-Modus kompakt an
+- `[x]` Session-Wechsel antwortet mit einer bestaetigenden Statusmeldung
+- `[ ]` Ein staerkerer, dauerhafter Header-/Memory-Hinweis im laufenden Chat fehlt noch
 
 ## Empfohlener Start auf `codex/upgrade`
 

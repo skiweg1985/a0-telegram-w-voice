@@ -28,6 +28,7 @@ from usr.plugins.telegram_integration_voice.helpers import telegram_client as tc
 from usr.plugins.telegram_integration_voice.helpers import detail_status, speech
 from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
 from usr.plugins.telegram_integration_voice.helpers.command_registry import format_help_text
+from usr.plugins.telegram_integration_voice.helpers import status_copy
 from usr.plugins.telegram_integration_voice.helpers.constants import (
     PLUGIN_NAME,
     DOWNLOAD_FOLDER,
@@ -1497,11 +1498,7 @@ def _status_model_code(provider: str, name: str, esc) -> str:
 
 
 def _progress_phase_label(phase: str) -> str:
-    return {
-        "stt": "transcribing voice",
-        "gen": "drafting reply",
-        "tts": "creating voice reply",
-    }.get(str(phase or "").strip().lower(), "")
+    return status_copy.activity_label(phase)
 
 
 async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -3033,16 +3030,12 @@ def _progress_history_limit(bot_cfg: dict, level: str) -> int:
 
 
 def _progress_phase_title(phase: str) -> str:
-    return {
-        "stt": "🎤 Transcribing voice…",
-        "gen": "🤔 Drafting reply…",
-        "tts": "🔊 Creating voice reply…",
-    }.get(str(phase or "").strip().lower(), "⏳ Working on it…")
+    return status_copy.progress_title(phase)
 
 
 def _progress_status_title(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
     if done:
-        return "✅ Ready"
+        return status_copy.progress_title(done=True)
     phase = str(context.data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
     return _progress_phase_title(phase)
 
@@ -3094,7 +3087,7 @@ def _render_progress_status_html(context: AgentContext, bot_cfg: dict, *, done: 
         parts.extend(_progress_line_prefix(line) for line in lines)
     elif not done and level == "off":
         parts.append("")
-        parts.append("<i>Working on it…</i>")
+        parts.append(f"<i>{html.escape(status_copy.progress_hint())}</i>")
     preview_html = _render_live_response_preview_html(context, bot_cfg, done=done)
     if preview_html:
         parts.append("")
@@ -3442,6 +3435,10 @@ async def _cleanup_progress_message_after_final(
     reply_bot: Bot,
     context: AgentContext,
     bot_cfg: dict,
+    *,
+    sent_text: bool = False,
+    sent_voice: bool = False,
+    sent_artifact_count: int = 0,
 ):
     progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
     chat_id = context.data.get(CTX_TG_CHAT_ID)
@@ -3452,7 +3449,12 @@ async def _cleanup_progress_message_after_final(
     if mode == "delete":
         await tc.delete_message(reply_bot, int(chat_id), int(progress_message_id))
     elif mode == "edit":
-        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), "✅ Ready")
+        completion_text = status_copy.completion_title(
+            sent_text=sent_text,
+            sent_voice=sent_voice,
+            sent_artifact_count=sent_artifact_count,
+        )
+        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), completion_text)
 
 
 def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
@@ -4031,8 +4033,9 @@ async def _send_outbound_items(
     items: list[dict],
     reply_to: int | None,
     reply_markup=None,
-) -> None:
+) -> int:
     pending_reply_markup = reply_markup
+    sent_count = 0
 
     for group in _group_outbound_items(items):
         bucket = _outbound_album_bucket(group[0])
@@ -4046,6 +4049,7 @@ async def _send_outbound_items(
                         reply_to_message_id=reply_to,
                     )
                     if media_group_ids:
+                        sent_count += len(media_group_ids)
                         continue
                 for item in chunk:
                     msg_id = await _send_single_outbound_item(
@@ -4057,6 +4061,8 @@ async def _send_outbound_items(
                     )
                     if msg_id and pending_reply_markup is not None:
                         pending_reply_markup = None
+                    if msg_id:
+                        sent_count += 1
             continue
 
         msg_id = await _send_single_outbound_item(
@@ -4068,6 +4074,10 @@ async def _send_outbound_items(
         )
         if msg_id and pending_reply_markup is not None:
             pending_reply_markup = None
+        if msg_id:
+            sent_count += 1
+
+    return sent_count
 
 
 async def send_telegram_inline_response(
@@ -4297,13 +4307,15 @@ async def send_telegram_reply(
                 outbound_reply_markup = media_reply_markup
                 if outbound_reply_markup is None and not text_body:
                     outbound_reply_markup = reply_keyboard
-                await _send_outbound_items(
+                sent_artifact_count = await _send_outbound_items(
                     reply_bot,
                     chat_id,
                     planned_items,
                     reply_to,
                     reply_markup=outbound_reply_markup,
                 )
+            else:
+                sent_artifact_count = 0
 
             sent_voice = False
             voice_file: str | None = None
@@ -4390,7 +4402,14 @@ async def send_telegram_reply(
                     )
 
             if not progress_message_became_final:
-                await _cleanup_progress_message_after_final(reply_bot, context, bot_cfg)
+                await _cleanup_progress_message_after_final(
+                    reply_bot,
+                    context,
+                    bot_cfg,
+                    sent_text=should_send_text,
+                    sent_voice=sent_voice,
+                    sent_artifact_count=sent_artifact_count,
+                )
 
             _clear_progress_state(context)
 
