@@ -646,3 +646,30 @@
   - yes ([Unreleased] Changed)
 - Follow-ups:
   - none
+
+## 2026-06-06 – Auto – Telegram response transform quick actions
+
+- Done:
+  - Inline-Buttons **Shorter**, **More technical** und **Step by step** an Text-Antworten ergänzt.
+  - Callback-Handler dispatcht Transform als internen Follow-up-Turn auf Basis der gespeicherten letzten Antwort.
+  - Unit-Tests für Keyboard-Layout und Transform-Callbacks ergänzt.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: codex/upgrade
+  - PR: https://github.com/skiweg1985/a0-telegram-w-voice/pull/6
+- Files touched:
+  - helpers/handler.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest discover -s tests -p 'test_telegram_session_picker.py' -v` (52 passed)
+  - endpoints: none
+  - UI path: Telegram inline response action keyboard
+- Changelog updated:
+  - yes ([Unreleased] Added)
+- Follow-ups:
+  - none

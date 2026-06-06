@@ -14,6 +14,7 @@
 - New bot config keys: `telegram_detail_icons_enabled` (default true), `telegram_detail_tool_icons` (override map), `telegram_detail_max_body_chars` (debug JSON truncation limit, default 3200).
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
 - New Telegram progress config keys `live_response_preview_interval_ms` and `live_response_preview_buffer_threshold` to tune live-preview cadence and early flush behavior.
+- Response transform quick actions on text replies: **Shorter**, **More technical**, and **Step by step** rewrite the last assistant answer in place instead of continuing the task.
 
 ### Removed
 

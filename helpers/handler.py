@@ -233,12 +233,15 @@ def _response_action_keyboard(
     token: str,
     *,
     include_continue: bool,
+    include_transforms: bool,
     include_show_text: bool = False,
 ) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     rows: list[list[dict]] = []
     if include_show_text:
         rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
+    if include_transforms:
+        rows.extend(_response_transform_keyboard_rows(token))
     action_row = [{"text": "🔁 Retry", "callback_data": f"{p}ra|retry:{token}"}]
     if include_continue:
         action_row.append({"text": "✏️ Continue", "callback_data": f"{p}ra|continue:{token}"})
@@ -282,6 +285,72 @@ def _current_response_action_token(ctx: AgentContext) -> str:
 def _response_action_is_current(ctx: AgentContext, token: str) -> bool:
     current = _current_response_action_token(ctx)
     return bool(token and current and token == current)
+
+
+_RESPONSE_TRANSFORM_SPECS: dict[str, dict[str, str]] = {
+    "shorter": {
+        "button": "✂️ Shorter",
+        "ack": "Shortening",
+        "instruction": (
+            "Rewrite the assistant's last answer into a shorter version. "
+            "Keep the key facts, decisions, and caveats."
+        ),
+    },
+    "technical": {
+        "button": "🛠 More technical",
+        "ack": "Reframing",
+        "instruction": (
+            "Rewrite the assistant's last answer for a more technical audience. "
+            "Use precise terminology and deeper implementation detail, but stay on the same task."
+        ),
+    },
+    "step_by_step": {
+        "button": "🪜 Step by step",
+        "ack": "Expanding",
+        "instruction": (
+            "Rewrite the assistant's last answer as a step-by-step explanation. "
+            "Make the sequence explicit and easy to follow."
+        ),
+    },
+}
+
+
+def _response_transform_keyboard_rows(token: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    buttons = []
+    for action, spec in _RESPONSE_TRANSFORM_SPECS.items():
+        buttons.append({
+            "text": spec["button"],
+            "callback_data": f"{p}ra|{action}:{token}",
+        })
+    return [buttons] if buttons else []
+
+
+def _response_transform_spec(action: str) -> dict[str, str] | None:
+    return _RESPONSE_TRANSFORM_SPECS.get(str(action or "").strip().lower())
+
+
+def _build_response_transform_body(action: str, answer_text: str) -> str:
+    spec = _response_transform_spec(action)
+    if not spec:
+        raise ValueError(f"Unknown response transform: {action}")
+
+    source_answer = str(answer_text or "").strip()
+    if not source_answer:
+        raise ValueError("Missing source answer text")
+
+    return (
+        "Transform your last answer using the instruction below.\n\n"
+        f"Instruction: {spec['instruction']}\n\n"
+        "Important:\n"
+        "- Rewrite the existing answer instead of continuing the task.\n"
+        "- Keep the same scope and constraints unless the source answer already said otherwise.\n"
+        "- Return only the transformed answer.\n\n"
+        "Answer to transform:\n"
+        "<assistant_answer>\n"
+        f"{source_answer}\n"
+        "</assistant_answer>"
+    )
 
 
 def _voice_mode_header(ctx: AgentContext) -> str:
@@ -2435,6 +2504,29 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 )
                 await query.answer("Continuing" if not err else err)
                 return
+            transform_spec = _response_transform_spec(action)
+            if transform_spec:
+                source_answer = str(context.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+                if not source_answer:
+                    await query.answer("Answer is no longer available.")
+                    return
+                try:
+                    body = _build_response_transform_body(action, source_answer)
+                except ValueError:
+                    await query.answer("Unknown option.")
+                    return
+                err = await _dispatch_telegram_user_turn(
+                    context,
+                    bot_token=token,
+                    chat_id=chat_id,
+                    sender=_format_user(user),
+                    body=body,
+                    attachments=[],
+                    source=f" (telegram transform action: {action})",
+                    busy_message="Agent is still working — use /stop first, then try again.",
+                )
+                await query.answer(transform_spec["ack"] if not err else err)
+                return
             if action == "new_session":
                 ok, reply, _new_ctx = await _start_new_session_for_user(
                     bot_name,
@@ -4277,6 +4369,7 @@ async def send_telegram_reply(
                 voice_buttons = _response_action_keyboard(
                     response_token,
                     include_continue=bool(logical_text_body),
+                    include_transforms=bool(logical_text_body),
                     include_show_text=want_show_text_button,
                 )
             else:
@@ -4285,6 +4378,7 @@ async def send_telegram_reply(
                     response_action_rows = _response_action_keyboard(
                         response_token,
                         include_continue=bool(logical_text_body),
+                        include_transforms=bool(logical_text_body),
                     )
             final_keyboard = _append_inline_keyboard(base_keyboard, response_action_rows)
             planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(

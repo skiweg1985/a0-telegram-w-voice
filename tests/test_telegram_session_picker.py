@@ -878,6 +878,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertEqual(edit_args[3], "Final answer")
             self.assertEqual(
                 [btn["text"] for btn in edit_args[4][0]],
+                ["✂️ Shorter", "🛠 More technical", "🪜 Step by step"],
+            )
+            self.assertEqual(
+                [btn["text"] for btn in edit_args[4][1]],
                 ["🔁 Retry", "✏️ Continue", "➕ New session"],
             )
             handler.tc.send_text.assert_not_awaited()
@@ -934,6 +938,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
             )
             self.assertEqual(
                 [btn["text"] for btn in voice_kwargs["buttons"][1]],
+                ["✂️ Shorter", "🛠 More technical", "🪜 Step by step"],
+            )
+            self.assertEqual(
+                [btn["text"] for btn in voice_kwargs["buttons"][2]],
                 ["🔁 Retry", "✏️ Continue", "➕ New session"],
             )
 
@@ -1024,6 +1032,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
             handler.tc.send_text.assert_not_awaited()
             self.assertEqual(
                 [btn["text"] for btn in handler.tc.send_voice.await_args.kwargs["buttons"][1]],
+                ["✂️ Shorter", "🛠 More technical", "🪜 Step by step"],
+            )
+            self.assertEqual(
+                [btn["text"] for btn in handler.tc.send_voice.await_args.kwargs["buttons"][2]],
                 ["🔁 Retry", "✏️ Continue", "➕ New session"],
             )
 
@@ -1219,6 +1231,71 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertEqual(communicated[0].message, "Benji (@benji)|Continue from here.")
         log_user_message.assert_called_once()
         save_tmp_chat.assert_called()
+
+    def test_handle_callback_query_response_transform_dispatches_follow_up_turn(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "resp123"
+        ctx.data[handler.CTX_TG_LAST_TEXT_RESPONSE] = "Use the queue worker and retry policy."
+        ctx.data[handler.CTX_TG_CHAT_ID] = 99
+        ctx.data[handler.CTX_TG_BOT] = "mainbot"
+        ctx.data[handler.CTX_TG_BOT_CFG] = {}
+        ctx.agent0 = types.SimpleNamespace(
+            read_prompt=lambda template, sender, body: f"{sender}|{body}",
+            history=types.SimpleNamespace(compress=lambda: False),
+        )
+        communicated = []
+        ctx.communicate = lambda msg: communicated.append(msg)
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ra|shorter:resp123",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock(return_value=None)), \
+             mock.patch.object(handler, "_start_typing", return_value=object()), \
+             mock.patch.object(handler.mq, "log_user_message") as log_user_message, \
+             mock.patch.object(handler, "save_tmp_chat") as save_tmp_chat:
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        expected_body = handler._build_response_transform_body(
+            "shorter",
+            "Use the queue worker and retry policy.",
+        )
+        query.answer.assert_awaited_once_with("Shortening")
+        self.assertEqual(ctx.data[handler.CTX_TG_LAST_USER_BODY], expected_body)
+        self.assertEqual(ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE], False)
+        self.assertEqual(ctx.data[handler.CTX_TG_REPLY_TO], None)
+        self.assertEqual(len(communicated), 1)
+        self.assertEqual(communicated[0].message, f"Benji (@benji)|{expected_body}")
+        log_user_message.assert_called_once()
+        save_tmp_chat.assert_called()
+
+    def test_handle_callback_query_response_transform_requires_source_text(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "resp123"
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ra|technical:resp123",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
+             mock.patch.object(handler.mq, "log_user_message") as log_user_message:
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        query.answer.assert_awaited_once_with("Answer is no longer available.")
+        log_user_message.assert_not_called()
 
     def test_handle_callback_query_response_action_rejects_stale_token(self):
         handler = self.handler
