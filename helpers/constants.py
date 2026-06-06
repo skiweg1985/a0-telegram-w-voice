@@ -8,6 +8,7 @@ PERSISTED_CHAT_FILE_NAME = "chat.json"
 CTX_TG_BOT = "telegram_bot"
 CTX_TG_BOT_CFG = "telegram_bot_cfg"
 CTX_TG_CHAT_ID = "telegram_chat_id"
+CTX_TG_CHAT_TYPE = "telegram_chat_type"
 CTX_TG_USER_ID = "telegram_user_id"
 CTX_TG_USERNAME = "telegram_username"
 CTX_TG_TYPING_STOP = "_telegram_typing_stop"
@@ -16,6 +17,7 @@ CTX_TG_REPLY_CONTEXT = "_telegram_reply_context"
 
 # Transient
 CTX_TG_ATTACHMENTS = "_telegram_response_attachments"
+CTX_TG_ITEMS = "_telegram_response_items"
 CTX_TG_KEYBOARD = "_telegram_response_keyboard"
 CTX_TG_VOICE_REPLY_MODE = "_telegram_response_voice_mode"
 CTX_TG_FORCE_VOICE_REPLY = "_telegram_response_voice_force"
@@ -49,6 +51,7 @@ CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 # Persisted (no leading underscore) so the button survives bot restarts / context reloads.
 CTX_TG_LAST_TEXT_RESPONSE = "telegram_last_text_response"
 CTX_TG_LAST_TEXT_RESPONSE_TOKEN = "telegram_last_text_response_token"
+CTX_TG_LAST_RESPONSE_ACTION_TOKEN = "telegram_last_response_action_token"
 
 # Last user turn (body, sender, attachment paths) so /retry can re-run it.
 # Persisted (no leading underscore) so /retry survives bot restarts / context reloads.
@@ -70,6 +73,9 @@ CTX_TG_ALSO_SEND_TEXT_OVERRIDE = "telegram_also_send_text_session"
 
 # Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | debug.
 CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"
+
+# Per-session toggle for inline reply actions: missing = use config default; on | off.
+CTX_TG_REPLY_ACTIONS_SESSION = "telegram_reply_actions_session"
 
 # Throttle for Telegram detail status lines (transient; reset on new user message).
 CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"

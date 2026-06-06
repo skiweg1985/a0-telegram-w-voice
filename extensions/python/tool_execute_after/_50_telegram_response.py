@@ -5,6 +5,7 @@ from agent import UserMessage
 from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_BOT,
     CTX_TG_ATTACHMENTS,
+    CTX_TG_ITEMS,
     CTX_TG_KEYBOARD,
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_VOICE_TEXT,
@@ -37,6 +38,10 @@ class TelegramResponseIntercept(Extension):
         attachments = tool.args.get("attachments", [])
         if attachments:
             context.data[CTX_TG_ATTACHMENTS] = attachments
+
+        telegram_items = tool.args.get("telegram_items", [])
+        if telegram_items:
+            context.data[CTX_TG_ITEMS] = telegram_items
 
         # Capture inline keyboard if provided
         keyboard = tool.args.get("keyboard", None)
@@ -74,6 +79,7 @@ class TelegramResponseIntercept(Extension):
 
         text = tool.args.get("text", tool.args.get("message", ""))
         attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])
+        telegram_items = context.data.pop(CTX_TG_ITEMS, [])
         keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
         context.data.pop(CTX_TG_VOICE_TEXT, None)
         handle_telegram_response_stream_end(context)
@@ -82,6 +88,7 @@ class TelegramResponseIntercept(Extension):
             text,
             attachments or None,
             keyboard,
+            telegram_items=telegram_items or None,
         )
 
         if error:
@@ -103,6 +110,7 @@ class TelegramResponseIntercept(Extension):
 
         text = tool.args.get("text", tool.args.get("message", ""))
         attachments = context.data.get(CTX_TG_ATTACHMENTS, [])
+        telegram_items = context.data.get(CTX_TG_ITEMS, [])
         keyboard = context.data.get(CTX_TG_KEYBOARD, None)
         voice_for_tts = context.data.get(CTX_TG_VOICE_TEXT, None)
         voice_mode = context.data.get(CTX_TG_VOICE_REPLY_MODE, None)
@@ -114,12 +122,14 @@ class TelegramResponseIntercept(Extension):
             attachments or None,
             keyboard,
             voice_text=voice_for_tts,
+            telegram_items=telegram_items or None,
         )
 
         if not error:
             context.data[CTX_SEND_FAILURES] = 0
             context.data[CTX_TG_FINAL_REPLY_SENT] = True
             context.data.pop(CTX_TG_ATTACHMENTS, None)
+            context.data.pop(CTX_TG_ITEMS, None)
             context.data.pop(CTX_TG_KEYBOARD, None)
             context.data.pop(CTX_TG_VOICE_TEXT, None)
             return

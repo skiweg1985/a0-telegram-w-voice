@@ -615,3 +615,61 @@
   - yes ([Unreleased] Removed)
 - Follow-ups:
   - none
+
+## 2026-06-05 – Auto – Telegram reply keyboard & media delivery polish
+
+- Done:
+  - Outbound-Planung für Captions, Inline-Keyboards und Albums (`_plan_outbound_delivery`).
+  - `send_voice` unterstützt `reply_markup` für Voice-only mit Reply-Keyboard.
+  - Agent-Prompt für Attachments, Captions und Keyboard-Muster erweitert.
+  - Unit-Tests für Keyboard-Persistenz, Caption-Routing und Voice-only-Keyboard ergänzt.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: codex/upgrade
+  - PR: https://github.com/skiweg1985/a0-telegram-w-voice/pull/6
+- Files touched:
+  - helpers/handler.py
+  - helpers/telegram_client.py
+  - prompts/fw.telegram.system_context_reply.md
+  - tests/test_telegram_media_routing.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python -m pytest tests/test_telegram_media_routing.py tests/test_telegram_session_picker.py -q` (53 passed)
+  - endpoints: none
+  - UI path: Telegram DM reply keyboard + media replies
+- Changelog updated:
+  - yes ([Unreleased] Changed)
+- Follow-ups:
+  - none
+
+## 2026-06-06 – Auto – Telegram response transform quick actions
+
+- Done:
+  - Inline-Buttons **Shorter**, **More technical** und **Step by step** an Text-Antworten ergänzt.
+  - Callback-Handler dispatcht Transform als internen Follow-up-Turn auf Basis der gespeicherten letzten Antwort.
+  - Unit-Tests für Keyboard-Layout und Transform-Callbacks ergänzt.
+- Next:
+  - none
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: codex/upgrade
+  - PR: https://github.com/skiweg1985/a0-telegram-w-voice/pull/6
+- Files touched:
+  - helpers/handler.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest discover -s tests -p 'test_telegram_session_picker.py' -v` (52 passed)
+  - endpoints: none
+  - UI path: Telegram inline response action keyboard
+- Changelog updated:
+  - yes ([Unreleased] Added)
+- Follow-ups:
+  - none

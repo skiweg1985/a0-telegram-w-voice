@@ -28,6 +28,7 @@ from usr.plugins.telegram_integration_voice.helpers import telegram_client as tc
 from usr.plugins.telegram_integration_voice.helpers import detail_status, speech
 from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
 from usr.plugins.telegram_integration_voice.helpers.command_registry import format_help_text
+from usr.plugins.telegram_integration_voice.helpers import status_copy
 from usr.plugins.telegram_integration_voice.helpers.constants import (
     PLUGIN_NAME,
     DOWNLOAD_FOLDER,
@@ -37,12 +38,14 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_BOT,
     CTX_TG_BOT_CFG,
     CTX_TG_CHAT_ID,
+    CTX_TG_CHAT_TYPE,
     CTX_TG_USER_ID,
     CTX_TG_USERNAME,
     CTX_TG_TYPING_STOP,
     CTX_TG_REPLY_TO,
     CTX_TG_REPLY_CONTEXT,
     CTX_TG_ATTACHMENTS,
+    CTX_TG_ITEMS,
     CTX_TG_KEYBOARD,
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_FORCE_VOICE_REPLY,
@@ -71,6 +74,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_FINAL_REPLY_SENT,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
+    CTX_TG_LAST_RESPONSE_ACTION_TOKEN,
     CTX_TG_LAST_USER_BODY,
     CTX_TG_LAST_USER_SENDER,
     CTX_TG_LAST_USER_ATTACHMENTS,
@@ -80,6 +84,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_DETAIL_LEVEL_SESSION,
     CTX_TG_DETAIL_LAST_SENT_TS,
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
+    CTX_TG_REPLY_ACTIONS_SESSION,
     TG_UI_CALLBACK_PREFIX,
 )
 
@@ -117,6 +122,61 @@ def _cmd_rest(message: TgMessage) -> str:
     if len(parts) < 2:
         return ""
     return parts[1].strip()
+
+
+_CHAT_RENAME_MANUAL_LOCK_KEY = "chat_rename_manual_lock"
+_CHAT_RENAME_MAX_NAME_LENGTH = 120
+
+
+def _chat_rename_manual_lock_key() -> str:
+    try:
+        from usr.plugins.chat_rename.helpers.constants import MANUAL_LOCK_DATA_KEY
+
+        value = str(MANUAL_LOCK_DATA_KEY or "").strip()
+        if value:
+            return value
+    except Exception:
+        pass
+    return _CHAT_RENAME_MANUAL_LOCK_KEY
+
+
+def _chat_rename_max_name_length() -> int:
+    try:
+        from usr.plugins.chat_rename.helpers.constants import MAX_MANUAL_CHAT_NAME_LENGTH
+
+        value = int(MAX_MANUAL_CHAT_NAME_LENGTH or 0)
+        if value > 0:
+            return value
+    except Exception:
+        pass
+    return _CHAT_RENAME_MAX_NAME_LENGTH
+
+
+def _mark_chat_state_dirty(reason: str) -> None:
+    try:
+        from helpers.state_monitor_integration import mark_dirty_all
+
+        mark_dirty_all(reason=reason)
+    except Exception:
+        pass
+
+
+def _set_manual_chat_title(ctx: AgentContext, raw_title: str) -> str:
+    title = str(raw_title or "").strip()[: _chat_rename_max_name_length()]
+    if not title:
+        raise ValueError("Chat title cannot be empty")
+    ctx.name = title
+    ctx.data[_chat_rename_manual_lock_key()] = True
+    save_tmp_chat(ctx)
+    _mark_chat_state_dirty("plugins.telegram_integration_voice.title.set")
+    return title
+
+
+def _clear_manual_chat_title(ctx: AgentContext) -> None:
+    ctx.name = None
+    ctx.data.pop(_chat_rename_manual_lock_key(), None)
+    save_tmp_chat(ctx)
+    _mark_chat_state_dirty("plugins.telegram_integration_voice.title.clear")
 
 
 def _parse_plugin_ui_callback(data: str) -> tuple[str, str] | None:
@@ -170,10 +230,20 @@ def _voice_mode_inline_keyboard() -> list[list[dict]]:
         ],
     ]
 
-
-def _show_text_quick_action_keyboard(token: str) -> list[list[dict]]:
+def _response_action_keyboard(
+    token: str,
+    *,
+    include_more: bool,
+    include_show_text: bool = False,
+) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
-    return [[{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}]]
+    rows: list[list[dict]] = []
+    if include_show_text:
+        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
+    if include_more:
+        show_text_flag = "1" if include_show_text else "0"
+        rows.append([{"text": "⋯ More", "callback_data": f"{p}rm|open:{token}:{show_text_flag}"}])
+    return rows
 
 
 def _append_inline_keyboard(
@@ -198,6 +268,112 @@ def _voice_mode_label(mode: str) -> str:
         "text_only": "text only",
         "off": "off",
     }.get(str(mode or "off").strip().lower(), "off")
+
+
+def _current_response_action_token(ctx: AgentContext) -> str:
+    return str(
+        ctx.data.get(CTX_TG_LAST_RESPONSE_ACTION_TOKEN)
+        or ctx.data.get(CTX_TG_LAST_TEXT_RESPONSE_TOKEN)
+        or ""
+    ).strip()
+
+
+def _response_action_is_current(ctx: AgentContext, token: str) -> bool:
+    current = _current_response_action_token(ctx)
+    return bool(token and current and token == current)
+
+
+_RESPONSE_TRANSFORM_SPECS: dict[str, dict[str, str]] = {
+    "shorter": {
+        "button": "✂️ Shorter",
+        "ack": "Shortening",
+        "instruction": (
+            "Rewrite the assistant's last answer into a shorter version. "
+            "Keep the key facts, decisions, and caveats."
+        ),
+    },
+    "technical": {
+        "button": "🛠 More technical",
+        "ack": "Reframing",
+        "instruction": (
+            "Rewrite the assistant's last answer for a more technical audience. "
+            "Use precise terminology and deeper implementation detail, but stay on the same task."
+        ),
+    },
+    "step_by_step": {
+        "button": "🪜 Step by step",
+        "ack": "Expanding",
+        "instruction": (
+            "Rewrite the assistant's last answer as a step-by-step explanation. "
+            "Make the sequence explicit and easy to follow."
+        ),
+    },
+}
+
+
+def _response_transform_keyboard_rows(token: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    buttons = []
+    for action, spec in _RESPONSE_TRANSFORM_SPECS.items():
+        buttons.append({
+            "text": spec["button"],
+            "callback_data": f"{p}ra|{action}:{token}",
+        })
+    return [buttons] if buttons else []
+
+
+def _response_more_keyboard(token: str, *, include_show_text: bool = False) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    rows: list[list[dict]] = []
+    if include_show_text:
+        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
+    rows.extend(_response_transform_keyboard_rows(token))
+    rows.append([{"text": "🎙 To voice", "callback_data": f"{p}ra|to_voice:{token}"}])
+    back_flag = "1" if include_show_text else "0"
+    rows.append([{"text": "⬅ Back", "callback_data": f"{p}rm|back:{token}:{back_flag}"}])
+    return rows
+
+
+def _reply_actions_status_text(enabled: bool) -> str:
+    return "on" if enabled else "off"
+
+
+def _apply_reply_actions_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "on"
+        return "Reply actions: on — the More menu will be shown for this session."
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "off"
+        return "Reply actions: off — the More menu is hidden for this session."
+    return "Usage: /actions [on|off]"
+
+
+def _response_transform_spec(action: str) -> dict[str, str] | None:
+    return _RESPONSE_TRANSFORM_SPECS.get(str(action or "").strip().lower())
+
+
+def _build_response_transform_body(action: str, answer_text: str) -> str:
+    spec = _response_transform_spec(action)
+    if not spec:
+        raise ValueError(f"Unknown response transform: {action}")
+
+    source_answer = str(answer_text or "").strip()
+    if not source_answer:
+        raise ValueError("Missing source answer text")
+
+    return (
+        "Transform your last answer using the instruction below.\n\n"
+        f"Instruction: {spec['instruction']}\n\n"
+        "Important:\n"
+        "- Rewrite the existing answer instead of continuing the task.\n"
+        "- Keep the same scope and constraints unless the source answer already said otherwise.\n"
+        "- Return only the transformed answer.\n\n"
+        "Answer to transform:\n"
+        "<assistant_answer>\n"
+        f"{source_answer}\n"
+        "</assistant_answer>"
+    )
 
 
 def _voice_mode_header(ctx: AgentContext) -> str:
@@ -890,6 +1066,7 @@ async def _start_new_session_for_user(
     user_id: int,
     username: str | None,
     chat_id: int,
+    chat_type: str | None = None,
 ) -> tuple[bool, str, AgentContext | None]:
     key = _map_key(bot_name, user_id, chat_id)
 
@@ -904,7 +1081,9 @@ async def _start_new_session_for_user(
                 save_tmp_chat(old_ctx)
             _save_state(state)
 
-    ctx = await _get_or_create_context_from_user(bot_name, bot_cfg, user_id, username, chat_id)
+    ctx = await _get_or_create_context_from_user(
+        bot_name, bot_cfg, user_id, username, chat_id, chat_type=chat_type,
+    )
     if not ctx:
         return False, "Failed to create a new session.", None
     return True, "New chat started. Previous conversation is still available in the session list.", ctx
@@ -1114,6 +1293,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         "\u2699\ufe0f /status shows the current modes.\n"
         "\U0001f5d1 /clear resets this conversation. /help lists all commands.",
         parse_mode=None,
+        reply_markup=reply_markup,
     )
 
     # Ensure a chat context exists
@@ -1149,15 +1329,17 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_PROGRESS_LAST_TS, None)
                 ctx.data.pop(CTX_TG_LAST_TEXT_RESPONSE, None)
                 ctx.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
+                ctx.data.pop(CTX_TG_LAST_RESPONSE_ACTION_TOKEN, None)
                 save_tmp_chat(ctx)
                 PrintStyle.info(f"Telegram ({bot_name}): cleared chat for user {user.id}")
 
     instance = get_bot(bot_name)
     if instance:
-        await _send_with_temp_bot(
+            await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Chat cleared. Send a new message to start fresh.",
             parse_mode=None,
+            reply_markup=reply_markup,
         )
 
     # Send notification
@@ -1183,10 +1365,18 @@ async def handle_newchat(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     _, reply, _ = await _start_new_session_for_user(
-        bot_name, bot_cfg, user.id, user.username, message.chat.id
+        bot_name,
+        bot_cfg,
+        user.id,
+        user.username,
+        message.chat.id,
+        chat_type=getattr(message.chat, "type", None),
     )
     await _send_with_temp_bot(
-        instance.bot.token, message.chat.id, reply, parse_mode=None
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
     )
 
 
@@ -1238,7 +1428,12 @@ async def handle_voice(message: TgMessage, bot_name: str, bot_cfg: dict):
         reply = "Usage: /voice [voice_only|voice_text|auto|text_only|off]"
 
     save_tmp_chat(ctx)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
 
 
 async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1269,7 +1464,12 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     reply = _apply_detail_level(ctx, bot_cfg, arg)
     save_tmp_chat(ctx)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
 
 
 async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1307,7 +1507,97 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
         reply = "Usage: /optimize_output auto|voice|text|off"
 
     save_tmp_chat(ctx)
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
+async def handle_title(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /title — set or clear the current session title using Chat Rename-compatible semantics."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        current = str(getattr(ctx, "name", "") or "").strip()
+        manual = bool(ctx.data.get(_chat_rename_manual_lock_key()))
+        if current and manual:
+            reply = (
+                f"Current title: {current}\n"
+                "Use /title <new name> to rename this session or /title auto to return to automatic naming."
+            )
+        elif current:
+            reply = (
+                f"Current title: {current}\n"
+                "Use /title <new name> to set a manual title or /title auto to clear it."
+            )
+        else:
+            reply = "No manual title set. Use /title <new name> or /title auto."
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+        )
+        return
+
+    if arg.strip().lower() == "auto":
+        _clear_manual_chat_title(ctx)
+        reply = "Session title reset to automatic naming."
+    else:
+        try:
+            title = _set_manual_chat_title(ctx, arg)
+            reply = f"Session title set to: {title}"
+        except ValueError:
+            reply = "Usage: /title <new name> or /title auto"
+
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
+async def handle_actions(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /actions — toggle the per-reply More menu for this session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        effective = speech.effective_reply_actions_enabled(bot_cfg, ctx.data)
+        reply = (
+            f"Reply actions: {_reply_actions_status_text(effective)}.\n"
+            "Use /actions on or /actions off for this session."
+        )
+    else:
+        reply = _apply_reply_actions_setting(ctx, bot_cfg, arg)
+        save_tmp_chat(ctx)
+
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
 
 
 def _status_on_off(enabled: bool) -> str:
@@ -1328,6 +1618,10 @@ def _status_model_code(provider: str, name: str, esc) -> str:
     p = esc(_status_humanize_model_field(provider))
     n = esc(_status_humanize_model_field(name))
     return f"<code>{p}</code>/<code>{n}</code>"
+
+
+def _progress_phase_label(phase: str) -> str:
+    return status_copy.activity_label(phase)
 
 
 async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1378,10 +1672,14 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         win_tokens = int((ctx_window.get("tokens") or 0))
         pct = (100.0 * hist_tokens / hist_limit) if hist_limit else 0.0
         hist_pct = f"{pct:.1f}%" if hist_limit else "n/a"
+        phase = str(ctx.data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
+        phase_label = _progress_phase_label(phase)
+        activity = "running" if ctx.is_running() else "idle"
+        if ctx.is_running() and phase_label:
+            activity = f"{activity} · {phase_label}"
         lines.insert(
             0,
-            f"⚡ <b>Activity</b>: {'running' if ctx.is_running() else 'idle'} · paused "
-            f"{'yes' if ctx.paused else 'no'}",
+            f"⚡ <b>Activity</b>: {activity} · paused {'yes' if ctx.paused else 'no'}",
         )
         lines.append(
             f"📚 <b>Context</b>: ~{hist_tokens} / ~{hist_limit} tok ({hist_pct}) · "
@@ -1438,7 +1736,10 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     text = header + "\n\n" + "\n".join(lines)
     await _send_with_temp_bot(
-        instance.bot.token, message.chat.id, text, parse_mode=ParseMode.HTML
+        instance.bot.token,
+        message.chat.id,
+        text,
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -1466,7 +1767,12 @@ async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):
         reply = f"Compress failed: {format_error(e)}"
         PrintStyle.error(f"Telegram /compact: {format_error(e)}")
 
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
 
 
 async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1486,7 +1792,7 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Agent is still working — use /stop first, then /retry.",
             parse_mode=None,
-        )
+            )
         return
 
     body = str(ctx.data.get(CTX_TG_LAST_USER_BODY) or "").strip()
@@ -1495,7 +1801,7 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Nothing to retry yet — send a message first.",
             parse_mode=None,
-        )
+            )
         return
 
     sender = str(ctx.data.get(CTX_TG_LAST_USER_SENDER) or _format_user(user))
@@ -1505,27 +1811,23 @@ async def handle_retry(message: TgMessage, bot_name: str, bot_cfg: dict):
         if isinstance(a, str) and os.path.isfile(files.fix_dev_path(a))
     ]
 
-    typing_stop = _start_typing(instance.bot.token, message.chat.id)
-    _clear_progress_state(ctx)
-    await _send_initial_progress_status(ctx)
-    ctx.data[CTX_TG_TYPING_STOP] = typing_stop
-    ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
-    ctx.data[CTX_TG_REPLY_TO] = None
-    ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
-
-    user_msg = ctx.agent0.read_prompt(
-        "fw.telegram.user_message.md",
+    err = await _dispatch_telegram_user_turn(
+        ctx,
+        bot_token=instance.bot.token,
+        chat_id=message.chat.id,
         sender=sender,
         body=body,
-    )
-    msg_id = str(uuid.uuid4())
-    mq.log_user_message(ctx, user_msg, attachments, message_id=msg_id, source=" (telegram retry)")
-    ctx.communicate(UserMessage(
-        message=user_msg,
         attachments=attachments,
-        id=msg_id,
-    ))
-    save_tmp_chat(ctx)
+        source=" (telegram retry)",
+        busy_message="Agent is still working — use /stop first, then /retry.",
+    )
+    if err:
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            err,
+            parse_mode=None,
+        )
 
 
 async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1539,15 +1841,18 @@ async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
     if not ctx:
         await _send_with_temp_bot(
-            instance.bot.token, message.chat.id, "No active session.", parse_mode=None
-        )
+            instance.bot.token,
+            message.chat.id,
+            "No active session.",
+            parse_mode=None,
+            )
         return
     if ctx.is_running():
         await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Agent is still working — use /stop first, then /undo.",
             parse_mode=None,
-        )
+            )
         return
 
     removed = False
@@ -1570,7 +1875,12 @@ async def handle_undo(message: TgMessage, bot_name: str, bot_cfg: dict):
         reply = "↩️ Removed the last exchange from this chat's history."
     else:
         reply = "Nothing to undo yet."
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
 
 
 async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1588,7 +1898,7 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
             message.chat.id,
             "No active session.",
             parse_mode=None,
-        )
+            )
         return
     ctx.kill_process()
     save_tmp_chat(ctx)
@@ -1634,7 +1944,7 @@ async def handle_resume(message: TgMessage, bot_name: str, bot_cfg: dict):
             message.chat.id,
             "No active session.",
             parse_mode=None,
-        )
+            )
         return
     ctx.paused = False
     save_tmp_chat(ctx)
@@ -1686,7 +1996,12 @@ async def handle_project(message: TgMessage, bot_name: str, bot_cfg: dict):
         except Exception as e:
             reply = f"Failed to switch project: {format_error(e)}"
 
-    await _send_with_temp_bot(instance.bot.token, message.chat.id, reply, parse_mode=None)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
 
 
 async def handle_session(message: TgMessage, bot_name: str, bot_cfg: dict):
@@ -1938,7 +2253,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             instance.bot.token, message.chat.id,
             "Failed to create chat session.",
             parse_mode=None,
-        )
+            )
         return
 
     # New user turn: clear stale progress message state
@@ -1949,6 +2264,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     # Store stop event so send_telegram_reply can cancel typing
     context.data[CTX_TG_TYPING_STOP] = typing_stop
+    context.data[CTX_TG_CHAT_TYPE] = str(getattr(message.chat, "type", "") or "")
     context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
 
     # Keep Telegram threading visible when the user replied to an earlier message.
@@ -1970,6 +2286,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         audio_ref = _pick_audio_attachment(attachments)
         if audio_ref:
             audio_path = files.fix_dev_path(audio_ref)
+            await _set_progress_phase_and_refresh(context, bot_cfg, "stt")
             try:
                 stt_result = await asyncio.to_thread(speech.transcribe_audio_file, bot_cfg, audio_path)
                 transcript = str((stt_result or {}).get("text") or "").strip()
@@ -1980,6 +2297,13 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             except Exception as e:
                 PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
                 text = text + f"\n[Voice transcript failed: {format_error(e)}]"
+            finally:
+                await _set_progress_phase_and_refresh(
+                    context,
+                    bot_cfg,
+                    None,
+                    require_existing_message=True,
+                )
 
     if reply_context:
         context.data[CTX_TG_REPLY_CONTEXT] = reply_context
@@ -2068,10 +2392,14 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                         message_id=query.message.message_id,
                     )
                 else:
-                    await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+                    await _send_with_temp_bot(
+                        token, chat_id, reply, parse_mode=None
+                    )
             else:
                 await query.answer("Failed")
-                await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "sv":
@@ -2169,7 +2497,146 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 message_id=query.message.message_id,
             )
             await query.answer("Started" if ok else "Failed")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
+            return
+
+        if kind == "ra":
+            ctx_id = _mapped_context_id(bot_name, user.id, chat_id)
+            if not ctx_id:
+                await query.answer("Action is no longer available.")
+                return
+            context = AgentContext.get(ctx_id) or _load_persisted_context(
+                ctx_id,
+                bot_cfg,
+                expected_bot_name=bot_name,
+                expected_user_id=user.id,
+                expected_chat_id=chat_id,
+            )
+            if not context:
+                await query.answer("Action is no longer available.")
+                return
+            context.data[CTX_TG_BOT_CFG] = bot_cfg
+            action, _, action_token = payload.partition(":")
+            if not _response_action_is_current(context, action_token):
+                await query.answer("Action is no longer available.")
+                return
+            if action == "retry":
+                body = str(context.data.get(CTX_TG_LAST_USER_BODY) or "").strip()
+                if not body:
+                    await query.answer("Nothing to retry yet.")
+                    return
+                sender = str(context.data.get(CTX_TG_LAST_USER_SENDER) or _format_user(user))
+                stored = context.data.get(CTX_TG_LAST_USER_ATTACHMENTS) or []
+                attachments = [
+                    a for a in stored
+                    if isinstance(a, str) and os.path.isfile(files.fix_dev_path(a))
+                ]
+                err = await _dispatch_telegram_user_turn(
+                    context,
+                    bot_token=token,
+                    chat_id=chat_id,
+                    sender=sender,
+                    body=body,
+                    attachments=attachments,
+                    source=" (telegram retry action)",
+                    busy_message="Agent is still working — use /stop first, then retry again.",
+                )
+                await query.answer("Retrying" if not err else err)
+                return
+            if action == "continue":
+                err = await _dispatch_telegram_user_turn(
+                    context,
+                    bot_token=token,
+                    chat_id=chat_id,
+                    sender=_format_user(user),
+                    body="Continue from here.",
+                    attachments=[],
+                    source=" (telegram continue action)",
+                    busy_message="Agent is still working — use /stop first, then continue again.",
+                )
+                await query.answer("Continuing" if not err else err)
+                return
+            if action == "to_voice":
+                source_answer = str(context.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+                if not source_answer:
+                    await query.answer("Answer is no longer available.")
+                    return
+                if not speech.tts_enabled(bot_cfg):
+                    await query.answer("TTS is disabled.")
+                    return
+                instance = get_bot(bot_name)
+                if not instance:
+                    await query.answer("Bot is offline.")
+                    return
+                voice_file = None
+                try:
+                    async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+                        reply_cfg = speech.voice_reply_settings(bot_cfg)
+                        max_chars = max(100, int(reply_cfg["max_chars"]))
+                        await tc.send_record_voice(bot, chat_id)
+                        voice_file, _meta = await asyncio.to_thread(
+                            speech.synthesize_to_voice_file,
+                            bot_cfg,
+                            source_answer[:max_chars],
+                        )
+                        await tc.send_voice(
+                            bot,
+                            chat_id,
+                            voice_file,
+                            reply_to_message_id=(query.message.message_id if query.message else None),
+                        )
+                    await query.answer("Sent as voice")
+                except Exception as e:
+                    PrintStyle.error(f"Telegram response to_voice failed: {format_error(e)}")
+                    await query.answer("Voice conversion failed.")
+                finally:
+                    if voice_file:
+                        with suppress(Exception):
+                            os.remove(voice_file)
+                return
+            transform_spec = _response_transform_spec(action)
+            if transform_spec:
+                source_answer = str(context.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+                if not source_answer:
+                    await query.answer("Answer is no longer available.")
+                    return
+                try:
+                    body = _build_response_transform_body(action, source_answer)
+                except ValueError:
+                    await query.answer("Unknown option.")
+                    return
+                err = await _dispatch_telegram_user_turn(
+                    context,
+                    bot_token=token,
+                    chat_id=chat_id,
+                    sender=_format_user(user),
+                    body=body,
+                    attachments=[],
+                    source=f" (telegram transform action: {action})",
+                    busy_message="Agent is still working — use /stop first, then try again.",
+                )
+                await query.answer(transform_spec["ack"] if not err else err)
+                return
+            if action == "new_session":
+                ok, reply, _new_ctx = await _start_new_session_for_user(
+                    bot_name,
+                    bot_cfg,
+                    user.id,
+                    user.username,
+                    chat_id,
+                    getattr(query.message.chat, "type", None),
+                )
+                await query.answer("Started" if ok else "Failed")
+                await _send_with_temp_bot(
+                    token,
+                    chat_id,
+                    reply,
+                    parse_mode=None,
+                )
+                return
+            await query.answer("Unknown option.")
             return
 
         context = await _get_or_create_context_from_user(
@@ -2186,7 +2653,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_output_optimize_mode(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("Updated")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
             return
 
         if kind == "v":
@@ -2196,7 +2665,55 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_voice_mode_setting(context, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
+            return
+
+        if kind == "rm":
+            parts = payload.split(":")
+            if len(parts) < 2:
+                await query.answer("Unknown option.")
+                return
+            action = parts[0]
+            action_token = parts[1]
+            show_text_flag = len(parts) > 2 and parts[2] == "1"
+            if not _response_action_is_current(context, action_token):
+                await query.answer("Action is no longer available.")
+                return
+            if action == "open":
+                if not query.message:
+                    await query.answer("Message is no longer available.")
+                    return
+                keyboard = tc.build_inline_keyboard(_response_more_keyboard(action_token, include_show_text=show_text_flag))
+                edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
+                if callable(edit_reply_markup):
+                    await edit_reply_markup(reply_markup=keyboard)
+                else:
+                    async with _temp_bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+                        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=query.message.message_id, reply_markup=keyboard)
+                await query.answer("More")
+                return
+            if action == "back":
+                if not query.message:
+                    await query.answer("Message is no longer available.")
+                    return
+                keyboard = tc.build_inline_keyboard(
+                    _response_action_keyboard(
+                        action_token,
+                        include_more=True,
+                        include_show_text=show_text_flag,
+                    )
+                )
+                edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
+                if callable(edit_reply_markup):
+                    await edit_reply_markup(reply_markup=keyboard)
+                else:
+                    async with _temp_bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+                        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=query.message.message_id, reply_markup=keyboard)
+                await query.answer("Back")
+                return
+            await query.answer("Unknown option.")
             return
 
         if kind == "qa":
@@ -2246,7 +2763,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             reply = f"Model preset set to: {pname}"
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
             return
 
         if kind == "d":
@@ -2256,7 +2775,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_detail_level(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
             return
 
         if kind == "p":
@@ -2277,7 +2798,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             except Exception as e:
                 reply = f"Failed to switch project: {format_error(e)}"
             await query.answer("OK")
-            await _send_with_temp_bot(token, chat_id, reply, parse_mode=None)
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
             return
 
         await query.answer("Unknown action.")
@@ -2344,7 +2867,12 @@ async def _get_or_create_context(
     if not user:
         return None
     return await _get_or_create_context_from_user(
-        bot_name, bot_cfg, user.id, user.username, message.chat.id,
+        bot_name,
+        bot_cfg,
+        user.id,
+        user.username,
+        message.chat.id,
+        chat_type=getattr(message.chat, "type", None),
     )
 
 
@@ -2354,6 +2882,7 @@ async def _get_or_create_context_from_user(
     user_id: int,
     username: str | None,
     chat_id: int,
+    chat_type: str | None = None,
 ) -> AgentContext | None:
     key = _map_key(bot_name, user_id, chat_id)
 
@@ -2375,6 +2904,8 @@ async def _get_or_create_context_from_user(
                 # Keep snapshot in sync with current plugin external config (handlers pass fresh bot_cfg).
                 # Without this, TTS/STT/progress/system prompt keep using values from first session creation.
                 ctx.data[CTX_TG_BOT_CFG] = bot_cfg
+                if chat_type:
+                    ctx.data[CTX_TG_CHAT_TYPE] = str(chat_type)
                 return ctx
             # Context no longer exists on disk or in memory, remove stale mapping
             chats.pop(key, None)
@@ -2388,6 +2919,7 @@ async def _get_or_create_context_from_user(
             ctx.data[CTX_TG_BOT] = bot_name
             ctx.data[CTX_TG_BOT_CFG] = bot_cfg
             ctx.data[CTX_TG_CHAT_ID] = chat_id
+            ctx.data[CTX_TG_CHAT_TYPE] = str(chat_type or "")
             ctx.data[CTX_TG_USER_ID] = user_id
             ctx.data[CTX_TG_USERNAME] = username or ""
 
@@ -2417,6 +2949,59 @@ async def _get_or_create_context_from_user(
             return None
 
 # Message content extraction
+
+
+async def _dispatch_telegram_user_turn(
+    ctx: AgentContext,
+    *,
+    bot_token: str,
+    chat_id: int,
+    sender: str,
+    body: str,
+    attachments: list[str] | None,
+    source: str,
+    busy_message: str = "Agent is still working. Use /stop first.",
+) -> str | None:
+    if ctx.is_running():
+        return busy_message
+
+    typing_stop = _start_typing(bot_token, chat_id)
+    _clear_progress_state(ctx)
+    await _send_initial_progress_status(ctx)
+    ctx.data[CTX_TG_TYPING_STOP] = typing_stop
+    ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
+    ctx.data[CTX_TG_REPLY_TO] = None
+    ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
+
+    clean_body = str(body or "").strip()
+    clean_sender = str(sender or "").strip()
+    clean_attachments = list(attachments or [])
+
+    user_msg = ctx.agent0.read_prompt(
+        "fw.telegram.user_message.md",
+        sender=clean_sender,
+        body=clean_body,
+    )
+    ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
+    ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
+    ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
+
+    msg_id = str(uuid.uuid4())
+    mq.log_user_message(
+        ctx,
+        user_msg,
+        clean_attachments,
+        message_id=msg_id,
+        source=source,
+    )
+    ctx.communicate(UserMessage(
+        message=user_msg,
+        attachments=clean_attachments,
+        id=msg_id,
+    ))
+    save_tmp_chat(ctx)
+    return None
+
 
 def _truncate_preview(text: str, limit: int = 280) -> str:
     value = re.sub(r"\s+", " ", str(text or "")).strip()
@@ -2674,13 +3259,15 @@ def _progress_history_limit(bot_cfg: dict, level: str) -> int:
     return max(1, min(value, 20))
 
 
+def _progress_phase_title(phase: str) -> str:
+    return status_copy.progress_title(phase)
+
+
 def _progress_status_title(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
     if done:
-        return "Done"
+        return status_copy.progress_title(done=True)
     phase = str(context.data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
-    if phase == "gen":
-        return "🔄 In progress… [GEN…]"
-    return "🔄 In progress…"
+    return _progress_phase_title(phase)
 
 
 def _set_progress_phase(context: AgentContext, phase: str | None) -> bool:
@@ -2693,6 +3280,21 @@ def _set_progress_phase(context: AgentContext, phase: str | None) -> bool:
     else:
         context.data.pop(CTX_TG_PROGRESS_PHASE, None)
     return True
+
+
+async def _set_progress_phase_and_refresh(
+    context: AgentContext,
+    bot_cfg: dict,
+    phase: str | None,
+    *,
+    require_existing_message: bool = False,
+):
+    if _set_progress_phase(context, phase):
+        await _refresh_progress_status(
+            context,
+            bot_cfg,
+            require_existing_message=require_existing_message,
+        )
 
 
 def _progress_line_prefix(line_html: str) -> str:
@@ -2715,7 +3317,7 @@ def _render_progress_status_html(context: AgentContext, bot_cfg: dict, *, done: 
         parts.extend(_progress_line_prefix(line) for line in lines)
     elif not done and level == "off":
         parts.append("")
-        parts.append("<i>Processing your request…</i>")
+        parts.append(f"<i>{html.escape(status_copy.progress_hint())}</i>")
     preview_html = _render_live_response_preview_html(context, bot_cfg, done=done)
     if preview_html:
         parts.append("")
@@ -3063,6 +3665,10 @@ async def _cleanup_progress_message_after_final(
     reply_bot: Bot,
     context: AgentContext,
     bot_cfg: dict,
+    *,
+    sent_text: bool = False,
+    sent_voice: bool = False,
+    sent_artifact_count: int = 0,
 ):
     progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
     chat_id = context.data.get(CTX_TG_CHAT_ID)
@@ -3073,7 +3679,12 @@ async def _cleanup_progress_message_after_final(
     if mode == "delete":
         await tc.delete_message(reply_bot, int(chat_id), int(progress_message_id))
     elif mode == "edit":
-        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), "Done")
+        completion_text = status_copy.completion_title(
+            sent_text=sent_text,
+            sent_voice=sent_voice,
+            sent_artifact_count=sent_artifact_count,
+        )
+        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), completion_text)
 
 
 def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
@@ -3319,6 +3930,7 @@ async def _send_telegram_text_message(
     text_body: str,
     keyboard: list[list[dict]] | None,
     reply_to: int | None,
+    reply_markup=None,
 ) -> int | None:
     html_text = tc.md_to_telegram_html(text_body)
     if keyboard:
@@ -3334,7 +3946,368 @@ async def _send_telegram_text_message(
         chat_id,
         html_text,
         reply_to_message_id=reply_to,
+        reply_markup=reply_markup,
     )
+
+
+def _attachment_media_type(path: str) -> str:
+    name = os.path.basename(path).lower()
+    if name.startswith("videonote_"):
+        return "video_note"
+    if tc.is_animation_file(path):
+        return "animation"
+    if tc.is_image_file(path):
+        return "photo"
+    if tc.is_video_file(path):
+        return "video"
+    return "document"
+
+
+def _outbound_item_supports_caption(item: dict) -> bool:
+    return str(item.get("type") or "").strip().lower() in {
+        "photo",
+        "animation",
+        "video",
+        "document",
+    }
+
+
+def _plan_outbound_delivery(
+    items: list[dict],
+    response_text: str,
+    keyboard: list[list[dict]] | None = None,
+) -> tuple[list[dict], str, object | None, bool]:
+    planned_items = [dict(item) for item in (items or [])]
+    planned_text = (response_text or "").strip()
+    media_reply_markup = None
+    response_text_in_caption = False
+    single_item = len(planned_items) == 1
+
+    if keyboard and single_item and not planned_text:
+        media_reply_markup = tc.build_inline_keyboard(keyboard)
+
+    if (
+        planned_text
+        and planned_items
+        and _outbound_item_supports_caption(planned_items[0])
+        and (not keyboard or single_item)
+    ):
+        caption_html = tc.md_to_telegram_html(planned_text)
+        if len(caption_html) <= 1024:
+            planned_items[0]["caption"] = caption_html
+            planned_text = ""
+            response_text_in_caption = True
+            if keyboard and single_item:
+                media_reply_markup = tc.build_inline_keyboard(keyboard)
+
+    if keyboard and not planned_text and len(planned_items) >= 2:
+        planned_text = "Choose an option:"
+
+    return planned_items, planned_text, media_reply_markup, response_text_in_caption
+
+
+def _normalize_outbound_items(
+    attachments: list[str] | None = None,
+    telegram_items: list[dict] | None = None,
+) -> list[dict]:
+    items: list[dict] = []
+
+    for raw in telegram_items or []:
+        if not isinstance(raw, dict):
+            continue
+        item_type = str(raw.get("type") or "").strip().lower()
+        if item_type == "location":
+            try:
+                items.append(
+                    {
+                        "type": "location",
+                        "latitude": float(raw["latitude"]),
+                        "longitude": float(raw["longitude"]),
+                        "horizontal_accuracy": raw.get("horizontal_accuracy"),
+                    }
+                )
+            except Exception:
+                PrintStyle.warning(f"Telegram: skipping invalid location item: {raw!r}")
+        elif item_type == "contact":
+            phone_number = str(raw.get("phone_number") or "").strip()
+            first_name = str(raw.get("first_name") or "").strip()
+            if phone_number and first_name:
+                items.append(
+                    {
+                        "type": "contact",
+                        "phone_number": phone_number,
+                        "first_name": first_name,
+                        "last_name": str(raw.get("last_name") or "").strip(),
+                        "vcard": str(raw.get("vcard") or "").strip(),
+                    }
+                )
+            else:
+                PrintStyle.warning(f"Telegram: skipping invalid contact item: {raw!r}")
+        elif item_type == "venue":
+            title = str(raw.get("title") or "").strip()
+            address = str(raw.get("address") or "").strip()
+            try:
+                latitude = float(raw["latitude"])
+                longitude = float(raw["longitude"])
+            except Exception:
+                PrintStyle.warning(f"Telegram: skipping invalid venue item: {raw!r}")
+                continue
+            if title and address:
+                item = {
+                    "type": "venue",
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "title": title,
+                    "address": address,
+                }
+                for key in (
+                    "foursquare_id",
+                    "foursquare_type",
+                    "google_place_id",
+                    "google_place_type",
+                ):
+                    value = str(raw.get(key) or "").strip()
+                    if value:
+                        item[key] = value
+                items.append(item)
+            else:
+                PrintStyle.warning(f"Telegram: skipping invalid venue item: {raw!r}")
+        elif item_type == "video_note":
+            path = str(raw.get("path") or "").strip()
+            if path:
+                local_path = files.fix_dev_path(path)
+                items.append({"type": "video_note", "path": local_path})
+            else:
+                PrintStyle.warning(f"Telegram: skipping invalid video_note item: {raw!r}")
+        else:
+            PrintStyle.warning(f"Telegram: unsupported telegram_items type skipped: {item_type!r}")
+
+    for path in attachments or []:
+        local_path = files.fix_dev_path(path)
+        items.append(
+            {
+                "type": _attachment_media_type(local_path),
+                "path": local_path,
+            }
+        )
+
+    return items
+
+
+def _outbound_album_bucket(item: dict) -> str | None:
+    item_type = str(item.get("type") or "").strip().lower()
+    if item_type in {"photo", "video"}:
+        return "visual"
+    if item_type == "document":
+        return "document"
+    return None
+
+
+def _group_outbound_items(items: list[dict]) -> list[list[dict]]:
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    current_bucket: str | None = None
+
+    for item in items:
+        bucket = _outbound_album_bucket(item)
+        if bucket is None:
+            if current:
+                groups.append(current)
+                current = []
+                current_bucket = None
+            groups.append([item])
+            continue
+        if current and bucket == current_bucket:
+            current.append(item)
+            continue
+        if current:
+            groups.append(current)
+        current = [item]
+        current_bucket = bucket
+
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _chunk_outbound_group(items: list[dict], size: int = 10) -> list[list[dict]]:
+    size = max(2, min(int(size or 10), 10))
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+async def _send_single_outbound_item(
+    reply_bot: Bot,
+    chat_id: int,
+    item: dict,
+    reply_to: int | None,
+    reply_markup=None,
+) -> int | None:
+    item_type = str(item.get("type") or "").strip().lower()
+    caption = str(item.get("caption") or "")
+    if item_type == "photo":
+        return await tc.send_photo(
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+        )
+    if item_type == "animation":
+        return await tc.send_animation(
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+        )
+    if item_type == "video":
+        return await tc.send_video(
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+        )
+    if item_type == "video_note":
+        msg_id = await tc.send_video_note(
+            reply_bot, chat_id, item["path"], reply_to_message_id=reply_to, reply_markup=reply_markup,
+        )
+        if msg_id:
+            return msg_id
+        msg_id = await tc.send_video(
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+        )
+        if msg_id:
+            return msg_id
+        return await tc.send_file(
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+        )
+    if item_type == "document":
+        return await tc.send_file(
+            reply_bot,
+            chat_id,
+            item["path"],
+            caption=caption,
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+        )
+    if item_type == "location":
+        kwargs = {}
+        if item.get("horizontal_accuracy") is not None:
+            kwargs["horizontal_accuracy"] = float(item["horizontal_accuracy"])
+        return await tc.send_location(
+            reply_bot,
+            chat_id,
+            item["latitude"],
+            item["longitude"],
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    if item_type == "contact":
+        kwargs = {}
+        if item.get("last_name"):
+            kwargs["last_name"] = item["last_name"]
+        if item.get("vcard"):
+            kwargs["vcard"] = item["vcard"]
+        return await tc.send_contact(
+            reply_bot,
+            chat_id,
+            item["phone_number"],
+            item["first_name"],
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    if item_type == "venue":
+        kwargs = {}
+        for key in (
+            "foursquare_id",
+            "foursquare_type",
+            "google_place_id",
+            "google_place_type",
+        ):
+            if item.get(key):
+                kwargs[key] = item[key]
+        return await tc.send_venue(
+            reply_bot,
+            chat_id,
+            item["latitude"],
+            item["longitude"],
+            item["title"],
+            item["address"],
+            reply_to_message_id=reply_to,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
+    PrintStyle.warning(f"Telegram: unsupported outbound item skipped: {item_type!r}")
+    return None
+
+
+async def _send_outbound_items(
+    reply_bot: Bot,
+    chat_id: int,
+    items: list[dict],
+    reply_to: int | None,
+    reply_markup=None,
+) -> int:
+    pending_reply_markup = reply_markup
+    sent_count = 0
+
+    for group in _group_outbound_items(items):
+        bucket = _outbound_album_bucket(group[0])
+        if bucket and len(group) >= 2:
+            for chunk in _chunk_outbound_group(group):
+                if len(chunk) >= 2:
+                    media_group_ids = await tc.send_media_group(
+                        reply_bot,
+                        chat_id,
+                        chunk,
+                        reply_to_message_id=reply_to,
+                    )
+                    if media_group_ids:
+                        sent_count += len(media_group_ids)
+                        continue
+                for item in chunk:
+                    msg_id = await _send_single_outbound_item(
+                        reply_bot,
+                        chat_id,
+                        item,
+                        reply_to,
+                        reply_markup=pending_reply_markup,
+                    )
+                    if msg_id and pending_reply_markup is not None:
+                        pending_reply_markup = None
+                    if msg_id:
+                        sent_count += 1
+            continue
+
+        msg_id = await _send_single_outbound_item(
+            reply_bot,
+            chat_id,
+            group[0],
+            reply_to,
+            reply_markup=pending_reply_markup,
+        )
+        if msg_id and pending_reply_markup is not None:
+            pending_reply_markup = None
+        if msg_id:
+            sent_count += 1
+
+    return sent_count
 
 
 async def send_telegram_inline_response(
@@ -3342,6 +4315,7 @@ async def send_telegram_inline_response(
     response_text: str,
     attachments: list[str] | None = None,
     keyboard: list[list[dict]] | None = None,
+    telegram_items: list[dict] | None = None,
 ) -> str | None:
     """Send a persistent intermediate Telegram reply without touching progress state."""
     bot_name = context.data.get(CTX_TG_BOT)
@@ -3356,31 +4330,33 @@ async def send_telegram_inline_response(
     if not chat_id:
         return "No chat_id on context"
 
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    chat_type = context.data.get(CTX_TG_CHAT_TYPE)
     reply_to = context.data.get(CTX_TG_REPLY_TO)
-    text_body = (response_text or "").strip()
+    outbound_items = _normalize_outbound_items(attachments, telegram_items)
+    reply_keyboard = None
+    planned_items, text_body, media_reply_markup, _response_text_in_caption = _plan_outbound_delivery(
+        outbound_items,
+        response_text,
+        keyboard,
+    )
 
     try:
         async with _temp_bot(
             instance.bot.token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         ) as reply_bot:
-            if attachments:
-                for path in attachments:
-                    local_path = files.fix_dev_path(path)
-                    if tc.is_image_file(local_path):
-                        await tc.send_photo(
-                            reply_bot,
-                            chat_id,
-                            local_path,
-                            reply_to_message_id=reply_to,
-                        )
-                    else:
-                        await tc.send_file(
-                            reply_bot,
-                            chat_id,
-                            local_path,
-                            reply_to_message_id=reply_to,
-                        )
+            if planned_items:
+                outbound_reply_markup = media_reply_markup
+                if outbound_reply_markup is None and not text_body:
+                    outbound_reply_markup = reply_keyboard
+                await _send_outbound_items(
+                    reply_bot,
+                    chat_id,
+                    planned_items,
+                    reply_to,
+                    reply_markup=outbound_reply_markup,
+                )
 
             if text_body:
                 await _send_telegram_text_message(
@@ -3389,6 +4365,7 @@ async def send_telegram_inline_response(
                     text_body,
                     keyboard,
                     reply_to,
+                    reply_markup=reply_keyboard,
                 )
 
         return None
@@ -3405,6 +4382,7 @@ async def send_telegram_reply(
     attachments: list[str] | None = None,
     keyboard: list[list[dict]] | None = None,
     voice_text: str | None = None,
+    telegram_items: list[dict] | None = None,
 ) -> str | None:
     """Send reply to Telegram user. Returns error string or None on success."""
     bot_name = context.data.get(CTX_TG_BOT)
@@ -3420,6 +4398,7 @@ async def send_telegram_reply(
         return "No chat_id on context"
 
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    chat_type = context.data.get(CTX_TG_CHAT_TYPE)
     reply_cfg = speech.voice_reply_settings(bot_cfg)
 
     # Per-response overrides set by the response-tool (tool_execute_after extension).
@@ -3440,6 +4419,7 @@ async def send_telegram_reply(
     want_voice = mode == "force" or (mode == "auto" and last_input_was_voice)
 
     reply_to = context.data.get(CTX_TG_REPLY_TO)
+    outbound_items = _normalize_outbound_items(attachments, telegram_items)
 
     tts_raw = ((voice_text or "").strip() or (response_text or "").strip())
 
@@ -3463,52 +4443,120 @@ async def send_telegram_reply(
 
     try:
         async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as reply_bot:
-            if attachments:
-                for path in attachments:
-                    local_path = files.fix_dev_path(path)
-                    if tc.is_image_file(local_path):
-                        await tc.send_photo(reply_bot, chat_id, local_path, reply_to_message_id=reply_to)
-                    else:
-                        await tc.send_file(reply_bot, chat_id, local_path, reply_to_message_id=reply_to)
-
             also = speech.effective_also_send_text(bot_cfg, context.data)
             quick_actions = speech.quick_actions_settings(bot_cfg)
             # If the agent only set voice_text (TTS) and left text empty, response_text is
             # empty but users still expect a text bubble when also_send_text is on.
-            text_body = (response_text or "").strip()
-            if not text_body and (voice_text or "").strip():
-                text_body = (voice_text or "").strip()
+            logical_text_body = (response_text or "").strip()
+            if not logical_text_body and (voice_text or "").strip():
+                logical_text_body = (voice_text or "").strip()
 
-            context.data[CTX_TG_LAST_TEXT_RESPONSE] = text_body
+            context.data[CTX_TG_LAST_TEXT_RESPONSE] = logical_text_body
             response_token = ""
-            if text_body:
+            has_answer_payload = bool(logical_text_body or outbound_items or (want_voice and tts_raw and tts_on))
+            if has_answer_payload:
                 response_token = uuid.uuid4().hex[:12]
+                context.data[CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = response_token
+            else:
+                context.data.pop(CTX_TG_LAST_RESPONSE_ACTION_TOKEN, None)
+            if logical_text_body and response_token:
                 context.data[CTX_TG_LAST_TEXT_RESPONSE_TOKEN] = response_token
             else:
                 context.data.pop(CTX_TG_LAST_TEXT_RESPONSE_TOKEN, None)
 
-            # Offer "Show text" whenever a voice reply is expected to be the only
-            # visible response; if voice send fails we still fall back to a text bubble.
-            final_keyboard = _append_inline_keyboard(keyboard, None)
-            should_send_text_with_voice = bool(text_body) and (
-                final_keyboard is not None or also
+            base_keyboard = _append_inline_keyboard(keyboard, None)
+            reply_keyboard = None
+            base_planned_items, base_text_body, _base_media_reply_markup, base_response_text_in_caption = _plan_outbound_delivery(
+                outbound_items,
+                logical_text_body,
+                base_keyboard,
             )
+            base_should_send_text_with_voice = bool(base_text_body) and (
+                base_keyboard is not None
+                or also
+                or base_text_body != logical_text_body
+            )
+            base_response_text_visible = bool(base_response_text_in_caption) or bool(
+                logical_text_body
+                and base_text_body == logical_text_body
+                and base_should_send_text_with_voice
+            )
+            reply_actions_enabled = speech.effective_reply_actions_enabled(bot_cfg, context.data)
             want_show_text_button = bool(
-                text_body
+                logical_text_body
                 and want_voice
-                and not should_send_text_with_voice
-                and quick_actions.get("enabled", True)
+                and not base_response_text_visible
                 and quick_actions.get("show_text", True)
             )
-            voice_buttons = (
-                _show_text_quick_action_keyboard(response_token)
-                if want_show_text_button
-                else None
+            hidden_voice_action_host = bool(
+                response_token
+                and want_voice
+                and logical_text_body
+                and not base_response_text_visible
             )
+            delivery_can_host_actions = bool(
+                response_token
+                and (
+                    logical_text_body
+                    or len(base_planned_items) <= 1
+                    or base_keyboard is not None
+                )
+            )
+            response_action_rows = None
+            show_more_button = bool(logical_text_body and reply_actions_enabled)
+            if response_token and hidden_voice_action_host:
+                voice_buttons = _response_action_keyboard(
+                    response_token,
+                    include_more=show_more_button,
+                    include_show_text=want_show_text_button,
+                )
+            else:
+                voice_buttons = None
+                if delivery_can_host_actions and show_more_button:
+                    response_action_rows = _response_action_keyboard(
+                        response_token,
+                        include_more=True,
+                    )
+            final_keyboard = _append_inline_keyboard(base_keyboard, response_action_rows)
+            planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(
+                outbound_items,
+                logical_text_body,
+                final_keyboard,
+            )
+            should_send_text_with_voice = bool(text_body) and (
+                final_keyboard is not None
+                or also
+                or text_body != logical_text_body
+            )
+            response_text_visible = bool(response_text_in_caption) or bool(
+                logical_text_body
+                and text_body == logical_text_body
+                and should_send_text_with_voice
+            )
+
+            if planned_items:
+                outbound_reply_markup = media_reply_markup
+                if outbound_reply_markup is None and not text_body:
+                    outbound_reply_markup = reply_keyboard
+                sent_artifact_count = await _send_outbound_items(
+                    reply_bot,
+                    chat_id,
+                    planned_items,
+                    reply_to,
+                    reply_markup=outbound_reply_markup,
+                )
+            else:
+                sent_artifact_count = 0
 
             sent_voice = False
             voice_file: str | None = None
             if want_voice and tts_raw and tts_on:
+                await _set_progress_phase_and_refresh(
+                    context,
+                    bot_cfg,
+                    "tts",
+                    require_existing_message=True,
+                )
                 try:
                     max_chars = max(100, int(reply_cfg["max_chars"]))
                     tts_payload = tts_raw[:max_chars]
@@ -3520,6 +4568,16 @@ async def send_telegram_reply(
                         voice_file,
                         reply_to_message_id=reply_to,
                         buttons=voice_buttons,
+                        reply_markup=(
+                            reply_keyboard
+                            if (
+                                reply_keyboard
+                                and not voice_buttons
+                                and not planned_items
+                                and not should_send_text_with_voice
+                            )
+                            else None
+                        ),
                     )
                     sent_voice = bool(msg_id)
                     if sent_voice:
@@ -3529,6 +4587,7 @@ async def send_telegram_reply(
                 except Exception as e:
                     PrintStyle.error(f"Telegram TTS failed: {format_error(e)}")
                 finally:
+                    _set_progress_phase(context, None)
                     if voice_file:
                         with suppress(Exception):
                             os.remove(voice_file)
@@ -3536,14 +4595,17 @@ async def send_telegram_reply(
             used_native_draft = bool(context.data.get(CTX_TG_STREAM_DRAFT_USED))
 
             should_send_text = bool(text_body) and (
-                final_keyboard is not None or not sent_voice or also
+                final_keyboard is not None
+                or not sent_voice
+                or also
+                or text_body != logical_text_body
             )
             progress_message_became_final = False
             if should_send_text:
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 use_final_edit = bool(
                     progress_message_id
-                    and not attachments
+                    and not planned_items
                     and not used_native_draft
                 )
 
@@ -3567,10 +4629,18 @@ async def send_telegram_reply(
                         text_body,
                         final_keyboard,
                         reply_to,
+                        reply_markup=reply_keyboard,
                     )
 
             if not progress_message_became_final:
-                await _cleanup_progress_message_after_final(reply_bot, context, bot_cfg)
+                await _cleanup_progress_message_after_final(
+                    reply_bot,
+                    context,
+                    bot_cfg,
+                    sent_text=should_send_text,
+                    sent_voice=sent_voice,
+                    sent_artifact_count=sent_artifact_count,
+                )
 
             _clear_progress_state(context)
 
@@ -3602,6 +4672,7 @@ async def _send_with_temp_bot(
     text: str,
     parse_mode: str | ParseMode | None = None,
     keyboard: list[list[dict]] | None = None,
+    reply_markup=None,
 ):
     """Send text using a temporary Bot to avoid cross-event-loop session issues."""
     async with _temp_bot(token) as bot:
@@ -3610,7 +4681,9 @@ async def _send_with_temp_bot(
                 bot, chat_id, text, keyboard, parse_mode=parse_mode
             )
         else:
-            await tc.send_text(bot, chat_id, text, parse_mode=parse_mode)
+            await tc.send_text(
+                bot, chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup,
+            )
 
 
 def _start_typing(token: str, chat_id: int) -> threading.Event:

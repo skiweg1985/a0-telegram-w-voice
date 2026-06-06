@@ -44,6 +44,16 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/session [id|search …] — browse, search, or switch saved sessions for this Telegram chat",
     ),
     (
+        "title",
+        "Rename current session",
+        "/title [new name|auto] — set a manual session title or reset to automatic naming",
+    ),
+    (
+        "actions",
+        "Reply actions",
+        "/actions [on|off] — toggle the per-reply More menu for this session",
+    ),
+    (
         "topic",
         "Open or name a topic",
         "/topic [name] — open a named topic or start a new one; no arg lists topics",

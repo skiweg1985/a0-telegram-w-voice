@@ -60,6 +60,11 @@ def _install_stub_helpers():
     aiogram_types.FSInputFile = _DummyInline
     aiogram_types.InlineKeyboardButton = _DummyInline
     aiogram_types.InlineKeyboardMarkup = _DummyInline
+    aiogram_types.InputMediaDocument = _DummyInline
+    aiogram_types.InputMediaPhoto = _DummyInline
+    aiogram_types.InputMediaVideo = _DummyInline
+    aiogram_types.KeyboardButton = _DummyInline
+    aiogram_types.ReplyKeyboardMarkup = _DummyInline
     sys.modules["aiogram.types"] = aiogram_types
 
     helpers = sys.modules.get("helpers")

@@ -5,6 +5,7 @@ from agent import AgentContext, LoopData, UserMessage
 from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_BOT,
     CTX_TG_ATTACHMENTS,
+    CTX_TG_ITEMS,
     CTX_TG_KEYBOARD,
     CTX_TG_TYPING_STOP,
     CTX_TG_REPLY_TO,
@@ -47,10 +48,18 @@ class TelegramAutoReply(Extension):
                 return
 
             attachments = context.data.pop(CTX_TG_ATTACHMENTS, [])
+            telegram_items = context.data.pop(CTX_TG_ITEMS, [])
             keyboard = context.data.pop(CTX_TG_KEYBOARD, None)
             voice_text = context.data.pop(CTX_TG_VOICE_TEXT, None)
 
-            await self._send_reply(context, response_text, attachments, keyboard, voice_text)
+            await self._send_reply(
+                context,
+                response_text,
+                attachments,
+                telegram_items,
+                keyboard,
+                voice_text,
+            )
         except Exception as e:
             PrintStyle.error(f"Telegram auto-reply error: {format_error(e)}")
         finally:
@@ -61,6 +70,7 @@ class TelegramAutoReply(Extension):
             context.data.pop(CTX_TG_REPLY_TO, None)
             context.data.pop(CTX_TG_REPLY_CONTEXT, None)
             context.data.pop(CTX_TG_ATTACHMENTS, None)
+            context.data.pop(CTX_TG_ITEMS, None)
             context.data.pop(CTX_TG_KEYBOARD, None)
             context.data.pop(CTX_TG_VOICE_TEXT, None)
             context.data.pop(CTX_TG_FINAL_REPLY_SENT, None)
@@ -71,6 +81,7 @@ class TelegramAutoReply(Extension):
         context: AgentContext,
         response_text: str,
         attachments: list[str],
+        telegram_items: list[dict],
         keyboard: list[list[dict]] | None,
         voice_text: str | None = None,
     ):
@@ -78,7 +89,12 @@ class TelegramAutoReply(Extension):
         from usr.plugins.telegram_integration_voice.helpers.handler import send_telegram_reply
 
         error = await send_telegram_reply(
-            context, response_text, attachments or None, keyboard, voice_text=voice_text,
+            context,
+            response_text,
+            attachments or None,
+            keyboard,
+            voice_text=voice_text,
+            telegram_items=telegram_items or None,
         )
         if not error:
             context.data[CTX_SEND_FAILURES] = 0

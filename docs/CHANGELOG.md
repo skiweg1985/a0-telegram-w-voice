@@ -14,6 +14,7 @@
 - New bot config keys: `telegram_detail_icons_enabled` (default true), `telegram_detail_tool_icons` (override map), `telegram_detail_max_body_chars` (debug JSON truncation limit, default 3200).
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
 - New Telegram progress config keys `live_response_preview_interval_ms` and `live_response_preview_buffer_threshold` to tune live-preview cadence and early flush behavior.
+- Response transform quick actions on text replies: **Shorter**, **More technical**, and **Step by step** rewrite the last assistant answer in place instead of continuing the task.
 
 ### Removed
 
@@ -31,6 +32,9 @@
 
 ### Changed
 
+- Private-chat reply keyboard stays attached on slash-command and inline-picker replies (`/retry`, `/undo`, session callbacks, and similar), so the DM control pad no longer disappears after status messages.
+- Single-photo/video/document replies can carry the agent text as a media caption instead of a separate bubble; inline keyboards attach to the media when that reads better. Multi-item albums use a short companion message for keyboard-only replies.
+- Telegram response prompt guidance now distinguishes attachments vs `telegram_items`, recommends direct multi-file sends over zipping when appropriate, and documents caption/keyboard patterns for media replies.
 - Slash-command modes are now switch-only: `/detail` and `/optimize_output` no longer offer **Reset**/`reset`/`default`. Every command sets a concrete mode (e.g. `/detail off`), and the WebUI default applies again after `/newchat` or `/clear`.
 - `/voice off` copy now reads "Voice mode: off — replies are text only" instead of implying a return to a configured default.
 - `/start` welcomes with the voice and status commands; `/help` notes that reply and voice modes can be switched anytime in chat.

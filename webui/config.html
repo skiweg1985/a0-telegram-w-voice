@@ -90,7 +90,7 @@
               </button>
             </div>
 
-            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureProgress(bot); $store.telegramConfig.ensureSpeech(bot)">
+            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureProgress(bot); $store.telegramConfig.ensureSpeech(bot); $store.telegramConfig.ensureReplyKeyboard(bot)">
 
               <div class="field">
                 <div class="field-label">

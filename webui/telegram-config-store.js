@@ -115,6 +115,7 @@ export const store = createStore("telegramConfig", {
     bot.progress = { ...d, ...(bot.progress || {}) };
   },
 
+
   addBot(config) {
     if (!config.bots) config.bots = [];
     const bot = this.defaultBot();
