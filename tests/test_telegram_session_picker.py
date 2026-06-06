@@ -1313,6 +1313,31 @@ class TelegramSessionPickerTests(unittest.TestCase):
         query.answer.assert_awaited_once_with("Action is no longer available.")
         log_user_message.assert_not_called()
 
+    def test_handle_actions_without_arg_shows_inline_picker(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/actions",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler.speech, "effective_reply_actions_enabled", return_value=True), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_actions(message, "mainbot", {}))
+
+        self.assertEqual(saved, [ctx])
+        self.assertIn("Reply actions: on", sent[-1][0][2])
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}a|on")
+        self.assertEqual(keyboard[0][1]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}a|off")
+
     def test_handle_actions_sets_session_toggle(self):
         handler = self.handler
         ctx = _DummyAgentContext(name="Shipping dashboard")
@@ -1333,6 +1358,32 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertEqual(ctx.data[handler.CTX_TG_REPLY_ACTIONS_SESSION], "off")
         self.assertEqual(saved, [ctx])
+        self.assertIn("Reply actions: off", sent[-1][0][2])
+
+    def test_handle_callback_query_actions_toggle_sets_session_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}a|off",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_REPLY_ACTIONS_SESSION], "off")
+        self.assertEqual(saved, [ctx])
+        query.answer.assert_awaited_once_with("OK")
         self.assertIn("Reply actions: off", sent[-1][0][2])
 
     def test_handle_callback_query_more_open_replaces_keyboard_with_transform_menu(self):
