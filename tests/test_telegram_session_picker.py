@@ -450,8 +450,8 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx = _DummyAgentContext()
         html_text = handler._render_progress_status_html(ctx, {}, done=False)
 
-        self.assertIn("🔄 In progress…", html_text)
-        self.assertNotIn("Working", html_text)
+        self.assertIn("⏳ Working on it…", html_text)
+        self.assertNotIn("In progress", html_text)
 
     def test_render_progress_status_html_shows_gen_phase_in_header(self):
         handler = self.handler
@@ -460,7 +460,25 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         html_text = handler._render_progress_status_html(ctx, {}, done=False)
 
-        self.assertIn("🔄 In progress… [GEN…]", html_text)
+        self.assertIn("🤔 Drafting reply…", html_text)
+
+    def test_render_progress_status_html_shows_stt_phase_in_header(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_PROGRESS_PHASE] = "stt"
+
+        html_text = handler._render_progress_status_html(ctx, {}, done=False)
+
+        self.assertIn("🎤 Transcribing voice…", html_text)
+
+    def test_render_progress_status_html_shows_tts_phase_in_header(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_PROGRESS_PHASE] = "tts"
+
+        html_text = handler._render_progress_status_html(ctx, {}, done=False)
+
+        self.assertIn("🔊 Creating voice reply…", html_text)
 
     def test_render_progress_status_html_includes_live_preview_block(self):
         handler = self.handler
@@ -701,6 +719,63 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         send_progress.assert_not_called()
 
+    def test_handle_message_voice_input_refreshes_progress_for_transcription(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.agent0 = types.SimpleNamespace(
+            read_prompt=lambda template, sender, body: body,
+            history=types.SimpleNamespace(compress=lambda: False),
+        )
+        communicated = []
+        ctx.communicate = lambda msg: communicated.append(msg)
+        message = types.SimpleNamespace(
+            text=None,
+            caption=None,
+            photo=None,
+            document=None,
+            audio=None,
+            video=None,
+            video_note=None,
+            voice=types.SimpleNamespace(file_id="voice1", file_unique_id="uniq1"),
+            reply_to_message=None,
+            message_id=55,
+            chat=types.SimpleNamespace(id=99, type="private"),
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+        )
+
+        class _AsyncBotCM:
+            async def __aenter__(self):
+                return types.SimpleNamespace(token="t")
+
+            async def __aexit__(self, *a):
+                return False
+
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=object()), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock(return_value=None)), \
+             mock.patch.object(handler, "_refresh_progress_status", new=mock.AsyncMock(return_value=None)) as refresh_progress, \
+             mock.patch.object(handler, "_temp_bot", return_value=_AsyncBotCM()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=["/tmp/voice.ogg"])), \
+             mock.patch.object(handler, "_extract_message_content", return_value="[Voice message — see attachment]"), \
+             mock.patch.object(handler, "_extract_reply_context", return_value=None), \
+             mock.patch.object(handler, "_message_has_voice_input", return_value=True), \
+             mock.patch.object(handler.speech, "stt_enabled", return_value=True, create=True), \
+             mock.patch.object(handler.speech, "transcribe_audio_file", return_value={"text": "Hallo Welt"}, create=True), \
+             mock.patch.object(handler.mq, "log_user_message") as log_user_message, \
+             mock.patch.object(handler, "save_tmp_chat") as save_tmp_chat:
+            asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        self.assertEqual(refresh_progress.await_count, 2)
+        self.assertEqual(refresh_progress.await_args_list[0].args[1], {})
+        self.assertEqual(refresh_progress.await_args_list[1].kwargs["require_existing_message"], True)
+        self.assertNotIn(handler.CTX_TG_PROGRESS_PHASE, ctx.data)
+        self.assertEqual(ctx.data[handler.CTX_TG_LAST_USER_BODY], "[Voice transcript]\nHallo Welt")
+        self.assertEqual(len(communicated), 1)
+        log_user_message.assert_called_once()
+        save_tmp_chat.assert_called()
+
     def _reply_context(self, progress_cfg=None):
         handler = self.handler
         ctx = _DummyAgentContext()
@@ -831,7 +906,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
             handler.tc.send_voice.assert_awaited_once()
             handler.tc.send_text.assert_not_awaited()
             handler.tc.send_text_with_keyboard.assert_not_awaited()
-            handler.tc.edit_text.assert_not_awaited()
 
             voice_kwargs = handler.tc.send_voice.await_args.kwargs
             self.assertIsNotNone(voice_kwargs.get("buttons"))
@@ -845,6 +919,28 @@ class TelegramSessionPickerTests(unittest.TestCase):
                 [btn["text"] for btn in voice_kwargs["buttons"][1]],
                 ["🔁 Retry", "✏️ Continue", "➕ New session"],
             )
+
+    def test_send_telegram_reply_refreshes_progress_for_tts_phase(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE] = True
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="auto",
+            tts_enabled=True,
+            also_send_text=False,
+        ), mock.patch.object(handler, "_refresh_progress_status", new=mock.AsyncMock(return_value=None)) as refresh_progress:
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
+            self.assertIsNone(result)
+            refresh_progress.assert_awaited_once_with(
+                ctx,
+                ctx.data[handler.CTX_TG_BOT_CFG],
+                require_existing_message=True,
+            )
+            self.assertNotIn(handler.CTX_TG_PROGRESS_PHASE, ctx.data)
 
     def test_send_telegram_reply_auto_voice_with_visible_text_skips_show_text_button(self):
         handler = self.handler
@@ -862,7 +958,6 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertIsNone(result)
             handler.tc.send_voice.assert_awaited_once()
             self.assertIsNone(handler.tc.send_voice.await_args.kwargs.get("buttons"))
-            handler.tc.edit_text.assert_not_awaited()
             handler.tc.edit_text_with_keyboard.assert_awaited_once()
 
     def test_send_telegram_reply_voice_only_still_adds_show_text_button(self):

@@ -1496,6 +1496,14 @@ def _status_model_code(provider: str, name: str, esc) -> str:
     return f"<code>{p}</code>/<code>{n}</code>"
 
 
+def _progress_phase_label(phase: str) -> str:
+    return {
+        "stt": "transcribing voice",
+        "gen": "drafting reply",
+        "tts": "creating voice reply",
+    }.get(str(phase or "").strip().lower(), "")
+
+
 async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /status — model, tokens, project, TTS/STT, run state."""
     user = message.from_user
@@ -1544,10 +1552,14 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         win_tokens = int((ctx_window.get("tokens") or 0))
         pct = (100.0 * hist_tokens / hist_limit) if hist_limit else 0.0
         hist_pct = f"{pct:.1f}%" if hist_limit else "n/a"
+        phase = str(ctx.data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
+        phase_label = _progress_phase_label(phase)
+        activity = "running" if ctx.is_running() else "idle"
+        if ctx.is_running() and phase_label:
+            activity = f"{activity} · {phase_label}"
         lines.insert(
             0,
-            f"⚡ <b>Activity</b>: {'running' if ctx.is_running() else 'idle'} · paused "
-            f"{'yes' if ctx.paused else 'no'}",
+            f"⚡ <b>Activity</b>: {activity} · paused {'yes' if ctx.paused else 'no'}",
         )
         lines.append(
             f"📚 <b>Context</b>: ~{hist_tokens} / ~{hist_limit} tok ({hist_pct}) · "
@@ -2154,6 +2166,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         audio_ref = _pick_audio_attachment(attachments)
         if audio_ref:
             audio_path = files.fix_dev_path(audio_ref)
+            await _set_progress_phase_and_refresh(context, bot_cfg, "stt")
             try:
                 stt_result = await asyncio.to_thread(speech.transcribe_audio_file, bot_cfg, audio_path)
                 transcript = str((stt_result or {}).get("text") or "").strip()
@@ -2164,6 +2177,13 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             except Exception as e:
                 PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
                 text = text + f"\n[Voice transcript failed: {format_error(e)}]"
+            finally:
+                await _set_progress_phase_and_refresh(
+                    context,
+                    bot_cfg,
+                    None,
+                    require_existing_message=True,
+                )
 
     if reply_context:
         context.data[CTX_TG_REPLY_CONTEXT] = reply_context
@@ -3012,13 +3032,19 @@ def _progress_history_limit(bot_cfg: dict, level: str) -> int:
     return max(1, min(value, 20))
 
 
+def _progress_phase_title(phase: str) -> str:
+    return {
+        "stt": "🎤 Transcribing voice…",
+        "gen": "🤔 Drafting reply…",
+        "tts": "🔊 Creating voice reply…",
+    }.get(str(phase or "").strip().lower(), "⏳ Working on it…")
+
+
 def _progress_status_title(context: AgentContext, bot_cfg: dict, *, done: bool = False) -> str:
     if done:
-        return "Done"
+        return "✅ Ready"
     phase = str(context.data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
-    if phase == "gen":
-        return "🔄 In progress… [GEN…]"
-    return "🔄 In progress…"
+    return _progress_phase_title(phase)
 
 
 def _set_progress_phase(context: AgentContext, phase: str | None) -> bool:
@@ -3031,6 +3057,21 @@ def _set_progress_phase(context: AgentContext, phase: str | None) -> bool:
     else:
         context.data.pop(CTX_TG_PROGRESS_PHASE, None)
     return True
+
+
+async def _set_progress_phase_and_refresh(
+    context: AgentContext,
+    bot_cfg: dict,
+    phase: str | None,
+    *,
+    require_existing_message: bool = False,
+):
+    if _set_progress_phase(context, phase):
+        await _refresh_progress_status(
+            context,
+            bot_cfg,
+            require_existing_message=require_existing_message,
+        )
 
 
 def _progress_line_prefix(line_html: str) -> str:
@@ -3053,7 +3094,7 @@ def _render_progress_status_html(context: AgentContext, bot_cfg: dict, *, done: 
         parts.extend(_progress_line_prefix(line) for line in lines)
     elif not done and level == "off":
         parts.append("")
-        parts.append("<i>Processing your request…</i>")
+        parts.append("<i>Working on it…</i>")
     preview_html = _render_live_response_preview_html(context, bot_cfg, done=done)
     if preview_html:
         parts.append("")
@@ -3411,7 +3452,7 @@ async def _cleanup_progress_message_after_final(
     if mode == "delete":
         await tc.delete_message(reply_bot, int(chat_id), int(progress_message_id))
     elif mode == "edit":
-        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), "Done")
+        await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), "✅ Ready")
 
 
 def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
@@ -4267,6 +4308,12 @@ async def send_telegram_reply(
             sent_voice = False
             voice_file: str | None = None
             if want_voice and tts_raw and tts_on:
+                await _set_progress_phase_and_refresh(
+                    context,
+                    bot_cfg,
+                    "tts",
+                    require_existing_message=True,
+                )
                 try:
                     max_chars = max(100, int(reply_cfg["max_chars"]))
                     tts_payload = tts_raw[:max_chars]
@@ -4297,6 +4344,7 @@ async def send_telegram_reply(
                 except Exception as e:
                     PrintStyle.error(f"Telegram TTS failed: {format_error(e)}")
                 finally:
+                    _set_progress_phase(context, None)
                     if voice_file:
                         with suppress(Exception):
                             os.remove(voice_file)
