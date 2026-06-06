@@ -191,6 +191,10 @@ def _install_stub_modules():
     errors.format_error = lambda e: str(e)
     sys.modules["helpers.errors"] = errors
 
+    state_monitor = types.ModuleType("helpers.state_monitor_integration")
+    state_monitor.mark_dirty_all = lambda *args, **kwargs: None
+    sys.modules["helpers.state_monitor_integration"] = state_monitor
+
     initialize = types.ModuleType("initialize")
     initialize.initialize_agent = lambda: {}
     sys.modules["initialize"] = initialize
@@ -210,6 +214,19 @@ def _install_stub_modules():
     telegram_helpers_pkg = types.ModuleType("usr.plugins.telegram_integration_voice.helpers")
     telegram_helpers_pkg.__path__ = []
     sys.modules["usr.plugins.telegram_integration_voice.helpers"] = telegram_helpers_pkg
+
+    chat_rename_pkg = types.ModuleType("usr.plugins.chat_rename")
+    chat_rename_pkg.__path__ = []
+    sys.modules["usr.plugins.chat_rename"] = chat_rename_pkg
+
+    chat_rename_helpers_pkg = types.ModuleType("usr.plugins.chat_rename.helpers")
+    chat_rename_helpers_pkg.__path__ = []
+    sys.modules["usr.plugins.chat_rename.helpers"] = chat_rename_helpers_pkg
+
+    chat_rename_constants = types.ModuleType("usr.plugins.chat_rename.helpers.constants")
+    chat_rename_constants.MANUAL_LOCK_DATA_KEY = "chat_rename_manual_lock"
+    chat_rename_constants.MAX_MANUAL_CHAT_NAME_LENGTH = 120
+    sys.modules["usr.plugins.chat_rename.helpers.constants"] = chat_rename_constants
 
     tc = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.telegram_client")
     tc.send_text_with_keyboard = lambda *args, **kwargs: None
@@ -983,6 +1000,82 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertIsNone(result)
             handler.tc.send_media_group.assert_awaited_once()
             self.assertEqual(handler.tc.send_text_with_keyboard.await_args.args[2], "Choose an option:")
+
+
+    def test_handle_title_sets_manual_chat_title_and_lock(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Old title")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/title Shipping dashboard",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+        dirty = []
+
+        state_monitor = sys.modules["helpers.state_monitor_integration"]
+        state_monitor.mark_dirty_all = lambda **kwargs: dirty.append(kwargs)
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_title(message, "mainbot", {}))
+
+        self.assertEqual(ctx.name, "Shipping dashboard")
+        self.assertTrue(ctx.data["chat_rename_manual_lock"])
+        self.assertEqual(saved, [ctx])
+        self.assertEqual(dirty[-1]["reason"], "plugins.telegram_integration_voice.title.set")
+        self.assertIn("Session title set to: Shipping dashboard", sent[-1][0][2])
+
+    def test_handle_title_auto_clears_manual_title_and_lock(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {"chat_rename_manual_lock": True}
+        message = types.SimpleNamespace(
+            text="/title auto",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+        dirty = []
+
+        state_monitor = sys.modules["helpers.state_monitor_integration"]
+        state_monitor.mark_dirty_all = lambda **kwargs: dirty.append(kwargs)
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_title(message, "mainbot", {}))
+
+        self.assertIsNone(ctx.name)
+        self.assertNotIn("chat_rename_manual_lock", ctx.data)
+        self.assertEqual(saved, [ctx])
+        self.assertEqual(dirty[-1]["reason"], "plugins.telegram_integration_voice.title.clear")
+        self.assertIn("Session title reset to automatic naming.", sent[-1][0][2])
+
+    def test_handle_title_without_argument_reports_current_manual_title(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {"chat_rename_manual_lock": True}
+        message = types.SimpleNamespace(
+            text="/title",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_title(message, "mainbot", {}))
+
+        self.assertIn("Current title: Shipping dashboard", sent[-1][0][2])
+        self.assertIn("/title auto", sent[-1][0][2])
 
 
 if __name__ == "__main__":

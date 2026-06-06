@@ -121,6 +121,61 @@ def _cmd_rest(message: TgMessage) -> str:
     return parts[1].strip()
 
 
+_CHAT_RENAME_MANUAL_LOCK_KEY = "chat_rename_manual_lock"
+_CHAT_RENAME_MAX_NAME_LENGTH = 120
+
+
+def _chat_rename_manual_lock_key() -> str:
+    try:
+        from usr.plugins.chat_rename.helpers.constants import MANUAL_LOCK_DATA_KEY
+
+        value = str(MANUAL_LOCK_DATA_KEY or "").strip()
+        if value:
+            return value
+    except Exception:
+        pass
+    return _CHAT_RENAME_MANUAL_LOCK_KEY
+
+
+def _chat_rename_max_name_length() -> int:
+    try:
+        from usr.plugins.chat_rename.helpers.constants import MAX_MANUAL_CHAT_NAME_LENGTH
+
+        value = int(MAX_MANUAL_CHAT_NAME_LENGTH or 0)
+        if value > 0:
+            return value
+    except Exception:
+        pass
+    return _CHAT_RENAME_MAX_NAME_LENGTH
+
+
+def _mark_chat_state_dirty(reason: str) -> None:
+    try:
+        from helpers.state_monitor_integration import mark_dirty_all
+
+        mark_dirty_all(reason=reason)
+    except Exception:
+        pass
+
+
+def _set_manual_chat_title(ctx: AgentContext, raw_title: str) -> str:
+    title = str(raw_title or "").strip()[: _chat_rename_max_name_length()]
+    if not title:
+        raise ValueError("Chat title cannot be empty")
+    ctx.name = title
+    ctx.data[_chat_rename_manual_lock_key()] = True
+    save_tmp_chat(ctx)
+    _mark_chat_state_dirty("plugins.telegram_integration_voice.title.set")
+    return title
+
+
+def _clear_manual_chat_title(ctx: AgentContext) -> None:
+    ctx.name = None
+    ctx.data.pop(_chat_rename_manual_lock_key(), None)
+    save_tmp_chat(ctx)
+    _mark_chat_state_dirty("plugins.telegram_integration_voice.title.clear")
+
+
 def _parse_plugin_ui_callback(data: str) -> tuple[str, str] | None:
     """Parse tgx|<kind>|<payload> (plugin UI). Returns (kind, payload) or None."""
     if not data or not data.startswith(TG_UI_CALLBACK_PREFIX):
@@ -1332,6 +1387,60 @@ async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dic
         reply = "Usage: /optimize_output auto|voice|text|off"
 
     save_tmp_chat(ctx)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
+async def handle_title(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /title — set or clear the current session title using Chat Rename-compatible semantics."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        current = str(getattr(ctx, "name", "") or "").strip()
+        manual = bool(ctx.data.get(_chat_rename_manual_lock_key()))
+        if current and manual:
+            reply = (
+                f"Current title: {current}\n"
+                "Use /title <new name> to rename this session or /title auto to return to automatic naming."
+            )
+        elif current:
+            reply = (
+                f"Current title: {current}\n"
+                "Use /title <new name> to set a manual title or /title auto to clear it."
+            )
+        else:
+            reply = "No manual title set. Use /title <new name> or /title auto."
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+        )
+        return
+
+    if arg.strip().lower() == "auto":
+        _clear_manual_chat_title(ctx)
+        reply = "Session title reset to automatic naming."
+    else:
+        try:
+            title = _set_manual_chat_title(ctx, arg)
+            reply = f"Session title set to: {title}"
+        except ValueError:
+            reply = "Usage: /title <new name> or /title auto"
+
     await _send_with_temp_bot(
         instance.bot.token,
         message.chat.id,
