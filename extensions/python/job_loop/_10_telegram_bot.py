@@ -52,6 +52,7 @@ class TelegramBotManager(Extension):
         handle_help = _tg_handler.handle_help
         handle_session = _tg_handler.handle_session
         handle_title = getattr(_tg_handler, "handle_title", None)
+        handle_actions = getattr(_tg_handler, "handle_actions", None)
         handle_voice = getattr(_tg_handler, "handle_voice", None)
         handle_detail = _tg_handler.handle_detail
         handle_status = _tg_handler.handle_status
@@ -119,6 +120,11 @@ class TelegramBotManager(Extension):
                     if handle_title
                     else None
                 )
+                _on_actions = (
+                    partial(_make_handler(handle_actions), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_actions
+                    else None
+                )
                 _on_topic = (
                     partial(_make_handler(handle_topic), bot_name=name, bot_cfg=bot_cfg)
                     if handle_topic
@@ -161,6 +167,7 @@ class TelegramBotManager(Extension):
                     ("newchat", _on_newchat),
                     ("session", _on_session),
                     *(([("title", _on_title)]) if _on_title else []),
+                    *(([("actions", _on_actions)]) if _on_actions else []),
                     *(([("topic", _on_topic)]) if _on_topic else []),
                     *(([("voice", _on_voice)]) if _on_voice else []),
                     ("detail", _on_detail),

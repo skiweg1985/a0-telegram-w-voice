@@ -84,6 +84,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_DETAIL_LEVEL_SESSION,
     CTX_TG_DETAIL_LAST_SENT_TS,
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
+    CTX_TG_REPLY_ACTIONS_SESSION,
     TG_UI_CALLBACK_PREFIX,
 )
 
@@ -232,21 +233,16 @@ def _voice_mode_inline_keyboard() -> list[list[dict]]:
 def _response_action_keyboard(
     token: str,
     *,
-    include_continue: bool,
-    include_transforms: bool,
+    include_more: bool,
     include_show_text: bool = False,
 ) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     rows: list[list[dict]] = []
     if include_show_text:
         rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
-    if include_transforms:
-        rows.extend(_response_transform_keyboard_rows(token))
-    action_row = [{"text": "🔁 Retry", "callback_data": f"{p}ra|retry:{token}"}]
-    if include_continue:
-        action_row.append({"text": "✏️ Continue", "callback_data": f"{p}ra|continue:{token}"})
-    action_row.append({"text": "➕ New session", "callback_data": f"{p}ra|new_session:{token}"})
-    rows.append(action_row)
+    if include_more:
+        show_text_flag = "1" if include_show_text else "0"
+        rows.append([{"text": "⋯ More", "callback_data": f"{p}rm|open:{token}:{show_text_flag}"}])
     return rows
 
 
@@ -324,6 +320,33 @@ def _response_transform_keyboard_rows(token: str) -> list[list[dict]]:
             "callback_data": f"{p}ra|{action}:{token}",
         })
     return [buttons] if buttons else []
+
+
+def _response_more_keyboard(token: str, *, include_show_text: bool = False) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    rows: list[list[dict]] = []
+    if include_show_text:
+        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
+    rows.extend(_response_transform_keyboard_rows(token))
+    rows.append([{"text": "🎙 To voice", "callback_data": f"{p}ra|to_voice:{token}"}])
+    back_flag = "1" if include_show_text else "0"
+    rows.append([{"text": "⬅ Back", "callback_data": f"{p}rm|back:{token}:{back_flag}"}])
+    return rows
+
+
+def _reply_actions_status_text(enabled: bool) -> str:
+    return "on" if enabled else "off"
+
+
+def _apply_reply_actions_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "on"
+        return "Reply actions: on — the More menu will be shown for this session."
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "off"
+        return "Reply actions: off — the More menu is hidden for this session."
+    return "Usage: /actions [on|off]"
 
 
 def _response_transform_spec(action: str) -> dict[str, str] | None:
@@ -1546,6 +1569,37 @@ async def handle_title(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+async def handle_actions(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /actions — toggle the per-reply More menu for this session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        effective = speech.effective_reply_actions_enabled(bot_cfg, ctx.data)
+        reply = (
+            f"Reply actions: {_reply_actions_status_text(effective)}.\n"
+            "Use /actions on or /actions off for this session."
+        )
+    else:
+        reply = _apply_reply_actions_setting(ctx, bot_cfg, arg)
+        save_tmp_chat(ctx)
+
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
 def _status_on_off(enabled: bool) -> str:
     return "on" if enabled else "off"
 
@@ -2504,6 +2558,44 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 )
                 await query.answer("Continuing" if not err else err)
                 return
+            if action == "to_voice":
+                source_answer = str(context.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+                if not source_answer:
+                    await query.answer("Answer is no longer available.")
+                    return
+                if not speech.tts_enabled(bot_cfg):
+                    await query.answer("TTS is disabled.")
+                    return
+                instance = get_bot(bot_name)
+                if not instance:
+                    await query.answer("Bot is offline.")
+                    return
+                voice_file = None
+                try:
+                    async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+                        reply_cfg = speech.voice_reply_settings(bot_cfg)
+                        max_chars = max(100, int(reply_cfg["max_chars"]))
+                        await tc.send_record_voice(bot, chat_id)
+                        voice_file, _meta = await asyncio.to_thread(
+                            speech.synthesize_to_voice_file,
+                            bot_cfg,
+                            source_answer[:max_chars],
+                        )
+                        await tc.send_voice(
+                            bot,
+                            chat_id,
+                            voice_file,
+                            reply_to_message_id=(query.message.message_id if query.message else None),
+                        )
+                    await query.answer("Sent as voice")
+                except Exception as e:
+                    PrintStyle.error(f"Telegram response to_voice failed: {format_error(e)}")
+                    await query.answer("Voice conversion failed.")
+                finally:
+                    if voice_file:
+                        with suppress(Exception):
+                            os.remove(voice_file)
+                return
             transform_spec = _response_transform_spec(action)
             if transform_spec:
                 source_answer = str(context.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
@@ -2576,6 +2668,52 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             await _send_with_temp_bot(
                 token, chat_id, reply, parse_mode=None
             )
+            return
+
+        if kind == "rm":
+            parts = payload.split(":")
+            if len(parts) < 2:
+                await query.answer("Unknown option.")
+                return
+            action = parts[0]
+            action_token = parts[1]
+            show_text_flag = len(parts) > 2 and parts[2] == "1"
+            if not _response_action_is_current(context, action_token):
+                await query.answer("Action is no longer available.")
+                return
+            if action == "open":
+                if not query.message:
+                    await query.answer("Message is no longer available.")
+                    return
+                keyboard = tc.build_inline_keyboard(_response_more_keyboard(action_token, include_show_text=show_text_flag))
+                edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
+                if callable(edit_reply_markup):
+                    await edit_reply_markup(reply_markup=keyboard)
+                else:
+                    async with _temp_bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+                        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=query.message.message_id, reply_markup=keyboard)
+                await query.answer("More")
+                return
+            if action == "back":
+                if not query.message:
+                    await query.answer("Message is no longer available.")
+                    return
+                keyboard = tc.build_inline_keyboard(
+                    _response_action_keyboard(
+                        action_token,
+                        include_more=True,
+                        include_show_text=show_text_flag,
+                    )
+                )
+                edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
+                if callable(edit_reply_markup):
+                    await edit_reply_markup(reply_markup=keyboard)
+                else:
+                    async with _temp_bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+                        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=query.message.message_id, reply_markup=keyboard)
+                await query.answer("Back")
+                return
+            await query.answer("Unknown option.")
             return
 
         if kind == "qa":
@@ -4343,11 +4481,11 @@ async def send_telegram_reply(
                 and base_text_body == logical_text_body
                 and base_should_send_text_with_voice
             )
+            reply_actions_enabled = speech.effective_reply_actions_enabled(bot_cfg, context.data)
             want_show_text_button = bool(
                 logical_text_body
                 and want_voice
                 and not base_response_text_visible
-                and quick_actions.get("enabled", True)
                 and quick_actions.get("show_text", True)
             )
             hidden_voice_action_host = bool(
@@ -4365,20 +4503,19 @@ async def send_telegram_reply(
                 )
             )
             response_action_rows = None
+            show_more_button = bool(logical_text_body and reply_actions_enabled)
             if response_token and hidden_voice_action_host:
                 voice_buttons = _response_action_keyboard(
                     response_token,
-                    include_continue=bool(logical_text_body),
-                    include_transforms=bool(logical_text_body),
+                    include_more=show_more_button,
                     include_show_text=want_show_text_button,
                 )
             else:
                 voice_buttons = None
-                if delivery_can_host_actions:
+                if delivery_can_host_actions and show_more_button:
                     response_action_rows = _response_action_keyboard(
                         response_token,
-                        include_continue=bool(logical_text_body),
-                        include_transforms=bool(logical_text_body),
+                        include_more=True,
                     )
             final_keyboard = _append_inline_keyboard(base_keyboard, response_action_rows)
             planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(

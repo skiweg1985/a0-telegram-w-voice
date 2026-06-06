@@ -238,13 +238,15 @@ def _install_stub_modules():
     tc.delete_message = lambda *args, **kwargs: None
     tc.supports_message_draft = lambda *args, **kwargs: False
     tc.send_message_draft = lambda *args, **kwargs: None
-    tc.build_inline_keyboard = lambda *args, **kwargs: {"inline_keyboard": True}
+    tc.build_inline_keyboard = lambda buttons, *args, **kwargs: {"inline_keyboard": buttons}
     tc.md_to_telegram_html = lambda text: text
 
     async def _tc_send_typing(*args, **kwargs):
         return None
 
     tc.send_typing = _tc_send_typing
+    tc.send_record_voice = _tc_send_typing
+    tc.send_voice = _tc_send_typing
     sys.modules["usr.plugins.telegram_integration_voice.helpers.telegram_client"] = tc
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
@@ -254,6 +256,11 @@ def _install_stub_modules():
 
     speech = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.speech")
     speech.optimize_output_default = lambda *args, **kwargs: "auto"
+    speech.tts_enabled = lambda *args, **kwargs: False
+    speech.voice_reply_settings = lambda *args, **kwargs: {"voice_mode": "off", "also_send_text": True, "max_chars": 700, "quick_actions": {"enabled": True, "show_text": True}}
+    speech.quick_actions_settings = lambda *args, **kwargs: {"enabled": True, "show_text": True}
+    speech.effective_reply_actions_enabled = lambda bot_cfg, ctx_data: str(ctx_data.get("telegram_reply_actions_session", "") or "").strip().lower() not in ("off", "false", "0", "no")
+    speech.synthesize_to_voice_file = lambda *args, **kwargs: ("/tmp/fake.ogg", {})
     sys.modules["usr.plugins.telegram_integration_voice.helpers.speech"] = speech
 
     bot_manager = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.bot_manager")
@@ -878,11 +885,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertEqual(edit_args[3], "Final answer")
             self.assertEqual(
                 [btn["text"] for btn in edit_args[4][0]],
-                ["✂️ Shorter", "🛠 More technical", "🪜 Step by step"],
-            )
-            self.assertEqual(
-                [btn["text"] for btn in edit_args[4][1]],
-                ["🔁 Retry", "✏️ Continue", "➕ New session"],
+                ["⋯ More"],
             )
             handler.tc.send_text.assert_not_awaited()
             handler.tc.send_text_with_keyboard.assert_not_awaited()
@@ -938,11 +941,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
             )
             self.assertEqual(
                 [btn["text"] for btn in voice_kwargs["buttons"][1]],
-                ["✂️ Shorter", "🛠 More technical", "🪜 Step by step"],
-            )
-            self.assertEqual(
-                [btn["text"] for btn in voice_kwargs["buttons"][2]],
-                ["🔁 Retry", "✏️ Continue", "➕ New session"],
+                ["⋯ More"],
             )
 
     def test_send_telegram_reply_refreshes_progress_for_tts_phase(self):
@@ -1032,11 +1031,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
             handler.tc.send_text.assert_not_awaited()
             self.assertEqual(
                 [btn["text"] for btn in handler.tc.send_voice.await_args.kwargs["buttons"][1]],
-                ["✂️ Shorter", "🛠 More technical", "🪜 Step by step"],
-            )
-            self.assertEqual(
-                [btn["text"] for btn in handler.tc.send_voice.await_args.kwargs["buttons"][2]],
-                ["🔁 Retry", "✏️ Continue", "➕ New session"],
+                ["⋯ More"],
             )
 
     def test_send_telegram_reply_empty_text_body_skips_show_text_button(self):
@@ -1317,6 +1312,95 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         query.answer.assert_awaited_once_with("Action is no longer available.")
         log_user_message.assert_not_called()
+
+    def test_handle_actions_sets_session_toggle(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/actions off",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_actions(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_REPLY_ACTIONS_SESSION], "off")
+        self.assertEqual(saved, [ctx])
+        self.assertIn("Reply actions: off", sent[-1][0][2])
+
+    def test_handle_callback_query_more_open_replaces_keyboard_with_transform_menu(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "resp123"
+        ctx.data[handler.CTX_TG_LAST_TEXT_RESPONSE] = "Use the queue worker and retry policy."
+        edit_reply_markup = mock.AsyncMock()
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}rm|open:resp123:1",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+                edit_reply_markup=edit_reply_markup,
+            ),
+            answer=mock.AsyncMock(),
+        )
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        query.answer.assert_awaited_once_with("More")
+        keyboard = edit_reply_markup.await_args.kwargs["reply_markup"]
+        rows = keyboard["inline_keyboard"]
+        self.assertEqual(rows[0][0]["text"], "📝 Show text")
+        self.assertEqual(rows[1][0]["text"], "✂️ Shorter")
+        self.assertEqual(rows[1][1]["text"], "🛠 More technical")
+        self.assertEqual(rows[2][0]["text"], "🎙 To voice")
+        self.assertEqual(rows[3][0]["text"], "⬅ Back")
+
+    def test_handle_callback_query_to_voice_sends_voice_reply(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "resp123"
+        ctx.data[handler.CTX_TG_LAST_TEXT_RESPONSE] = "Use the queue worker and retry policy."
+        ctx.data[handler.CTX_TG_BOT] = "mainbot"
+        ctx.data[handler.CTX_TG_BOT_CFG] = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ra|to_voice:resp123",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+
+        class _BotCtx:
+            async def __aenter__(self):
+                return types.SimpleNamespace()
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
+             mock.patch.object(handler.speech, "tts_enabled", return_value=True), \
+             mock.patch.object(handler.speech, "voice_reply_settings", return_value={"max_chars": 700}), \
+             mock.patch.object(handler.tc, "send_record_voice", new=mock.AsyncMock(return_value=None)), \
+             mock.patch.object(handler.tc, "send_voice", new=mock.AsyncMock(return_value=900)) as send_voice, \
+             mock.patch.object(handler.asyncio, "to_thread", new=mock.AsyncMock(return_value=("/tmp/fake.ogg", {}))), \
+             mock.patch.object(handler.os.path, "isfile", return_value=False):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        query.answer.assert_awaited_once_with("Sent as voice")
+        send_voice.assert_awaited_once()
+        self.assertEqual(send_voice.await_args.kwargs["reply_to_message_id"], 77)
 
     def test_handle_title_sets_manual_chat_title_and_lock(self):
         handler = self.handler

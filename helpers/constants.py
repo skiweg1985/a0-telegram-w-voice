@@ -74,6 +74,9 @@ CTX_TG_ALSO_SEND_TEXT_OVERRIDE = "telegram_also_send_text_session"
 # Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | debug.
 CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"
 
+# Per-session toggle for inline reply actions: missing = use config default; on | off.
+CTX_TG_REPLY_ACTIONS_SESSION = "telegram_reply_actions_session"
+
 # Throttle for Telegram detail status lines (transient; reset on new user message).
 CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"
 

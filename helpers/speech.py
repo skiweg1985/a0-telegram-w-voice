@@ -97,6 +97,17 @@ def quick_actions_settings(bot_cfg: dict) -> dict:
     }
 
 
+def effective_reply_actions_enabled(bot_cfg: dict, ctx_data: dict) -> bool:
+    from usr.plugins.telegram_integration_voice.helpers.constants import CTX_TG_REPLY_ACTIONS_SESSION
+
+    raw = str(ctx_data.get(CTX_TG_REPLY_ACTIONS_SESSION, "") or "").strip().lower()
+    if raw in ("on", "true", "1", "yes"):
+        return True
+    if raw in ("off", "false", "0", "no"):
+        return False
+    return quick_actions_settings(bot_cfg).get("enabled", True)
+
+
 def optimize_output_default(bot_cfg: dict) -> str:
     """Bot default for /optimize_output when session has no override: off | voice | text | auto."""
     reply = (bot_cfg.get("speech") or {}).get("reply") or {}
