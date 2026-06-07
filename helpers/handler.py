@@ -405,6 +405,7 @@ def _detail_inline_keyboard() -> list[list[dict]]:
         [
             {"text": "Off", "callback_data": f"{p}d|off"},
             {"text": "Info", "callback_data": f"{p}d|info"},
+            {"text": "Smart", "callback_data": f"{p}d|smart"},
             {"text": "Verbose", "callback_data": f"{p}d|debug"},
         ],
     ]
@@ -455,10 +456,10 @@ def _apply_detail_level(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
     arg = arg.strip().lower()
     if arg == "verbose":
         arg = "debug"
-    if arg in ("off", "info", "debug"):
+    if arg in ("off", "info", "smart", "debug"):
         ctx.data[CTX_TG_DETAIL_LEVEL_SESSION] = arg
         return f"Detail level: {detail_status.detail_level_display(arg)}."
-    return "Usage: /detail off|info|verbose — alias: debug"
+    return "Usage: /detail off|info|smart|verbose — alias: debug"
 
 
 def _project_names_ordered() -> list[str]:
@@ -1491,7 +1492,7 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
         desc = _detail_session_description(ctx, bot_cfg)
         reply = (
             f"Tool detail: {desc}.\n"
-            "Tap a button or type /detail off|info|verbose"
+            "Tap a button or type /detail off|info|smart|verbose"
         )
         kb = _detail_inline_keyboard()
         save_tmp_chat(ctx)
@@ -2885,7 +2886,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
 
         if kind == "d":
-            if payload not in ("off", "info", "debug"):
+            if payload not in ("off", "info", "smart", "debug"):
                 await query.answer("Unknown option.")
                 return
             reply = _apply_detail_level(context, bot_cfg, payload)

@@ -1,4 +1,5 @@
 import time
+import inspect
 
 from helpers.extension import Extension
 from helpers.errors import format_error
@@ -66,7 +67,7 @@ class TelegramDetailStatus(Extension):
 
             tool_args = None
             known_secret_values = None
-            if level == "debug":
+            if level in {"debug", "smart"}:
                 try:
                     current_tool = self.agent.loop_data.current_tool if self.agent else None
                     if current_tool is not None:
@@ -84,7 +85,10 @@ class TelegramDetailStatus(Extension):
                 level=level,
                 tool_args=tool_args,
                 known_secret_values=known_secret_values,
+                agent=self.agent,
             )
+            if inspect.isawaitable(line):
+                line = await line
             _append_progress_line(context, line, bot_cfg)
             html_text = _render_progress_status_html(context, bot_cfg, done=False)
             context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now

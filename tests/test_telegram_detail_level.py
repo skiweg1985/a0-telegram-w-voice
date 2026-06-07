@@ -7,8 +7,10 @@ behavior and has no plugin-namespace imports at module level, so it can be
 loaded directly from its file path.
 """
 
+import asyncio
 import importlib.util
 import os
+import types
 import unittest
 from pathlib import Path
 
@@ -39,9 +41,13 @@ class NormalizeDetailLevelTests(unittest.TestCase):
     def test_known_levels_pass_through(self):
         self.assertEqual(self.ds.normalize_detail_level("info"), "info")
         self.assertEqual(self.ds.normalize_detail_level("debug"), "debug")
+        self.assertEqual(self.ds.normalize_detail_level("smart"), "smart")
 
     def test_verbose_alias_maps_to_debug(self):
         self.assertEqual(self.ds.normalize_detail_level("verbose"), "debug")
+
+    def test_smart_display_passes_through(self):
+        self.assertEqual(self.ds.detail_level_display("smart"), "smart")
 
     def test_unknown_value_falls_back_to_off(self):
         self.assertEqual(self.ds.normalize_detail_level("nonsense"), "off")
@@ -122,6 +128,34 @@ class DetailStatusRedactionTests(unittest.TestCase):
         )
         self.assertIn("[REDACTED]", html)
         self.assertNotIn("FallbackSecret999", html)
+
+    def test_smart_mode_redacts_secrets_before_utility_model_call(self):
+        seen = {}
+
+        async def call_utility_model(**kwargs):
+            seen.update(kwargs)
+            return "Summarized status"
+
+        agent = types.SimpleNamespace(call_utility_model=call_utility_model)
+        html = asyncio.run(
+            self.ds.format_step_html(
+                "code_execution",
+                {},
+                level="smart",
+                tool_args={
+                    "password": "VerySecret123",
+                    "url": "https://example.com?api_key=VerySecret123",
+                    "command": "token=VerySecret123 curl https://example.com",
+                },
+                agent=agent,
+            )
+        )
+
+        self.assertIn("Summarized status", html)
+        self.assertNotIn("VerySecret123", seen["message"])
+        self.assertIn("[REDACTED]", seen["message"])
+        self.assertIn("api_key=[REDACTED]", seen["message"])
+        self.assertIn("token=[REDACTED]", seen["message"])
 
 
 if __name__ == "__main__":

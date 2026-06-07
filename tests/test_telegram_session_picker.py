@@ -251,7 +251,7 @@ def _install_stub_modules():
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
     detail_status.render = lambda *args, **kwargs: None
-    detail_status.effective_detail_level = lambda *args, **kwargs: "info"
+    detail_status.effective_detail_level = lambda bot_cfg, ctx_data: str(ctx_data.get("telegram_detail_level_session", bot_cfg.get("telegram_detail_level", "info")) or "info")
     detail_status.effective_execute_before_enabled = lambda bot_cfg, ctx_data: str(ctx_data.get("telegram_detail_before_session", "") or "").strip().lower() in ("on", "true", "1", "yes")
     detail_status.normalize_execute_before_enabled = lambda value: str(value or "").strip().lower() in ("on", "true", "1", "yes")
     detail_status.detail_level_display = lambda value: "verbose" if str(value) == "debug" else str(value)
@@ -1388,6 +1388,80 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertEqual(saved, [ctx])
         query.answer.assert_awaited_once_with("OK")
         self.assertIn("Reply actions: off", sent[-1][0][2])
+
+    def test_handle_detail_without_arg_shows_smart_inline_picker(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {handler.CTX_TG_DETAIL_LEVEL_SESSION: "smart"}
+        message = types.SimpleNamespace(
+            text="/detail",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_detail(message, "mainbot", {}))
+
+        self.assertEqual(saved, [ctx])
+        self.assertIn("Tool detail: smart", sent[-1][0][2])
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}d|off")
+        self.assertEqual(keyboard[0][1]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}d|info")
+        self.assertEqual(keyboard[0][2]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}d|smart")
+        self.assertEqual(keyboard[0][3]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}d|debug")
+
+    def test_handle_detail_sets_smart_session_level(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/detail smart",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_detail(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_DETAIL_LEVEL_SESSION], "smart")
+        self.assertEqual(saved, [ctx])
+        self.assertIn("Detail level: smart.", sent[-1][0][2])
+
+    def test_handle_callback_query_detail_smart_sets_session_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}d|smart",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_DETAIL_LEVEL_SESSION], "smart")
+        self.assertEqual(saved, [ctx])
+        query.answer.assert_awaited_once_with("OK")
+        self.assertIn("Detail level: smart.", sent[-1][0][2])
 
     def test_handle_detail_before_without_arg_shows_inline_picker(self):
         handler = self.handler

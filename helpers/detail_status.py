@@ -1,4 +1,4 @@
-"""Telegram tool-run detail levels: off / info / debug (bot config + session override)."""
+"""Telegram tool-run detail levels: off / info / smart / debug (bot config + session override)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import re
 from typing import Any
 
-DETAIL_LEVELS = frozenset({"off", "info", "debug"})
+DETAIL_LEVELS = frozenset({"off", "info", "smart", "debug"})
 _DEFAULT_DETAIL_LEVEL = "info"
 _DEFAULT_EXECUTE_BEFORE = False
 
@@ -71,6 +71,12 @@ _HEADER_REDACT_RE = re.compile(
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[^\s\"'<>()]+")
 _BASIC_AUTH_RE = re.compile(r"(?i)(^|\s)(-u\s+)([^\s:]+):([^\s]+)")
 _URL_CREDS_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s/@:]+):([^\s/@]+)@")
+_QUERY_SECRET_RE = re.compile(
+    r"(?i)([?&](?:access_token|refresh_token|token|api[_-]?key|apikey|password|passwd|pass|secret|auth|authorization|client_secret|webhook_secret)=)([^&#\s]+)"
+)
+_GENERIC_SECRET_ASSIGN_RE = re.compile(
+    r"(?i)\b(access_token|refresh_token|token|api[_-]?key|apikey|password|passwd|pass|secret|auth|authorization|client_secret|webhook_secret)\b\s*[:=]\s*([^\s,;&'\"`]+|'[^']*'|\"[^\"]*\")"
+)
 
 
 def _normalize_key(key: Any) -> str:
@@ -148,6 +154,8 @@ def _redact_sensitive_text(text: str, known_secret_values: list[str] | None = No
     safe = _BEARER_RE.sub(f"Bearer {_REDACTED}", safe)
     safe = _BASIC_AUTH_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}:{_REDACTED}", safe)
     safe = _URL_CREDS_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}:{_REDACTED}@", safe)
+    safe = _QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", safe)
+    safe = _GENERIC_SECRET_ASSIGN_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", safe)
     safe = _SENSITIVE_ENV_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", safe)
     return safe
 
@@ -324,6 +332,56 @@ def _truncate_body(text: str, limit: int) -> str:
     return text[:cut] + f"\n\n<< {removed} chars omitted >>"
 
 
+async def _format_step_html_smart(
+    tool_name: str,
+    bot_cfg: dict,
+    *,
+    tool_args: dict | None = None,
+    known_secret_values: list[str] | None = None,
+    agent: Any | None = None,
+) -> str:
+    labels = detail_tool_labels(bot_cfg)
+    label = labels.get(tool_name, tool_name)
+    icon = step_icon_for_tool(tool_name, bot_cfg)
+    icon_prefix = f"{icon} " if icon else ""
+    safe_label = html.escape(str(label))
+
+    if agent is None or not hasattr(agent, "call_utility_model"):
+        return f"{icon_prefix}{safe_label}"
+
+    safe_tool_args = redact_sensitive(tool_args, known_secret_values) if tool_args is not None else None
+    try:
+        args_json = json.dumps(safe_tool_args, ensure_ascii=False, sort_keys=True, indent=2) if safe_tool_args is not None else "{}"
+    except Exception:
+        args_json = _redact_sensitive_text(str(safe_tool_args), known_secret_values)
+    args_json = _truncate_body(args_json, min(_max_body_chars(bot_cfg), 1200))
+
+    system = (
+        "You summarize tool activity for a Telegram progress bubble. "
+        "Return exactly one short plain-text line, max 160 characters. "
+        "Focus on the user-visible intent of the tool call. "
+        "Do not mention JSON, redaction, secrets, or internal formatting."
+    )
+    message = (
+        f"Tool: {tool_name}\n"
+        f"Label: {label}\n"
+        f"Arguments:\n{args_json}\n\n"
+        "Write one concise status line for the user."
+    )
+    try:
+        summary = await agent.call_utility_model(system=system, message=message, background=True)
+    except Exception:
+        summary = ""
+
+    text = str(summary or "").strip()
+    if not text:
+        return f"{icon_prefix}{safe_label}"
+    text = re.sub(r"\s+", " ", text).strip(" -•\n\t")
+    if len(text) > 160:
+        text = text[:157].rstrip() + "..."
+    return f"{icon_prefix}{html.escape(text)}"
+
+
 def format_step_html(
     tool_name: str,
     bot_cfg: dict,
@@ -331,16 +389,27 @@ def format_step_html(
     level: str = "info",
     tool_args: dict | None = None,
     known_secret_values: list[str] | None = None,
-) -> str:
+    agent: Any | None = None,
+) -> str | Any:
     """Format tool-step status with icon + label.
 
     - info: icon + label (single line)
+    - smart: utility-model short summary based on redacted tool args
     - debug: icon + tool name (bold) + optional truncated args payload
     """
     labels = detail_tool_labels(bot_cfg)
     label = labels.get(tool_name, tool_name)
     icon = step_icon_for_tool(tool_name, bot_cfg)
     icon_prefix = f"{icon} " if icon else ""
+
+    if level == "smart":
+        return _format_step_html_smart(
+            tool_name,
+            bot_cfg,
+            tool_args=tool_args,
+            known_secret_values=known_secret_values,
+            agent=agent,
+        )
 
     if level != "debug":
         safe = html.escape(str(label))

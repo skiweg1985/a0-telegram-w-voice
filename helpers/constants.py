@@ -71,7 +71,7 @@ CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
 # Key without "_" prefix so persist_chat includes it in chat.json.
 CTX_TG_ALSO_SEND_TEXT_OVERRIDE = "telegram_also_send_text_session"
 
-# Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | debug.
+# Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | smart | debug.
 CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"
 
 # Per-session toggle for tool-status updates on tool start (execute-before): missing = use config default; on | off.

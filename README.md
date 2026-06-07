@@ -81,7 +81,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 
 ### Tool Status & Detail Level
 
-- `/detail` controls what appears in chat while tools are running: `off` (final answer only), `info` (throttled step lines), `verbose` (full tool detail).
+- `/detail` controls what appears in chat while tools are running: `off` (final answer only), `info` (throttled step lines), `smart` (utility-model summary), `verbose` (full tool detail).
 - `/detail_before` controls whether a tool-status line is already shown when a tool **starts**: `off` (default) or `on` for the current session.
 - Each step shows an **emoji icon and a human-readable label** (e.g. 🧠 for memory tools, 💻 for code execution). Icons and labels are configurable per tool.
 - Detail updates are sent as **in-place progress edits** — a single bubble is updated rather than a new message per step.
@@ -115,7 +115,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/clear` | Reset conversation history (same context) |
 | `/newchat` | New session; old chat stays in browser UI |
 | `/session` | Paginated session picker; `/session search <term>` or `/session <id>` to switch directly |
-| `/detail` | `off` / `info` / `verbose`, or no arg shows level + **inline buttons** |
+| `/detail` | `off` / `info` / `smart` / `verbose`, or no arg shows level + **inline buttons** |
 | `/detail_before` | `on` / `off`, or no arg shows current tool-start mode + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off`, or no arg shows current mode **with inline buttons** |
@@ -140,7 +140,7 @@ bots:
     mode: polling
     allowed_users: ["123456789"]
 
-    telegram_detail_level: info                 # default; throttled step lines — set to off for final answer only
+    telegram_detail_level: info                 # off | info | smart | debug (verbose alias in chat)
     telegram_detail_execute_before: false       # default; set true to emit step lines already when tools start
     telegram_detail_info_min_interval_sec: 5
     telegram_detail_debug_min_interval_sec: 1.5

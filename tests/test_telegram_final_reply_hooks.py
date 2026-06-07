@@ -115,7 +115,7 @@ def _install_stubs():
     detail_status.effective_execute_before_enabled = lambda bot_cfg, ctx_data: False
     detail_status.detail_exclude_set = lambda bot_cfg: set()
     detail_status.detail_throttle_sec = lambda bot_cfg, level: 5.0
-    detail_status.format_step_html = lambda name, bot_cfg, level="info", tool_args=None, known_secret_values=None: f"step:{name}"
+    detail_status.format_step_html = lambda name, bot_cfg, level="info", tool_args=None, known_secret_values=None, agent=None: f"step:{name}"
     sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"] = detail_status
 
     handler = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.handler")
@@ -150,6 +150,7 @@ def _fake_agent(args, context):
         number=0,
         loop_data=types.SimpleNamespace(current_tool=tool),
         read_prompt=lambda name, **kwargs: "ok",
+        call_utility_model=mock.AsyncMock(return_value="smart summary"),
         hist_add_tool_result=mock.Mock(),
     )
 
@@ -392,6 +393,60 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
             text_is_html=True,
         )
         self.assertEqual(context.data[constants.CTX_TG_DETAIL_ACTIVE_TOOL], "search_engine")
+
+    def test_detail_hook_smart_uses_utility_model_summary(self):
+        constants, handler = _install_stubs()
+        detail_status = sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"]
+        detail_status.effective_detail_level = lambda bot_cfg, ctx_data: "smart"
+        detail_status.format_step_html = mock.AsyncMock(return_value="step:smart")
+        module = _load_module(DETAIL_HOOK_PATH, "telegram_detail_hook_smart_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+                constants.CTX_TG_BOT_CFG: {},
+            },
+            log=_Log(),
+        )
+        ext = module.TelegramDetailStatus()
+        ext.agent = _fake_agent({"url": "https://example.com"}, context)
+
+        with mock.patch.object(module.time, "monotonic", return_value=10.0):
+            asyncio.run(ext.execute(tool_name="browser:navigate"))
+
+        detail_status.format_step_html.assert_awaited()
+        call = detail_status.format_step_html.await_args
+        self.assertEqual(call.kwargs["level"], "smart")
+        self.assertEqual(call.kwargs["tool_args"], {"url": "https://example.com"})
+        handler._append_progress_line.assert_called_once_with(context, "step:smart", {})
+
+    def test_detail_before_hook_smart_passes_tool_args(self):
+        constants, handler = _install_stubs()
+        detail_status = sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"]
+        detail_status.effective_execute_before_enabled = lambda bot_cfg, ctx_data: True
+        detail_status.effective_detail_level = lambda bot_cfg, ctx_data: "smart"
+        detail_status.format_step_html = mock.AsyncMock(return_value="step:smart-before")
+        module = _load_module(DETAIL_BEFORE_HOOK_PATH, "telegram_detail_before_hook_smart_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+                constants.CTX_TG_BOT_CFG: {},
+            },
+            log=_Log(),
+        )
+        ext = module.TelegramDetailStatusBefore()
+        ext.agent = _fake_agent({"query": "status page"}, context)
+
+        with mock.patch.object(module.time, "monotonic", return_value=10.0):
+            asyncio.run(ext.execute(tool_name="web_search"))
+
+        call = detail_status.format_step_html.await_args
+        self.assertEqual(call.kwargs["level"], "smart")
+        self.assertEqual(call.kwargs["tool_args"], {"query": "status page"})
+        handler._append_progress_line.assert_called_once_with(context, "step:smart-before", {})
 
     def test_detail_before_hook_throttle_does_not_set_dedupe_marker(self):
         constants, handler = _install_stubs()
