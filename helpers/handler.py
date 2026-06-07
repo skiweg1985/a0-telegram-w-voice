@@ -111,6 +111,27 @@ def _save_state(state: dict):
     files.write_file(path, json.dumps(state))
 
 
+def _stop_typing_handle(stop_event):
+    if not stop_event:
+        return
+    with suppress(Exception):
+        stop_event.set()
+
+
+def _stop_context_typing(context: AgentContext | None):
+    if not context:
+        return
+    data = getattr(context, "data", None)
+    if not isinstance(data, dict):
+        return
+    _stop_typing_handle(data.pop(CTX_TG_TYPING_STOP, None))
+
+
+def _replace_context_typing_stop(context: AgentContext, stop_event):
+    _stop_context_typing(context)
+    context.data[CTX_TG_TYPING_STOP] = stop_event
+
+
 def _map_key(bot_name: str, user_id: int, chat_id: int) -> str:
     return f"{bot_name}:{user_id}:{chat_id}"
 
@@ -1085,6 +1106,7 @@ def _activate_existing_session(
         if old_ctx_id and old_ctx_id != ctx.id:
             old_ctx = AgentContext.get(old_ctx_id)
             if old_ctx:
+                _stop_context_typing(old_ctx)
                 old_ctx.kill_process()
                 save_tmp_chat(old_ctx)
         chats[key] = ctx.id
@@ -1116,6 +1138,7 @@ async def _start_new_session_for_user(
         if old_ctx_id:
             old_ctx = AgentContext.get(old_ctx_id)
             if old_ctx:
+                _stop_context_typing(old_ctx)
                 old_ctx.kill_process()
                 save_tmp_chat(old_ctx)
             _save_state(state)
@@ -1993,6 +2016,7 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
             parse_mode=None,
             )
         return
+    _stop_context_typing(ctx)
     ctx.kill_process()
     save_tmp_chat(ctx)
     await _send_with_temp_bot(
@@ -2337,96 +2361,104 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     # Start persistent typing indicator (thread-based, works across event loops)
     typing_stop = _start_typing(instance.bot.token, message.chat.id)
+    context: AgentContext | None = None
 
-    # Get or create agent context
-    context = await _get_or_create_context(bot_name, bot_cfg, message)
-    if not context:
-        typing_stop.set()
-        await _send_with_temp_bot(
-            instance.bot.token, message.chat.id,
-            "Failed to create chat session.",
-            parse_mode=None,
-            )
-        return
-
-    # New user turn: clear stale progress message state
-    _clear_progress_state(context)
-
-    # Show an immediate live-status placeholder so long agent runs don't look frozen.
-    await _send_initial_progress_status(context)
-
-    # Store stop event so send_telegram_reply can cancel typing
-    context.data[CTX_TG_TYPING_STOP] = typing_stop
-    context.data[CTX_TG_CHAT_TYPE] = str(getattr(message.chat, "type", "") or "")
-    context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
-
-    # Keep Telegram threading visible when the user replied to an earlier message.
-    reply_to_id = message.message_id if message.reply_to_message else None
-    context.data[CTX_TG_REPLY_TO] = reply_to_id
-
-    # Build user message text
-    text = _extract_message_content(message)
-    reply_context = _extract_reply_context(message)
-    is_voice_input = _message_has_voice_input(message)
-    context.data[CTX_TG_LAST_INPUT_WAS_VOICE] = is_voice_input
-
-    # Use temp bot for downloads (cross-event-loop safe)
-    async with _temp_bot(instance.bot.token) as dl_bot:
-        attachments = await _download_attachments(dl_bot, message, bot_name=bot_name)
-
-    # Optional STT for voice/audio inputs
-    if is_voice_input and speech.stt_enabled(bot_cfg):
-        audio_ref = _pick_audio_attachment(attachments)
-        if audio_ref:
-            audio_path = files.fix_dev_path(audio_ref)
-            await _set_progress_phase_and_refresh(context, bot_cfg, "stt")
-            try:
-                stt_result = await asyncio.to_thread(speech.transcribe_audio_file, bot_cfg, audio_path)
-                transcript = str((stt_result or {}).get("text") or "").strip()
-                if transcript:
-                    text = _merge_voice_transcript(text, transcript)
-                else:
-                    text = text + "\n[Voice transcript unavailable: empty result]"
-            except Exception as e:
-                PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
-                text = text + f"\n[Voice transcript failed: {format_error(e)}]"
-            finally:
-                await _set_progress_phase_and_refresh(
-                    context,
-                    bot_cfg,
-                    None,
-                    require_existing_message=True,
+    try:
+        # Get or create agent context
+        context = await _get_or_create_context(bot_name, bot_cfg, message)
+        if not context:
+            _stop_typing_handle(typing_stop)
+            await _send_with_temp_bot(
+                instance.bot.token, message.chat.id,
+                "Failed to create chat session.",
+                parse_mode=None,
                 )
+            return
 
-    if reply_context:
-        context.data[CTX_TG_REPLY_CONTEXT] = reply_context
-        text = _merge_reply_context(text, reply_context)
-    else:
-        context.data.pop(CTX_TG_REPLY_CONTEXT, None)
+        # New user turn: clear stale progress message state
+        _clear_progress_state(context)
 
-    # Build user message with prompt
-    agent = context.agent0
-    sender = _format_user(user)
-    user_msg = agent.read_prompt(
-        "fw.telegram.user_message.md",
-        sender=sender,
-        body=text,
-    )
+        # Show an immediate live-status placeholder so long agent runs don't look frozen.
+        await _send_initial_progress_status(context)
 
-    # Remember this turn so /retry can re-run it.
-    context.data[CTX_TG_LAST_USER_BODY] = text
-    context.data[CTX_TG_LAST_USER_SENDER] = sender
-    context.data[CTX_TG_LAST_USER_ATTACHMENTS] = list(attachments or [])
+        # Store stop event so send_telegram_reply can cancel typing
+        _replace_context_typing_stop(context, typing_stop)
+        context.data[CTX_TG_CHAT_TYPE] = str(getattr(message.chat, "type", "") or "")
+        context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
 
-    msg_id = str(uuid.uuid4())
-    mq.log_user_message(context, user_msg, attachments, message_id=msg_id, source=" (telegram)")
-    context.communicate(UserMessage(
-        message=user_msg,
-        attachments=attachments,
-        id=msg_id,
-    ))
+        # Keep Telegram threading visible when the user replied to an earlier message.
+        reply_to_id = message.message_id if message.reply_to_message else None
+        context.data[CTX_TG_REPLY_TO] = reply_to_id
 
-    save_tmp_chat(context)
+        # Build user message text
+        text = _extract_message_content(message)
+        reply_context = _extract_reply_context(message)
+        is_voice_input = _message_has_voice_input(message)
+        context.data[CTX_TG_LAST_INPUT_WAS_VOICE] = is_voice_input
+
+        # Use temp bot for downloads (cross-event-loop safe)
+        async with _temp_bot(instance.bot.token) as dl_bot:
+            attachments = await _download_attachments(dl_bot, message, bot_name=bot_name)
+
+        # Optional STT for voice/audio inputs
+        if is_voice_input and speech.stt_enabled(bot_cfg):
+            audio_ref = _pick_audio_attachment(attachments)
+            if audio_ref:
+                audio_path = files.fix_dev_path(audio_ref)
+                await _set_progress_phase_and_refresh(context, bot_cfg, "stt")
+                try:
+                    stt_result = await asyncio.to_thread(speech.transcribe_audio_file, bot_cfg, audio_path)
+                    transcript = str((stt_result or {}).get("text") or "").strip()
+                    if transcript:
+                        text = _merge_voice_transcript(text, transcript)
+                    else:
+                        text = text + "\n[Voice transcript unavailable: empty result]"
+                except Exception as e:
+                    PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
+                    text = text + f"\n[Voice transcript failed: {format_error(e)}]"
+                finally:
+                    await _set_progress_phase_and_refresh(
+                        context,
+                        bot_cfg,
+                        None,
+                        require_existing_message=True,
+                    )
+
+        if reply_context:
+            context.data[CTX_TG_REPLY_CONTEXT] = reply_context
+            text = _merge_reply_context(text, reply_context)
+        else:
+            context.data.pop(CTX_TG_REPLY_CONTEXT, None)
+
+        # Build user message with prompt
+        agent = context.agent0
+        sender = _format_user(user)
+        user_msg = agent.read_prompt(
+            "fw.telegram.user_message.md",
+            sender=sender,
+            body=text,
+        )
+
+        # Remember this turn so /retry can re-run it.
+        context.data[CTX_TG_LAST_USER_BODY] = text
+        context.data[CTX_TG_LAST_USER_SENDER] = sender
+        context.data[CTX_TG_LAST_USER_ATTACHMENTS] = list(attachments or [])
+
+        msg_id = str(uuid.uuid4())
+        mq.log_user_message(context, user_msg, attachments, message_id=msg_id, source=" (telegram)")
+        context.communicate(UserMessage(
+            message=user_msg,
+            attachments=attachments,
+            id=msg_id,
+        ))
+
+        save_tmp_chat(context)
+    except Exception:
+        if context and context.data.get(CTX_TG_TYPING_STOP) is typing_stop:
+            _stop_context_typing(context)
+        else:
+            _stop_typing_handle(typing_stop)
+        raise
 
     # Send notification
     if bot_cfg.get("notify_messages", False):
@@ -3083,41 +3115,48 @@ async def _dispatch_telegram_user_turn(
         return busy_message
 
     typing_stop = _start_typing(bot_token, chat_id)
-    _clear_progress_state(ctx)
-    await _send_initial_progress_status(ctx)
-    ctx.data[CTX_TG_TYPING_STOP] = typing_stop
-    ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
-    ctx.data[CTX_TG_REPLY_TO] = None
-    ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
+    try:
+        _clear_progress_state(ctx)
+        await _send_initial_progress_status(ctx)
+        _replace_context_typing_stop(ctx, typing_stop)
+        ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
+        ctx.data[CTX_TG_REPLY_TO] = None
+        ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
 
-    clean_body = str(body or "").strip()
-    clean_sender = str(sender or "").strip()
-    clean_attachments = list(attachments or [])
+        clean_body = str(body or "").strip()
+        clean_sender = str(sender or "").strip()
+        clean_attachments = list(attachments or [])
 
-    user_msg = ctx.agent0.read_prompt(
-        "fw.telegram.user_message.md",
-        sender=clean_sender,
-        body=clean_body,
-    )
-    ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
-    ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
-    ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
+        user_msg = ctx.agent0.read_prompt(
+            "fw.telegram.user_message.md",
+            sender=clean_sender,
+            body=clean_body,
+        )
+        ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
+        ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
+        ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
 
-    msg_id = str(uuid.uuid4())
-    mq.log_user_message(
-        ctx,
-        user_msg,
-        clean_attachments,
-        message_id=msg_id,
-        source=source,
-    )
-    ctx.communicate(UserMessage(
-        message=user_msg,
-        attachments=clean_attachments,
-        id=msg_id,
-    ))
-    save_tmp_chat(ctx)
-    return None
+        msg_id = str(uuid.uuid4())
+        mq.log_user_message(
+            ctx,
+            user_msg,
+            clean_attachments,
+            message_id=msg_id,
+            source=source,
+        )
+        ctx.communicate(UserMessage(
+            message=user_msg,
+            attachments=clean_attachments,
+            id=msg_id,
+        ))
+        save_tmp_chat(ctx)
+        return None
+    except Exception:
+        if ctx.data.get(CTX_TG_TYPING_STOP) is typing_stop:
+            _stop_context_typing(ctx)
+        else:
+            _stop_typing_handle(typing_stop)
+        raise
 
 
 def _truncate_preview(text: str, limit: int = 280) -> str:

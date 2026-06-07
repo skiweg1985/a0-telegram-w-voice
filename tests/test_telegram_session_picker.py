@@ -378,6 +378,8 @@ class TelegramSessionPickerTests(unittest.TestCase):
         handler = self.handler
         old_ctx = types.SimpleNamespace(id="old", killed=False)
         old_ctx.kill_process = lambda: setattr(old_ctx, "killed", True)
+        old_stop = mock.Mock()
+        old_ctx.data = {handler.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=old_stop)}
         saved_contexts = []
         saved_states = []
         target_ctx = types.SimpleNamespace(id="web", data={})
@@ -405,9 +407,133 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertEqual(target_ctx.data[handler.CTX_TG_BOT], "mainbot")
         self.assertEqual(target_ctx.data[handler.CTX_TG_USER_ID], 42)
         self.assertEqual(target_ctx.data[handler.CTX_TG_CHAT_ID], 99)
+        old_stop.assert_called_once_with()
         self.assertTrue(old_ctx.killed)
         self.assertEqual(saved_states[-1]["chats"]["mainbot:42:99"], "web")
         self.assertEqual(saved_contexts[-1], target_ctx)
+
+    def test_handle_stop_stops_typing_before_killing_process(self):
+        handler = self.handler
+        typing_stop = mock.Mock()
+        ctx = types.SimpleNamespace(
+            data={handler.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=typing_stop)},
+            kill_process=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            chat=types.SimpleNamespace(id=99),
+        )
+
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "_get_existing_context", return_value=ctx), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()) as send_temp:
+            asyncio.run(handler.handle_stop(message, "mainbot", {}))
+
+        typing_stop.assert_called_once_with()
+        ctx.kill_process.assert_called_once_with()
+        self.assertNotIn(handler.CTX_TG_TYPING_STOP, ctx.data)
+        send_temp.assert_awaited_once()
+
+    def test_start_new_session_stops_old_typing_before_kill(self):
+        handler = self.handler
+        old_stop = mock.Mock()
+        old_ctx = types.SimpleNamespace(
+            id="old",
+            data={handler.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=old_stop)},
+            kill_process=mock.Mock(),
+        )
+        new_ctx = types.SimpleNamespace(id="new", data={})
+
+        with mock.patch.object(handler.AgentContext, "get", return_value=old_ctx), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": "old"}}), \
+             mock.patch.object(handler, "_save_state"), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=new_ctx)):
+            ok, reply, ctx = asyncio.run(
+                handler._start_new_session_for_user("mainbot", {}, 42, "benji", 99)
+            )
+
+        self.assertTrue(ok)
+        self.assertIs(ctx, new_ctx)
+        old_stop.assert_called_once_with()
+        old_ctx.kill_process.assert_called_once_with()
+
+    def test_dispatch_user_turn_stops_previous_typing_before_replacing_handle(self):
+        handler = self.handler
+        old_stop = mock.Mock()
+        new_stop = types.SimpleNamespace(set=mock.Mock())
+        ctx = types.SimpleNamespace(
+            data={handler.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=old_stop)},
+            is_running=lambda: False,
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+
+        with mock.patch.object(handler, "_start_typing", return_value=new_stop), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler.mq, "log_user_message"), \
+             mock.patch.object(handler, "save_tmp_chat"):
+            error = asyncio.run(
+                handler._dispatch_telegram_user_turn(
+                    ctx,
+                    bot_token="token",
+                    chat_id=99,
+                    sender="Benji",
+                    body="hello",
+                    attachments=None,
+                    source="telegram",
+                )
+            )
+
+        self.assertIsNone(error)
+        old_stop.assert_called_once_with()
+        self.assertIs(ctx.data[handler.CTX_TG_TYPING_STOP], new_stop)
+
+    def test_handle_message_stops_typing_when_post_registration_step_raises(self):
+        handler = self.handler
+        typing_stop = mock.Mock()
+        ctx = types.SimpleNamespace(
+            data={},
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=None),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            text="hello",
+            caption=None,
+            location=None,
+            contact=None,
+            sticker=None,
+            photo=None,
+            document=None,
+            audio=None,
+            voice=None,
+            video=None,
+            video_note=None,
+            reply_to_message=None,
+            message_id=123,
+        )
+
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=types.SimpleNamespace(set=typing_stop)), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=[])), \
+             mock.patch.object(handler.mq, "log_user_message", side_effect=RuntimeError("boom")), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        typing_stop.assert_called_once_with()
+        self.assertNotIn(handler.CTX_TG_TYPING_STOP, ctx.data)
 
     def test_extract_live_response_preview_from_complete_response_tool_json(self):
         handler = self.handler
