@@ -8,6 +8,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_ITEMS,
     CTX_TG_KEYBOARD,
     CTX_TG_TYPING_STOP,
+    CTX_TG_RECORD_VOICE_STOP,
     CTX_TG_REPLY_TO,
     CTX_TG_REPLY_CONTEXT,
     CTX_TG_VOICE_TEXT,
@@ -63,10 +64,13 @@ class TelegramAutoReply(Extension):
         except Exception as e:
             PrintStyle.error(f"Telegram auto-reply error: {format_error(e)}")
         finally:
-            # Cancel typing and clean up reply_to after final send
+            # Cancel typing/voice indicators and clean up reply_to after final send
             typing_stop = context.data.pop(CTX_TG_TYPING_STOP, None)
             if typing_stop:
                 typing_stop.set()
+            voice_stop = context.data.pop(CTX_TG_RECORD_VOICE_STOP, None)
+            if voice_stop:
+                voice_stop.set()
             context.data.pop(CTX_TG_REPLY_TO, None)
             context.data.pop(CTX_TG_REPLY_CONTEXT, None)
             context.data.pop(CTX_TG_ATTACHMENTS, None)

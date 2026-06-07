@@ -19,7 +19,7 @@ from agent import Agent, AgentContext, UserMessage
 from helpers import plugins, files, projects
 from helpers import message_queue as mq
 from helpers.notification import NotificationManager, NotificationType, NotificationPriority
-from helpers.persist_chat import save_tmp_chat, _deserialize_context
+from helpers.persist_chat import save_tmp_chat, _deserialize_context, remove_chat
 from helpers.print_style import PrintStyle
 from helpers.errors import format_error
 from initialize import initialize_agent
@@ -42,6 +42,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_USER_ID,
     CTX_TG_USERNAME,
     CTX_TG_TYPING_STOP,
+    CTX_TG_RECORD_VOICE_STOP,
     CTX_TG_REPLY_TO,
     CTX_TG_REPLY_CONTEXT,
     CTX_TG_ATTACHMENTS,
@@ -82,7 +83,10 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_OUTPUT_OPTIMIZE,
     CTX_TG_VOICE_TEXT,
     CTX_TG_DETAIL_LEVEL_SESSION,
+    CTX_TG_DETAIL_BEFORE_SESSION,
     CTX_TG_DETAIL_LAST_SENT_TS,
+    CTX_TG_DETAIL_ACTIVE_TOOL,
+    CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX,
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     CTX_TG_REPLY_ACTIONS_SESSION,
     TG_UI_CALLBACK_PREFIX,
@@ -107,6 +111,61 @@ def _save_state(state: dict):
     path = files.get_abs_path(STATE_FILE)
     files.make_dirs(path)
     files.write_file(path, json.dumps(state))
+
+
+def _stop_typing_handle(stop_event):
+    if not stop_event:
+        return
+    with suppress(Exception):
+        stop_event.set()
+
+
+def _stop_record_voice_handle(stop_event):
+    if not stop_event:
+        return
+    with suppress(Exception):
+        stop_event.set()
+
+
+def _stop_context_typing(context: AgentContext | None):
+    if not context:
+        return
+    data = getattr(context, "data", None)
+    if not isinstance(data, dict):
+        return
+    _stop_typing_handle(data.pop(CTX_TG_TYPING_STOP, None))
+
+
+def _stop_context_record_voice(context: AgentContext | None):
+    if not context:
+        return
+    data = getattr(context, "data", None)
+    if not isinstance(data, dict):
+        return
+    _stop_record_voice_handle(data.pop(CTX_TG_RECORD_VOICE_STOP, None))
+
+
+def _stop_context_chat_actions(context: AgentContext | None):
+    _stop_context_typing(context)
+    _stop_context_record_voice(context)
+
+
+def _replace_context_typing_stop(context: AgentContext, stop_event):
+    _stop_context_chat_actions(context)
+    context.data[CTX_TG_TYPING_STOP] = stop_event
+
+
+def _replace_context_record_voice_stop(context: AgentContext, stop_event):
+    _stop_context_record_voice(context)
+    context.data[CTX_TG_RECORD_VOICE_STOP] = stop_event
+
+
+def _activate_context_record_voice(context: AgentContext, token: str, chat_id: int):
+    _stop_context_typing(context)
+    _stop_context_record_voice(context)
+    stop_event = _start_record_voice(token, chat_id)
+    context.data[CTX_TG_RECORD_VOICE_STOP] = stop_event
+    return stop_event
 
 
 def _map_key(bot_name: str, user_id: int, chat_id: int) -> str:
@@ -292,20 +351,13 @@ _RESPONSE_TRANSFORM_SPECS: dict[str, dict[str, str]] = {
             "Keep the key facts, decisions, and caveats."
         ),
     },
-    "technical": {
-        "button": "🛠 More technical",
-        "ack": "Reframing",
-        "instruction": (
-            "Rewrite the assistant's last answer for a more technical audience. "
-            "Use precise terminology and deeper implementation detail, but stay on the same task."
-        ),
-    },
-    "step_by_step": {
-        "button": "🪜 Step by step",
+    "longer": {
+        "button": "📏 Longer",
         "ack": "Expanding",
         "instruction": (
-            "Rewrite the assistant's last answer as a step-by-step explanation. "
-            "Make the sequence explicit and easy to follow."
+            "Rewrite the assistant's last answer into a more detailed, longer version. "
+            "Add relevant context, examples, and explanations while staying on the same task. "
+            "Do not invent new facts; expand on what the original answer said."
         ),
     },
 }
@@ -403,6 +455,7 @@ def _detail_inline_keyboard() -> list[list[dict]]:
         [
             {"text": "Off", "callback_data": f"{p}d|off"},
             {"text": "Info", "callback_data": f"{p}d|info"},
+            {"text": "Smart", "callback_data": f"{p}d|smart"},
             {"text": "Verbose", "callback_data": f"{p}d|debug"},
         ],
     ]
@@ -418,19 +471,45 @@ def _actions_inline_keyboard() -> list[list[dict]]:
     ]
 
 
+def _detail_before_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "On", "callback_data": f"{p}db|on"},
+            {"text": "Off", "callback_data": f"{p}db|off"},
+        ],
+    ]
+
+
 def _detail_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
     eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
     return detail_status.detail_level_display(eff)
+
+
+def _detail_before_status_text(enabled: bool) -> str:
+    return "on" if enabled else "off"
+
+
+def _apply_detail_before_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_DETAIL_BEFORE_SESSION] = "on"
+        return "Tool start updates: on — a detail line is shown when a tool starts in this session."
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_DETAIL_BEFORE_SESSION] = "off"
+        ctx.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
+        return "Tool start updates: off — execute-before detail lines are hidden for this session."
+    return "Usage: /detail_before [on|off]"
 
 
 def _apply_detail_level(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
     arg = arg.strip().lower()
     if arg == "verbose":
         arg = "debug"
-    if arg in ("off", "info", "debug"):
+    if arg in ("off", "info", "smart", "debug"):
         ctx.data[CTX_TG_DETAIL_LEVEL_SESSION] = arg
         return f"Detail level: {detail_status.detail_level_display(arg)}."
-    return "Usage: /detail off|info|verbose — alias: debug"
+    return "Usage: /detail off|info|smart|verbose — alias: debug"
 
 
 def _project_names_ordered() -> list[str]:
@@ -647,6 +726,137 @@ def _extract_user_prompt_summary(meta: dict) -> str:
     return ""
 
 
+def _session_transcript_text(ctx: AgentContext, *, max_chars: int = 8000) -> str:
+    """Plain-text transcript of a session's history, newest turns prioritized.
+
+    Uses Agent Zero's own ``history.output_text`` (OutputMessage list) so it
+    works for both in-memory and freshly-deserialized (on-disk) contexts —
+    no guessing at private attributes. Secrets are redacted. Returns ``""``
+    when there is no usable history.
+    """
+    if ctx is None:
+        return ""
+    agent = getattr(ctx, "agent0", None)
+    history = getattr(agent, "history", None)
+    if history is None:
+        return ""
+    text = ""
+    # Preferred: framework helper that renders the whole history as labeled text.
+    try:
+        out = history.output_text(human_label="user", ai_label="assistant")
+        if isinstance(out, str):
+            text = out.strip()
+    except Exception:
+        text = ""
+    # Fallback: iterate the OutputMessage list ourselves.
+    if not text:
+        try:
+            messages = history.output()
+        except Exception:
+            messages = None
+        if isinstance(messages, list):
+            parts: list[str] = []
+            for m in messages:
+                try:
+                    is_ai = bool(m.get("ai")) if isinstance(m, dict) else bool(getattr(m, "ai", False))
+                    content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+                except Exception:
+                    continue
+                rendered = _stringify_message_content(content)
+                if not rendered:
+                    continue
+                label = "assistant" if is_ai else "user"
+                parts.append(f"{label}: {rendered}")
+            text = "\n".join(parts).strip()
+    if not text:
+        return ""
+    # Keep the most recent portion if very long.
+    if len(text) > max_chars:
+        text = "…\n" + text[-max_chars:]
+    try:
+        from helpers.detail_status import redact_sensitive
+
+        redacted = redact_sensitive(text)
+        if isinstance(redacted, str):
+            text = redacted
+    except Exception:
+        pass
+    return text
+
+
+def _stringify_message_content(content) -> str:
+    """Flatten Agent Zero MessageContent (str | dict | list) into plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, dict):
+        # Common shapes: {"text": ...}, {"type": "text", "text": ...}, or arbitrary fields.
+        if "text" in content and isinstance(content["text"], str):
+            return content["text"].strip()
+        parts = []
+        for value in content.values():
+            rendered = _stringify_message_content(value)
+            if rendered:
+                parts.append(rendered)
+        return " ".join(parts).strip()
+    if isinstance(content, (list, tuple)):
+        parts = [_stringify_message_content(item) for item in content]
+        return "\n".join(p for p in parts if p).strip()
+    return str(content).strip()
+
+
+async def _session_llm_summary(
+    ctx: AgentContext,
+    *,
+    detailed: bool = True,
+) -> str:
+    """Generate a session summary via the utility LLM.
+
+    Used by both ``/shortcut summary`` (detailed=True, multi-paragraph) and the
+    session-picker details view (detailed=False, a few short lines). Returns an
+    empty string when the session has no history or the utility model is
+    unavailable. Secrets are redacted before the LLM call.
+    """
+    if ctx is None:
+        return ""
+    agent = getattr(ctx, "agent0", None)
+    if agent is None or not hasattr(agent, "call_utility_model"):
+        return ""
+    transcript = _session_transcript_text(ctx)
+    if not transcript:
+        return ""
+    if detailed:
+        system = (
+            "You summarize an Agent Zero chat session for a Telegram reply. "
+            "Return a clear, multi-paragraph summary in plain text (no markdown, no JSON). "
+            "Cover: what the user asked, what the agent did, and the current state. "
+            "Do not reveal internal tooling, JSON, or secrets."
+        )
+        instruction = "Write the summary."
+    else:
+        system = (
+            "You write an ultra-short recap of an Agent Zero chat session for a "
+            "Telegram session list. Return 3-4 short plain-text lines (one fact per line, "
+            "no bullets, no markdown, no JSON). Capture the topic and where things stand. "
+            "Do not reveal internal tooling, JSON, or secrets."
+        )
+        instruction = "Write the 3-4 line recap."
+    message = (
+        f"Session: {ctx.id}\n"
+        f"Name: {getattr(ctx, 'name', '') or '(unnamed)'}\n\n"
+        f"Transcript:\n<transcript>\n{transcript}\n</transcript>\n\n"
+        f"{instruction}"
+    )
+    try:
+        summary = await agent.call_utility_model(
+            system=system, message=message, background=True
+        )
+    except Exception:
+        return ""
+    return str(summary or "").strip()
+
+
 def _trim_session_title(text: str, limit: int = 42) -> str:
     value = re.sub(r"\s+", " ", str(text or "")).strip()
     if not value:
@@ -854,7 +1064,7 @@ def _session_selector_keyboard(
     return rows
 
 
-def _session_details_text(meta: dict, active_ctx_id: str | None) -> str:
+def _session_details_text(meta: dict, active_ctx_id: str | None, *, summary: str = "") -> str:
     ctx_id = str(meta.get("id") or "")
     active = ctx_id == str(active_ctx_id or "")
     binding_state = str(meta.get("telegram_binding") or "bound")
@@ -875,9 +1085,9 @@ def _session_details_text(meta: dict, active_ctx_id: str | None) -> str:
     ]
     if binding_state == "unbound" and not active:
         lines.extend(["", "Opening this session will bind it to this Telegram chat."])
-    summary = _extract_user_prompt_summary(meta)
-    if summary:
-        lines.extend(["", f"Topic: {_trim_session_title(summary, limit=80)}"])
+    summary_text = str(summary or "").strip()
+    if summary_text:
+        lines.extend(["", "📝 Summary:", summary_text])
     return "\n".join(lines)
 
 
@@ -894,8 +1104,104 @@ def _session_details_keyboard(meta: dict, active_ctx_id: str | None) -> list[lis
         switch_label = "✅ Open this session"
     return [
         [{"text": switch_label, "callback_data": f"{p}ss|{ctx_id}"}],
+        [{"text": "🗑 Delete", "callback_data": f"{p}sd|{ctx_id}"}],
         [{"text": "⬅️ Back", "callback_data": f"{p}sb|back"}],
     ]
+
+
+def _session_delete_confirm_text(meta: dict, *, active_ctx_id: str | None = None) -> str:
+    """Render the confirmation text for deleting a saved session."""
+    name = str(meta.get("display_name") or meta.get("id") or "?").strip() or "?"
+    ctx_id = str(meta.get("id") or "")
+    is_active = bool(ctx_id) and ctx_id == str(active_ctx_id or "")
+    lines = [
+        "🗑 Delete session",
+        "",
+        name,
+        "",
+        "This permanently removes the on-disk chat file. This cannot be undone.",
+    ]
+    if is_active:
+        lines.extend(
+            [
+                "",
+                "This session is the active chat for this Telegram conversation. "
+                "A fresh new session will be started automatically after deletion.",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _session_delete_confirm_keyboard(ctx_id: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [{"text": "🗑 Yes, delete", "callback_data": f"{p}sdy|{ctx_id}"}],
+        [{"text": "⬅️ Cancel", "callback_data": f"{p}sdn|{ctx_id}"}],
+    ]
+
+
+def _delete_session_for_user(
+    bot_name: str,
+    user_id: int,
+    chat_id: int,
+    ctx_id: str,
+) -> tuple[bool, str, bool]:
+    """Delete a saved session's chat file.
+
+    Returns ``(ok, message, was_active)``. ``was_active`` is True when the
+    deleted session was the active one for ``(bot_name, user_id, chat_id)``;
+    the caller is expected to start a fresh session in that case.
+    """
+    sessions = _list_switchable_sessions(bot_name, user_id, chat_id)
+    target = next((s for s in sessions if str(s.get("id") or "") == str(ctx_id)), None)
+    if not target:
+        return False, "Session not found for this Telegram chat.", False
+
+    meta = _read_persisted_chat_meta(ctx_id)
+    if not meta:
+        return False, "Session file is missing or unreadable.", False
+
+    data = meta.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
+    is_bound = _session_matches_identity(meta, bot_name, user_id, chat_id)
+    owner_user_id = data.get(CTX_TG_USER_ID)
+    try:
+        owner_user_id_int = int(owner_user_id) if owner_user_id is not None else None
+    except (TypeError, ValueError):
+        owner_user_id_int = None
+    is_owned_unbound = (
+        not is_bound
+        and str(data.get(CTX_TG_BOT) or "") == str(bot_name)
+        and (owner_user_id_int is None or owner_user_id_int == int(user_id))
+    )
+    if not (is_bound or is_owned_unbound):
+        return False, (
+            "Not allowed: this session belongs to a different Telegram user or chat."
+        ), False
+
+    key = _map_key(bot_name, user_id, chat_id)
+    with _chat_map_lock:
+        state = _load_state()
+        chats = state.setdefault("chats", {})
+        was_active = str(chats.get(key) or "") == str(ctx_id)
+        if was_active:
+            chats.pop(key, None)
+            _save_state(state)
+
+    in_mem = AgentContext.get(ctx_id)
+    if in_mem:
+        with suppress(Exception):
+            in_mem.reset()
+    with suppress(Exception):
+        AgentContext.remove(ctx_id)
+    with suppress(Exception):
+        remove_chat(ctx_id)
+
+    _mark_chat_state_dirty("plugins.telegram_integration_voice.session.delete")
+
+    name = str(target.get("display_name") or ctx_id).strip() or ctx_id
+    return True, f"Deleted session {name}.", was_active
 
 
 def _session_search_help_text() -> str:
@@ -1056,6 +1362,7 @@ def _activate_existing_session(
         if old_ctx_id and old_ctx_id != ctx.id:
             old_ctx = AgentContext.get(old_ctx_id)
             if old_ctx:
+                _stop_context_chat_actions(old_ctx)
                 old_ctx.kill_process()
                 save_tmp_chat(old_ctx)
         chats[key] = ctx.id
@@ -1087,6 +1394,7 @@ async def _start_new_session_for_user(
         if old_ctx_id:
             old_ctx = AgentContext.get(old_ctx_id)
             if old_ctx:
+                _stop_context_chat_actions(old_ctx)
                 old_ctx.kill_process()
                 save_tmp_chat(old_ctx)
             _save_state(state)
@@ -1145,8 +1453,18 @@ async def _show_session_details(
     active_ctx_id: str | None,
     meta: dict,
     message_id: int | None = None,
+    bot_cfg: dict | None = None,
+    bot_name: str | None = None,
+    user_id: int | None = None,
 ) -> int | None:
-    text = _session_details_text(meta, active_ctx_id)
+    summary = await _session_details_summary(
+        meta,
+        bot_cfg=bot_cfg or {},
+        bot_name=bot_name,
+        user_id=user_id,
+        chat_id=chat_id,
+    )
+    text = _session_details_text(meta, active_ctx_id, summary=summary)
     keyboard = _session_details_keyboard(meta, active_ctx_id)
     async with _temp_bot(token) as bot:
         if message_id:
@@ -1156,6 +1474,41 @@ async def _show_session_details(
             if edited:
                 return message_id
         return await tc.send_text_with_keyboard(bot, chat_id, text, keyboard, parse_mode=None)
+
+
+async def _session_details_summary(
+    meta: dict,
+    *,
+    bot_cfg: dict,
+    bot_name: str | None,
+    user_id: int | None,
+    chat_id: int | None,
+) -> str:
+    """Short utility-LLM recap for a session shown in the picker details view.
+
+    Loads the target session's context (in-memory or from disk) and asks the
+    utility model for a 3-4 line recap. Returns ``""`` on any failure so the
+    details view still renders without a summary block.
+    """
+    ctx_id = str(meta.get("id") or "")
+    if not ctx_id:
+        return ""
+    try:
+        ctx = _load_persisted_context(
+            ctx_id,
+            bot_cfg or {},
+            expected_bot_name=bot_name,
+            expected_user_id=user_id,
+            expected_chat_id=chat_id,
+        )
+    except Exception:
+        ctx = None
+    if ctx is None:
+        return ""
+    try:
+        return await _session_llm_summary(ctx, detailed=False)
+    except Exception:
+        return ""
 
 
 def _get_existing_context(message: TgMessage, bot_name: str) -> AgentContext | None:
@@ -1463,7 +1816,7 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
         desc = _detail_session_description(ctx, bot_cfg)
         reply = (
             f"Tool detail: {desc}.\n"
-            "Tap a button or type /detail off|info|verbose"
+            "Tap a button or type /detail off|info|smart|verbose"
         )
         kb = _detail_inline_keyboard()
         save_tmp_chat(ctx)
@@ -1473,6 +1826,46 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     reply = _apply_detail_level(ctx, bot_cfg, arg)
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
+async def handle_detail_before(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /detail_before — toggle execute-before tool status updates for the current session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        enabled = detail_status.effective_execute_before_enabled(bot_cfg, ctx.data)
+        reply = (
+            f"Tool start updates: {_detail_before_status_text(enabled)}.\n"
+            "Tap a button or type /detail_before on|off for this session."
+        )
+        kb = _detail_before_inline_keyboard()
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+            keyboard=kb,
+        )
+        return
+
+    reply = _apply_detail_before_setting(ctx, bot_cfg, arg)
     save_tmp_chat(ctx)
     await _send_with_temp_bot(
         instance.bot.token,
@@ -1722,10 +2115,12 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         also_eff = speech.effective_also_send_text(bot_cfg, ctx.data)
         det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
         det_eff_disp = detail_status.detail_level_display(det_eff)
+        before_eff = detail_status.effective_execute_before_enabled(bot_cfg, ctx.data)
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(opt_eff)}</code> · "
             f"also text <code>{'on' if also_eff else 'off'}</code> · "
-            f"tool detail <code>{esc(det_eff_disp)}</code>"
+            f"tool detail <code>{esc(det_eff_disp)}</code> · "
+            f"tool start <code>{'on' if before_eff else 'off'}</code>"
         )
 
         proj = projects.get_context_project_name(ctx)
@@ -1749,9 +2144,11 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
         def_det = detail_status.normalize_detail_level(bot_cfg.get("telegram_detail_level"))
         def_det_disp = detail_status.detail_level_display(def_det)
+        def_before = detail_status.normalize_execute_before_enabled(bot_cfg.get("telegram_detail_execute_before"))
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(speech.optimize_output_default(bot_cfg))}</code> · "
-            f"tool detail <code>{esc(def_det_disp)}</code>"
+            f"tool detail <code>{esc(def_det_disp)}</code> · "
+            f"tool start <code>{'on' if def_before else 'off'}</code>"
         )
 
     text = header + "\n\n" + "\n".join(lines)
@@ -1792,6 +2189,144 @@ async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):
         message.chat.id,
         reply,
         parse_mode=None,
+    )
+
+
+def _shortcut_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "✂️ Shorter", "callback_data": f"{p}sx|shorter"},
+            {"text": "📏 Longer", "callback_data": f"{p}sx|longer"},
+        ],
+        [
+            {"text": "📝 Summary", "callback_data": f"{p}sx|summary"},
+        ],
+    ]
+
+
+async def _run_shortcut_transform(
+    ctx: AgentContext,
+    *,
+    token: str,
+    chat_id: int,
+    user,
+    sub: str,
+) -> None:
+    """Execute a /shortcut shorter|longer transform against the active session.
+
+    Sends user-facing notices via the bot; returns nothing.
+    """
+    spec = _response_transform_spec(sub)
+    if not spec:
+        await _send_with_temp_bot(
+            token, chat_id, "Usage: /shortcut shorter | longer | summary", parse_mode=None
+        )
+        return
+    last_answer = str(ctx.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+    if not last_answer:
+        await _send_with_temp_bot(
+            token, chat_id,
+            "No previous answer to transform — send a message first.",
+            parse_mode=None,
+        )
+        return
+    try:
+        body = _build_response_transform_body(sub, last_answer)
+    except ValueError:
+        await _send_with_temp_bot(
+            token, chat_id, "Usage: /shortcut shorter | longer | summary", parse_mode=None
+        )
+        return
+    await _send_with_temp_bot(token, chat_id, f"{spec['ack']}…", parse_mode=None)
+    await _dispatch_telegram_user_turn(
+        ctx,
+        bot_token=token,
+        chat_id=chat_id,
+        sender=_format_user(user),
+        body=body,
+        attachments=[],
+        source=f" (telegram /shortcut {sub})",
+        busy_message="Agent is still working — use /stop first, then try again.",
+    )
+
+
+async def _run_shortcut_summary(
+    ctx: AgentContext,
+    *,
+    token: str,
+    chat_id: int,
+) -> None:
+    """Generate and send a utility-LLM summary of the active session."""
+    await _send_with_temp_bot(
+        token, chat_id, "📝 Summarizing session…", parse_mode=None
+    )
+    summary = await _session_llm_summary(ctx, detailed=True)
+    if not summary:
+        await _send_with_temp_bot(
+            token, chat_id,
+            "Nothing to summarize yet — send a message first.",
+            parse_mode=None,
+        )
+        return
+    text = f"📝 Session summary\n\n{summary}"
+    await _send_with_temp_bot(token, chat_id, text, parse_mode=None)
+
+
+async def handle_shortcut(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /shortcut — trigger response transforms or session summary.
+
+    With no sub-command (or an unknown one) it shows inline buttons. Explicit
+    sub-commands (all work on the active session):
+      - ``shorter`` — rewrite the last answer shorter
+      - ``longer``  — rewrite the last answer with more detail
+      - ``summary`` — utility-LLM summary of the active session
+    """
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    token = instance.bot.token
+
+    arg = _cmd_rest(message).strip()
+    parts = arg.split(maxsplit=1)
+    sub = parts[0].strip().lower() if parts else ""
+
+    if not sub:
+        await _send_with_temp_bot(
+            token,
+            message.chat.id,
+            "Pick a shortcut for the current session:",
+            parse_mode=None,
+            keyboard=_shortcut_inline_keyboard(),
+        )
+        return
+
+    if sub in ("shorter", "longer", "summary"):
+        ctx = _get_existing_context(message, bot_name)
+        if not ctx:
+            await _send_with_temp_bot(
+                token, message.chat.id,
+                "No active session. Use /start first.",
+                parse_mode=None,
+            )
+            return
+        if sub == "summary":
+            await _run_shortcut_summary(ctx, token=token, chat_id=message.chat.id)
+        else:
+            await _run_shortcut_transform(
+                ctx, token=token, chat_id=message.chat.id, user=user, sub=sub
+            )
+        return
+
+    await _send_with_temp_bot(
+        token,
+        message.chat.id,
+        f"Unknown shortcut: {sub}\nPick one below:",
+        parse_mode=None,
+        keyboard=_shortcut_inline_keyboard(),
     )
 
 
@@ -1920,6 +2455,7 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
             parse_mode=None,
             )
         return
+    _stop_context_chat_actions(ctx)
     ctx.kill_process()
     save_tmp_chat(ctx)
     await _send_with_temp_bot(
@@ -2264,96 +2800,104 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     # Start persistent typing indicator (thread-based, works across event loops)
     typing_stop = _start_typing(instance.bot.token, message.chat.id)
+    context: AgentContext | None = None
 
-    # Get or create agent context
-    context = await _get_or_create_context(bot_name, bot_cfg, message)
-    if not context:
-        typing_stop.set()
-        await _send_with_temp_bot(
-            instance.bot.token, message.chat.id,
-            "Failed to create chat session.",
-            parse_mode=None,
-            )
-        return
-
-    # New user turn: clear stale progress message state
-    _clear_progress_state(context)
-
-    # Show an immediate live-status placeholder so long agent runs don't look frozen.
-    await _send_initial_progress_status(context)
-
-    # Store stop event so send_telegram_reply can cancel typing
-    context.data[CTX_TG_TYPING_STOP] = typing_stop
-    context.data[CTX_TG_CHAT_TYPE] = str(getattr(message.chat, "type", "") or "")
-    context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
-
-    # Keep Telegram threading visible when the user replied to an earlier message.
-    reply_to_id = message.message_id if message.reply_to_message else None
-    context.data[CTX_TG_REPLY_TO] = reply_to_id
-
-    # Build user message text
-    text = _extract_message_content(message)
-    reply_context = _extract_reply_context(message)
-    is_voice_input = _message_has_voice_input(message)
-    context.data[CTX_TG_LAST_INPUT_WAS_VOICE] = is_voice_input
-
-    # Use temp bot for downloads (cross-event-loop safe)
-    async with _temp_bot(instance.bot.token) as dl_bot:
-        attachments = await _download_attachments(dl_bot, message, bot_name=bot_name)
-
-    # Optional STT for voice/audio inputs
-    if is_voice_input and speech.stt_enabled(bot_cfg):
-        audio_ref = _pick_audio_attachment(attachments)
-        if audio_ref:
-            audio_path = files.fix_dev_path(audio_ref)
-            await _set_progress_phase_and_refresh(context, bot_cfg, "stt")
-            try:
-                stt_result = await asyncio.to_thread(speech.transcribe_audio_file, bot_cfg, audio_path)
-                transcript = str((stt_result or {}).get("text") or "").strip()
-                if transcript:
-                    text = _merge_voice_transcript(text, transcript)
-                else:
-                    text = text + "\n[Voice transcript unavailable: empty result]"
-            except Exception as e:
-                PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
-                text = text + f"\n[Voice transcript failed: {format_error(e)}]"
-            finally:
-                await _set_progress_phase_and_refresh(
-                    context,
-                    bot_cfg,
-                    None,
-                    require_existing_message=True,
+    try:
+        # Get or create agent context
+        context = await _get_or_create_context(bot_name, bot_cfg, message)
+        if not context:
+            _stop_typing_handle(typing_stop)
+            await _send_with_temp_bot(
+                instance.bot.token, message.chat.id,
+                "Failed to create chat session.",
+                parse_mode=None,
                 )
+            return
 
-    if reply_context:
-        context.data[CTX_TG_REPLY_CONTEXT] = reply_context
-        text = _merge_reply_context(text, reply_context)
-    else:
-        context.data.pop(CTX_TG_REPLY_CONTEXT, None)
+        # New user turn: clear stale progress message state
+        _clear_progress_state(context)
 
-    # Build user message with prompt
-    agent = context.agent0
-    sender = _format_user(user)
-    user_msg = agent.read_prompt(
-        "fw.telegram.user_message.md",
-        sender=sender,
-        body=text,
-    )
+        # Show an immediate live-status placeholder so long agent runs don't look frozen.
+        await _send_initial_progress_status(context)
 
-    # Remember this turn so /retry can re-run it.
-    context.data[CTX_TG_LAST_USER_BODY] = text
-    context.data[CTX_TG_LAST_USER_SENDER] = sender
-    context.data[CTX_TG_LAST_USER_ATTACHMENTS] = list(attachments or [])
+        # Store stop event so send_telegram_reply can cancel typing
+        _replace_context_typing_stop(context, typing_stop)
+        context.data[CTX_TG_CHAT_TYPE] = str(getattr(message.chat, "type", "") or "")
+        context.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
 
-    msg_id = str(uuid.uuid4())
-    mq.log_user_message(context, user_msg, attachments, message_id=msg_id, source=" (telegram)")
-    context.communicate(UserMessage(
-        message=user_msg,
-        attachments=attachments,
-        id=msg_id,
-    ))
+        # Keep Telegram threading visible when the user replied to an earlier message.
+        reply_to_id = message.message_id if message.reply_to_message else None
+        context.data[CTX_TG_REPLY_TO] = reply_to_id
 
-    save_tmp_chat(context)
+        # Build user message text
+        text = _extract_message_content(message)
+        reply_context = _extract_reply_context(message)
+        is_voice_input = _message_has_voice_input(message)
+        context.data[CTX_TG_LAST_INPUT_WAS_VOICE] = is_voice_input
+
+        # Use temp bot for downloads (cross-event-loop safe)
+        async with _temp_bot(instance.bot.token) as dl_bot:
+            attachments = await _download_attachments(dl_bot, message, bot_name=bot_name)
+
+        # Optional STT for voice/audio inputs
+        if is_voice_input and speech.stt_enabled(bot_cfg):
+            audio_ref = _pick_audio_attachment(attachments)
+            if audio_ref:
+                audio_path = files.fix_dev_path(audio_ref)
+                await _set_progress_phase_and_refresh(context, bot_cfg, "stt")
+                try:
+                    stt_result = await asyncio.to_thread(speech.transcribe_audio_file, bot_cfg, audio_path)
+                    transcript = str((stt_result or {}).get("text") or "").strip()
+                    if transcript:
+                        text = _merge_voice_transcript(text, transcript)
+                    else:
+                        text = text + "\n[Voice transcript unavailable: empty result]"
+                except Exception as e:
+                    PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
+                    text = text + f"\n[Voice transcript failed: {format_error(e)}]"
+                finally:
+                    await _set_progress_phase_and_refresh(
+                        context,
+                        bot_cfg,
+                        None,
+                        require_existing_message=True,
+                    )
+
+        if reply_context:
+            context.data[CTX_TG_REPLY_CONTEXT] = reply_context
+            text = _merge_reply_context(text, reply_context)
+        else:
+            context.data.pop(CTX_TG_REPLY_CONTEXT, None)
+
+        # Build user message with prompt
+        agent = context.agent0
+        sender = _format_user(user)
+        user_msg = agent.read_prompt(
+            "fw.telegram.user_message.md",
+            sender=sender,
+            body=text,
+        )
+
+        # Remember this turn so /retry can re-run it.
+        context.data[CTX_TG_LAST_USER_BODY] = text
+        context.data[CTX_TG_LAST_USER_SENDER] = sender
+        context.data[CTX_TG_LAST_USER_ATTACHMENTS] = list(attachments or [])
+
+        msg_id = str(uuid.uuid4())
+        mq.log_user_message(context, user_msg, attachments, message_id=msg_id, source=" (telegram)")
+        context.communicate(UserMessage(
+            message=user_msg,
+            attachments=attachments,
+            id=msg_id,
+        ))
+
+        save_tmp_chat(context)
+    except Exception:
+        if context and context.data.get(CTX_TG_TYPING_STOP) is typing_stop:
+            _stop_context_chat_actions(context)
+        else:
+            _stop_typing_handle(typing_stop)
+        raise
 
     # Send notification
     if bot_cfg.get("notify_messages", False):
@@ -2434,6 +2978,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
                 meta=target,
                 message_id=query.message.message_id,
+                bot_cfg=bot_cfg,
+                bot_name=bot_name,
+                user_id=user.id,
             )
             await query.answer()
             return
@@ -2497,6 +3044,78 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 query="",
                 page=0,
                 message_id=query.message.message_id,
+            )
+            await query.answer()
+            return
+
+        if kind == "sd":
+            sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
+            target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
+            if not target:
+                await query.answer("Session not found")
+                return
+            text = _session_delete_confirm_text(
+                target, active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id)
+            )
+            keyboard = _session_delete_confirm_keyboard(payload)
+            edited = False
+            async with _temp_bot(token) as bot:
+                if query.message:
+                    edited = bool(
+                        await tc.edit_text_with_keyboard(
+                            bot, chat_id, query.message.message_id, text, keyboard, parse_mode=None
+                        )
+                    )
+                if not edited:
+                    await tc.send_text_with_keyboard(bot, chat_id, text, keyboard, parse_mode=None)
+            await query.answer()
+            return
+
+        if kind == "sdy":
+            ok, msg, was_active = _delete_session_for_user(
+                bot_name, user.id, chat_id, payload
+            )
+            if not ok:
+                await query.answer(msg[:200] if msg else "Not allowed")
+                return
+            if was_active:
+                new_ok, _new_msg, new_ctx = await _start_new_session_for_user(
+                    bot_name, bot_cfg, user.id, user.username, chat_id
+                )
+                active_ctx_id = new_ctx.id if new_ok and new_ctx else _mapped_context_id(
+                    bot_name, user.id, chat_id
+                )
+            else:
+                active_ctx_id = _mapped_context_id(bot_name, user.id, chat_id)
+            await _show_session_picker(
+                token,
+                chat_id,
+                bot_name=bot_name,
+                user_id=user.id,
+                active_ctx_id=active_ctx_id,
+                query="",
+                page=0,
+                message_id=query.message.message_id if query.message else None,
+            )
+            await query.answer("Deleted")
+            await _send_with_temp_bot(token, chat_id, msg, parse_mode=None)
+            return
+
+        if kind == "sdn":
+            sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
+            target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
+            if not target:
+                await query.answer("Session not found")
+                return
+            await _show_session_details(
+                token,
+                chat_id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                meta=target,
+                message_id=query.message.message_id if query.message else None,
+                bot_cfg=bot_cfg,
+                bot_name=bot_name,
+                user_id=user.id,
             )
             await query.answer()
             return
@@ -2591,11 +3210,12 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     await query.answer("Bot is offline.")
                     return
                 voice_file = None
+                voice_stop = None
                 try:
                     async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
                         reply_cfg = speech.voice_reply_settings(bot_cfg)
                         max_chars = max(100, int(reply_cfg["max_chars"]))
-                        await tc.send_record_voice(bot, chat_id)
+                        voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                         voice_file, _meta = await asyncio.to_thread(
                             speech.synthesize_to_voice_file,
                             bot_cfg,
@@ -2612,6 +3232,10 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     PrintStyle.error(f"Telegram response to_voice failed: {format_error(e)}")
                     await query.answer("Voice conversion failed.")
                 finally:
+                    if context.data.get(CTX_TG_RECORD_VOICE_STOP) is voice_stop:
+                        _stop_context_record_voice(context)
+                    else:
+                        _stop_record_voice_handle(voice_stop)
                     if voice_file:
                         with suppress(Exception):
                             os.remove(voice_file)
@@ -2700,6 +3324,31 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             await _send_with_temp_bot(
                 token, chat_id, reply, parse_mode=None
             )
+            return
+
+        if kind == "db":
+            if payload not in ("on", "off"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_detail_before_setting(context, bot_cfg, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
+            return
+
+        if kind == "sx":
+            if payload not in ("shorter", "longer", "summary"):
+                await query.answer("Unknown option.")
+                return
+            await query.answer("Working…")
+            if payload == "summary":
+                await _run_shortcut_summary(context, token=token, chat_id=chat_id)
+            else:
+                await _run_shortcut_transform(
+                    context, token=token, chat_id=chat_id, user=user, sub=payload
+                )
             return
 
         if kind == "rm":
@@ -2801,7 +3450,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
 
         if kind == "d":
-            if payload not in ("off", "info", "debug"):
+            if payload not in ("off", "info", "smart", "debug"):
                 await query.answer("Unknown option.")
                 return
             reply = _apply_detail_level(context, bot_cfg, payload)
@@ -2998,41 +3647,48 @@ async def _dispatch_telegram_user_turn(
         return busy_message
 
     typing_stop = _start_typing(bot_token, chat_id)
-    _clear_progress_state(ctx)
-    await _send_initial_progress_status(ctx)
-    ctx.data[CTX_TG_TYPING_STOP] = typing_stop
-    ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
-    ctx.data[CTX_TG_REPLY_TO] = None
-    ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
+    try:
+        _clear_progress_state(ctx)
+        await _send_initial_progress_status(ctx)
+        _replace_context_typing_stop(ctx, typing_stop)
+        ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
+        ctx.data[CTX_TG_REPLY_TO] = None
+        ctx.data[CTX_TG_LAST_INPUT_WAS_VOICE] = False
 
-    clean_body = str(body or "").strip()
-    clean_sender = str(sender or "").strip()
-    clean_attachments = list(attachments or [])
+        clean_body = str(body or "").strip()
+        clean_sender = str(sender or "").strip()
+        clean_attachments = list(attachments or [])
 
-    user_msg = ctx.agent0.read_prompt(
-        "fw.telegram.user_message.md",
-        sender=clean_sender,
-        body=clean_body,
-    )
-    ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
-    ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
-    ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
+        user_msg = ctx.agent0.read_prompt(
+            "fw.telegram.user_message.md",
+            sender=clean_sender,
+            body=clean_body,
+        )
+        ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
+        ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
+        ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
 
-    msg_id = str(uuid.uuid4())
-    mq.log_user_message(
-        ctx,
-        user_msg,
-        clean_attachments,
-        message_id=msg_id,
-        source=source,
-    )
-    ctx.communicate(UserMessage(
-        message=user_msg,
-        attachments=clean_attachments,
-        id=msg_id,
-    ))
-    save_tmp_chat(ctx)
-    return None
+        msg_id = str(uuid.uuid4())
+        mq.log_user_message(
+            ctx,
+            user_msg,
+            clean_attachments,
+            message_id=msg_id,
+            source=source,
+        )
+        ctx.communicate(UserMessage(
+            message=user_msg,
+            attachments=clean_attachments,
+            id=msg_id,
+        ))
+        save_tmp_chat(ctx)
+        return None
+    except Exception:
+        if ctx.data.get(CTX_TG_TYPING_STOP) is typing_stop:
+            _stop_context_chat_actions(ctx)
+        else:
+            _stop_typing_handle(typing_stop)
+        raise
 
 
 def _truncate_preview(text: str, limit: int = 280) -> str:
@@ -3250,6 +3906,8 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_STREAM_DRAFT_ID, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_LAST_TS, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
+    context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
+    context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_USED, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_DISABLED, None)
     context.data.pop(CTX_TG_STREAM_PENDING_FULL, None)
@@ -3728,6 +4386,22 @@ def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
     if len(lines) > cap:
         lines = lines[-cap:]
     context.data[CTX_TG_PROGRESS_LINES] = lines
+    return len(lines) - 1
+
+
+def _replace_progress_line(context: AgentContext, index: int, line_html: str, bot_cfg: dict) -> bool:
+    if not line_html:
+        return False
+    try:
+        idx = int(index)
+    except (TypeError, ValueError):
+        return False
+    lines = list(context.data.get(CTX_TG_PROGRESS_LINES, []) or [])
+    if idx < 0 or idx >= len(lines):
+        return False
+    lines[idx] = str(line_html)
+    context.data[CTX_TG_PROGRESS_LINES] = lines
+    return True
 
 
 async def _send_initial_progress_status(context: AgentContext):
@@ -3817,6 +4491,16 @@ def _log_background_progress_result(task):
 _PROGRESS_RL_NOTIFY_THRESHOLD = 3
 
 
+def _typing_rearm_blocked(context: AgentContext | None) -> bool:
+    if not context:
+        return False
+    data = getattr(context, "data", None)
+    if not isinstance(data, dict):
+        return False
+    phase = str(data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
+    return phase == "tts" or bool(data.get(CTX_TG_RECORD_VOICE_STOP))
+
+
 async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int):
     """Send a single 'still working' notice when progress edits keep getting rate-limited."""
     skips = int(context.data.get(CTX_TG_PROGRESS_RL_SKIPS, 0) or 0) + 1
@@ -3831,7 +4515,8 @@ async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int)
             "⏳ Still working — live updates are paused by Telegram rate limits.",
             parse_mode=None,
         )
-        await tc.send_typing(bot, chat_id)
+        if not _typing_rearm_blocked(context):
+            await tc.send_typing(bot, chat_id)
     except Exception as e:
         PrintStyle.warning(f"Telegram updates-paused notice failed: {format_error(e)}")
 
@@ -3941,8 +4626,10 @@ async def send_telegram_progress_update(
                     context.data[CTX_TG_PROGRESS_MESSAGE_ID] = int(new_id)
                     sent_or_edited = True
                     # A new message clears the typing indicator; re-arm it so long
-                    # runs keep showing activity (Hermes pattern).
-                    await tc.send_typing(reply_bot, chat_id)
+                    # runs keep showing activity (Hermes pattern), except while TTS
+                    # owns the visible chat action.
+                    if not _typing_rearm_blocked(context):
+                        await tc.send_typing(reply_bot, chat_id)
 
             if sent_or_edited:
                 context.data[CTX_TG_PROGRESS_LAST_HASH] = fp
@@ -4589,10 +5276,11 @@ async def send_telegram_reply(
                     "tts",
                     require_existing_message=True,
                 )
+                voice_stop = None
                 try:
                     max_chars = max(100, int(reply_cfg["max_chars"]))
                     tts_payload = tts_raw[:max_chars]
-                    await tc.send_record_voice(reply_bot, chat_id)
+                    voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                     voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
                     msg_id = await tc.send_voice(
                         reply_bot,
@@ -4619,6 +5307,10 @@ async def send_telegram_reply(
                 except Exception as e:
                     PrintStyle.error(f"Telegram TTS failed: {format_error(e)}")
                 finally:
+                    if context.data.get(CTX_TG_RECORD_VOICE_STOP) is voice_stop:
+                        _stop_context_record_voice(context)
+                    else:
+                        _stop_record_voice_handle(voice_stop)
                     _set_progress_phase(context, None)
                     if voice_file:
                         with suppress(Exception):
@@ -4718,8 +5410,14 @@ async def _send_with_temp_bot(
             )
 
 
-def _start_typing(token: str, chat_id: int) -> threading.Event:
-    """Spawn a daemon thread that sends typing every 4s. Returns a stop Event."""
+def _start_chat_action(
+    token: str,
+    chat_id: int,
+    send_action,
+    *,
+    interval_s: float = 4.0,
+) -> threading.Event:
+    """Spawn a daemon thread that keeps a Telegram chat action alive."""
     stop = threading.Event()
 
     def _run():
@@ -4728,11 +5426,14 @@ def _start_typing(token: str, chat_id: int) -> threading.Event:
         async def _loop():
             async with _temp_bot(token) as bot:
                 while not stop.is_set():
-                    await tc.send_typing(bot, chat_id)
-                    for _ in range(8):
+                    await send_action(bot, chat_id)
+                    remaining = max(0.5, float(interval_s))
+                    while remaining > 0:
                         if stop.is_set():
                             return
-                        await asyncio.sleep(0.5)
+                        sleep_for = min(0.5, remaining)
+                        await asyncio.sleep(sleep_for)
+                        remaining -= sleep_for
 
         try:
             asyncio.run(_loop())
@@ -4741,6 +5442,16 @@ def _start_typing(token: str, chat_id: int) -> threading.Event:
 
     threading.Thread(target=_run, daemon=True).start()
     return stop
+
+
+def _start_typing(token: str, chat_id: int) -> threading.Event:
+    """Spawn a daemon thread that sends typing every 4s. Returns a stop Event."""
+    return _start_chat_action(token, chat_id, tc.send_typing)
+
+
+def _start_record_voice(token: str, chat_id: int) -> threading.Event:
+    """Spawn a daemon thread that keeps Telegram record_voice active during TTS."""
+    return _start_chat_action(token, chat_id, tc.send_record_voice)
 
 
 def _format_user(user) -> str:

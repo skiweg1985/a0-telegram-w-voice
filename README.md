@@ -81,24 +81,31 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 
 ### Tool Status & Detail Level
 
-- `/detail` controls what appears in chat while tools are running: `off` (final answer only), `info` (throttled step lines), `verbose` (full tool detail).
+- `/detail` controls what appears in chat while tools are running: `off` (final answer only), `info` (throttled step lines), `smart` (utility-model summary), `verbose` (full tool detail).
+- `/detail_before` controls whether a tool-status line is already shown when a tool **starts**: `on` (default) or `off` for the current session.
 - Each step shows an **emoji icon and a human-readable label** (e.g. 🧠 for memory tools, 💻 for code execution). Icons and labels are configurable per tool.
 - Detail updates are sent as **in-place progress edits** — a single bubble is updated rather than a new message per step.
+- When `/detail_before on` is active, the same progress bubble shows the step at tool start and then replaces that line with the completion-time outcome.
 - Long debug payloads are truncated at a safe boundary before sending (`telegram_detail_max_body_chars`).
 
 ### Slash Commands & Inline Buttons
 
-- **Inline keyboards** on all mode-switching commands: `/detail`, `/voice`, `/optimize_output`, `/project`, `/model` — tap to switch without typing.
+- **Inline keyboards** on mode-switching commands: `/detail`, `/detail_before`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` (no argument) — tap to switch or run shortcuts without typing.
+- `/title` sets a manual title for the current session, or `/title auto` returns to automatic naming.
+- `/actions` toggles the per-reply **More** menu for the current session. The More menu offers `Shorter`, `Longer`, `To voice`, and `Back`; voice-only replies can also show `Show text`.
 - **Approve / Cancel flows**: the agent can present risky actions as inline keyboard choices; taps are fed back into the agent automatically.
 - **Unauthorized users** receive a clear, throttled reply with their Telegram user ID so they can request access.
-- **`/session` picker**: paginated list of saved sessions with inline navigation, details view, and **button-driven search** — tap Search, send a term, results filter inline.
+- **`/session` picker**: paginated list of saved sessions with inline navigation, details view (with a 📝 Summary block of the most recent turns), **button-driven search** (tap Search, send a term, results filter inline) and a **🗑 Delete** action that removes the on-disk chat file (a fresh new session is started automatically when deleting the active one).
 - `/retry` re-runs your last message; `/undo` drops the last exchange (your message and the agent's reply) from session history.
 - `/topic [name]` opens a named conversation thread in the same chat, or lists existing topics without a name.
 
 ### WebUI
 
 - Per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`) directly in the plugin settings UI.
+- The WebUI currently exposes **Off**, **Info**, and **Verbose** for the default tool-detail level. `smart` is still available via YAML (`telegram_detail_level: smart`) or per-session with `/detail smart`.
 - **Walkie-talkie preset** button for quick voice-oriented configuration.
+- **Quick action buttons** can be enabled/disabled in the WebUI. This controls the per-reply **More** menu (`Shorter`, `Longer`, `To voice`, `Back`) and the voice-only **Show text** button.
+- **Update from Git** and **Test Connection** actions are available in the WebUI for Git-based installs and token checks.
 - Operator-only tuning (detail throttling, icon overrides, progress timing, STT/TTS endpoint details) is YAML-only — no visual clutter in the UI.
 
 ---
@@ -112,14 +119,18 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/status` | Model, tokens, project, TTS/STT, run state |
 | `/clear` | Reset conversation history (same context) |
 | `/newchat` | New session; old chat stays in browser UI |
-| `/session` | Paginated session picker; `/session search <term>` or `/session <id>` to switch directly |
-| `/detail` | `off` / `info` / `verbose`, or no arg shows level + **inline buttons** |
+| `/session` | Paginated session picker; `/session search <term>` to filter, open a session and tap **🗑 Delete** to remove it (active session triggers a fresh new chat) |
+| `/title` | Set a manual session title, or `/title auto` to restore automatic naming |
+| `/actions` | Toggle the per-reply **More** menu for this session |
+| `/detail` | `off` / `info` / `smart` / `verbose`, or no arg shows level + **inline buttons** |
+| `/detail_before` | `on` / `off`, or no arg shows current tool-start mode + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off`, or no arg shows current mode **with inline buttons** |
 | `/retry` | Re-run your last message |
 | `/undo` | Drop the last exchange from session history |
 | `/topic` | Start or list named conversation threads |
 | `/compact` | Compress history (utility LLM) |
+| `/shortcut` | No arg shows inline buttons; `shorter` / `longer` rewrite the last answer; `summary` delivers a utility-LLM session summary as a separate message |
 | `/stop` | Abort running task |
 | `/project` | Active + available projects + **buttons**; or `/project <name>` |
 | `/model` | Show current model + **preset buttons**; or `/model <preset>` |
@@ -137,7 +148,8 @@ bots:
     mode: polling
     allowed_users: ["123456789"]
 
-    telegram_detail_level: info                 # default; throttled step lines — set to off for final answer only
+    telegram_detail_level: info                 # off | info | smart | debug (verbose alias in chat)
+    telegram_detail_execute_before: true        # default; set false to hide tool-start lines and only show completion-time detail
     telegram_detail_info_min_interval_sec: 5
     telegram_detail_debug_min_interval_sec: 1.5
     telegram_detail_icons_enabled: true          # emoji prefix per step
@@ -175,16 +187,23 @@ bots:
         optimize_output_default: off   # off | voice | text | auto — new sessions; /optimize_output overrides
         voice_mode: auto               # off | auto | voice_only | voice_text | text_only
         max_chars: 700
+        quick_actions:
+          enabled: true                # default for the per-reply More menu; /actions overrides per session
+          show_text: true              # in voice-only replies, allow revealing the text on demand
 ```
 
 ## Session behavior
 
 - `/clear` resets the currently active session history.
 - `/newchat` creates a fresh session and keeps older sessions available in Agent Zero/browser history.
-- `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat. Supports inline details navigation and **button-driven search**: tap Search, send a search term, and results filter inline without typing a command.
+- `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat. Supports inline details navigation and **button-driven search**: tap Search, send a search term, and results filter inline without typing a command. From the details view you can **delete** a session — the on-disk chat file is removed (and a fresh new session is started automatically if you delete the active one).
+- `/title` sets a manual session name on the current chat context; `/title auto` clears the manual lock and returns to automatic naming.
 - `/topic [name]` opens or resumes a named thread within the same chat; without a name it lists existing topics.
 - Session switching is scoped to the same Telegram bot, Telegram user, and Telegram chat for safety.
 - When a reply is delivered as voice without a visible text bubble, the optional `📝 Show text` quick action can reveal the text version on demand, including `auto` after voice input.
+- `/actions on|off` controls whether the per-reply **More** menu is shown in the current session; the bot default comes from `speech.reply.quick_actions.enabled`.
+- From the `/session` picker, open a session's details and tap **🗑 Delete** to remove the chat file. The active session can also be deleted — a fresh new session is started automatically afterwards. Deletion is **button-driven** (no `/session delete` text command) and applies to bound sessions plus any unbound web session whose `CTX_TG_USER_ID` matches the current Telegram user.
+- The picker details view also shows a 📝 **Summary** block generated fresh via the utility LLM when you open a session's details. Use `/shortcut summary` on the active session to get a fuller utility-LLM summary in a separate message.
 
 ## Notes
 
@@ -192,9 +211,10 @@ bots:
 - For OpenAI-compatible Gemini PCM (`format: "pcm"`), the plugin assumes raw PCM `s16le`, `24000 Hz`, mono and converts it automatically before sending to Telegram.
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
-- **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, and `/model` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
+- **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
+- The WebUI's **Tool Status Detail** dropdown currently does not expose `smart`; use YAML or `/detail smart` if you want utility-model summaries by default or in the current session.
 - **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
-- Publishing to the Plugin Index: use `name` without a leading underscore; see `packaging/plugin-index/index.yaml.example` for an `a0-plugins` PR template.
+- Publishing to the Plugin Index: use `name` without a leading underscore. The exact Plugin Index repository/path is not part of this repo; verify current upstream publishing instructions before opening an index PR.
 
 ## TTS troubleshooting
 

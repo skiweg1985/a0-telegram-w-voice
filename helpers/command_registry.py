@@ -40,8 +40,8 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     ),
     (
         "session",
-        "Browse saved sessions",
-        "/session [id|search …] — browse, search, or switch saved sessions for this Telegram chat",
+        "Browse and delete sessions",
+        "/session [search …] — browse saved sessions, search, and open a session to delete it",
     ),
     (
         "title",
@@ -66,7 +66,12 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "detail",
         "Tool status detail",
-        "/detail off|info|verbose — no arg = status + buttons (debug = verbose)",
+        "/detail off|info|smart|verbose — no arg = status + buttons (debug = verbose)",
+    ),
+    (
+        "detail_before",
+        "Tool start updates",
+        "/detail_before [on|off] — toggle execute-before tool updates; no arg = status + buttons",
     ),
     (
         "voice",
@@ -87,6 +92,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "compact",
         "Compress context",
         "/compact — shrink history (utility LLM)",
+    ),
+    (
+        "shortcut",
+        "Reply shortcuts",
+        "/shortcut [shorter|longer|summary] — no arg = buttons; rewrite the last answer or summarize the active session",
     ),
     (
         "stop",

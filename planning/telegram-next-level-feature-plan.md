@@ -1,5 +1,7 @@
 # Telegram Next-Level Feature Plan
 
+> **Historical planning note:** This file is a roadmap snapshot, not current product documentation. Several items were shipped, renamed, or superseded after this plan was written. Use `README.md`, `default_config.yaml`, and `helpers/command_registry.py` as the current source of truth for commands and supported behavior.
+
 > Focus branch: `codex/upgrade`
 
 ## Status-Legende

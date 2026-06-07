@@ -1,5 +1,7 @@
 # Changelog
 
+Older entries are chronological release history and may mention commands/features that were later removed. For current operator documentation, use `README.md` plus the latest `[Unreleased]` notes.
+
 ## [Unreleased]
 
 ### Added
@@ -12,9 +14,14 @@
 - WebUI: per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`), plus a **Walkie-talkie preset** button. Chat-overridable settings are labeled as defaults for new sessions with the matching slash command.
 - Emoji icons and human-readable labels for `/detail info` and `/detail debug` steps (e.g. memory tools show a brain icon, code execution a laptop). Icons are resolved by exact match, prefix-before-colon, then prefix rules with a built-in map and configurable overrides.
 - New bot config keys: `telegram_detail_icons_enabled` (default true), `telegram_detail_tool_icons` (override map), `telegram_detail_max_body_chars` (debug JSON truncation limit, default 3200).
+- New tool-start status mode: `/detail_before [on|off]` toggles execute-before tool updates per session with inline buttons, and bot config `telegram_detail_execute_before` sets the default for new sessions.
+- New `/detail smart` mode: tool steps are summarized with the configured utility model from redacted tool args, giving more context than `info` without exposing full verbose payloads.
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
 - New Telegram progress config keys `live_response_preview_interval_ms` and `live_response_preview_buffer_threshold` to tune live-preview cadence and early flush behavior.
-- Response transform quick actions on text replies: **Shorter**, **More technical**, and **Step by step** rewrite the last assistant answer in place instead of continuing the task.
+- Response transform quick actions on text replies: **Shorter** and **Longer** rewrite the last assistant answer in place (no more `More technical` / `Step by step`).
+- New `/shortcut` slash command works on the active session. With no argument it shows inline buttons; sub-commands/buttons: `shorter` / `longer` (re-trigger the transforms) and `summary` (utility-LLM summary delivered as a separate Telegram message).
+- `/session` picker details view now shows a fresh utility-LLM-generated 📝 Summary block instead of the old single-line "Topic" extract.
+- `/session` picker gained a **🗑 Delete** action: open a session's details and tap Delete to permanently remove the on-disk chat file. Deleting the active session automatically starts a fresh new chat. Deletion is **button-driven** (no text command) and applies to bound sessions plus unbound web sessions whose `CTX_TG_USER_ID` matches the current Telegram user; one confirmation step before the file is removed.
 
 ### Removed
 
@@ -29,6 +36,7 @@
 - **Voice-only replies**: In `voice_only` mode the "Show text" quick action no longer triggers a visible text bubble. The reveal button is now attached directly to the voice message (`sendVoice` inline keyboard), and the text is only sent after the user taps it. Text is still sent as a fallback when voice delivery fails.
 - **`also_send_text`**: If the model only fills `voice_text` (TTS) and leaves `text` empty, Telegram now still sends a text bubble when **Also send text** is enabled (uses `voice_text` as fallback). Config value `also_send_text` is parsed robustly (strings like `"false"` no longer behave like Python `bool("false") == True`).
 - `/detail` progress updates: step HTML from `format_step_html` is no longer run through `md_to_telegram_html`, so Telegram renders bold/code/blockquote correctly instead of showing literal tags and `&quot;` entities.
+- Execute-before tool status updates no longer suppress the normal completion-time detail line when the start update was skipped due to throttling.
 
 ### Changed
 
@@ -38,6 +46,7 @@
 - Slash-command modes are now switch-only: `/detail` and `/optimize_output` no longer offer **Reset**/`reset`/`default`. Every command sets a concrete mode (e.g. `/detail off`), and the WebUI default applies again after `/newchat` or `/clear`.
 - `/voice off` copy now reads "Voice mode: off — replies are text only" instead of implying a return to a configured default.
 - `/start` welcomes with the voice and status commands; `/help` notes that reply and voice modes can be switched anytime in chat.
+- `/status` Reply line now also shows `tool start on|off`, and `/detail_before` participates in the same inline mode-switch UX as `/detail`.
 - The voice-only reveal button label is now "Show text" (was the German "Text anzeigen") so Telegram copy is consistently English.
 - The agent is guided to confirm risky actions with an Approve/Cancel inline keyboard and to offer choices as inline buttons; button taps are fed back into the agent automatically.
 - Voice reply controls consolidated into a single `/voice` command. `/voice` now supports `auto` (voice reply only when the incoming message was a voice message), alongside `voice_only`, `voice_text`, `text_only`, and `off`. The inline keyboard gained an **Auto** button.

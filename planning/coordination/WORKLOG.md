@@ -1,5 +1,7 @@
 # Worklog (Telegram voice plugin)
 
+> **Historical coordination log:** This file records implementation history and release coordination notes. It intentionally includes superseded branch names, intermediate behavior, and removed commands such as `/tts` or `/alsotext`. Do not use it as the current operational reference; use `README.md`, `default_config.yaml`, and `helpers/command_registry.py` for the current command/config surface.
+
 ## 2026-03-30 – Cursor – Release 0.11.2 (plugin.yaml + Changelog)
 
 - Done:

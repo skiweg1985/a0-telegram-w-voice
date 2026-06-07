@@ -5,11 +5,11 @@ TTS schreibt **kein eigenes Logfile**. Meldungen erscheinen in den **Docker-/Pro
 ## In Docker-Logs filtern
 
 ```bash
-# Beispiel Compose-Service
-docker compose logs agent0_1 2>&1 | grep -iE 'Telegram TTS|send_voice|Telegram Voice|auto-reply|chain-end'
+# Beispiel Compose-Service (ersetze <service-name> durch deinen Container/Service)
+docker compose logs <service-name> 2>&1 | grep -iE 'Telegram TTS|send_voice|Telegram Voice|auto-reply|chain-end'
 
 # Oder live
-docker compose logs -f agent0_1 2>&1 | grep -iE 'TTS|Telegram Voice|auto-reply'
+docker compose logs -f <service-name> 2>&1 | grep -iE 'TTS|Telegram Voice|auto-reply'
 ```
 
 Relevante Zeilen (nach Plugin-Version mit Diagnose-Logs):
@@ -29,5 +29,5 @@ Relevante Zeilen (nach Plugin-Version mit Diagnose-Logs):
 ## Checkliste
 
 1. **`speech.tts.enabled: true`** und Provider (z. B. LiteLLM `base_url` / API-Key) in der Bot-Config, die der Chat wirklich nutzt (Projekt/Profil).
-2. **`speech.reply.voice_mode`:** `force` = immer Sprachantwort (wenn TTS an); `auto` = nur nach Spracheingabe. Pro Session steuert `/voice` den Modus (`voice_only`/`voice_text`/`auto`/`text_only`/`off`).
+2. **`speech.reply.voice_mode`:** bevorzugt die aktuellen Modi `voice_only`, `voice_text`, `auto`, `text_only`, `off`. `auto` spricht nur nach Spracheingabe; `voice_only`/`voice_text` erzwingen TTS. Der Legacy-Wert `force` wird noch akzeptiert, ist aber nur aus Alt-Configs relevant. Pro Session überschreibt `/voice` den Modus.
 3. **Agent 0:** Telegram Chain-End-Versand ist nur für `agent.number == 0` aktiv; sonst erscheint eine **Warning** in den Logs.

@@ -12,6 +12,7 @@ CTX_TG_CHAT_TYPE = "telegram_chat_type"
 CTX_TG_USER_ID = "telegram_user_id"
 CTX_TG_USERNAME = "telegram_username"
 CTX_TG_TYPING_STOP = "_telegram_typing_stop"
+CTX_TG_RECORD_VOICE_STOP = "_telegram_record_voice_stop"
 CTX_TG_REPLY_TO = "_telegram_reply_to_message_id"
 CTX_TG_REPLY_CONTEXT = "_telegram_reply_context"
 
@@ -71,14 +72,21 @@ CTX_TG_OUTPUT_OPTIMIZE = "telegram_output_optimize_session"
 # Key without "_" prefix so persist_chat includes it in chat.json.
 CTX_TG_ALSO_SEND_TEXT_OVERRIDE = "telegram_also_send_text_session"
 
-# Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | debug.
+# Per-session tool-status detail: missing = use bot telegram_detail_level (default info); off | info | smart | debug.
 CTX_TG_DETAIL_LEVEL_SESSION = "telegram_detail_level_session"
+
+# Per-session toggle for tool-status updates on tool start (execute-before): missing = use config default; on | off.
+CTX_TG_DETAIL_BEFORE_SESSION = "telegram_detail_before_session"
 
 # Per-session toggle for inline reply actions: missing = use config default; on | off.
 CTX_TG_REPLY_ACTIONS_SESSION = "telegram_reply_actions_session"
 
 # Throttle for Telegram detail status lines (transient; reset on new user message).
 CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"
+
+# Transient marker for the last tool whose detail line was already emitted in execute-before.
+CTX_TG_DETAIL_ACTIVE_TOOL = "_telegram_detail_active_tool"
+CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX = "_telegram_detail_active_tool_line_index"
 
 # Last response tool: optional separate string for TTS only (transient, "_" prefix = not persisted).
 CTX_TG_VOICE_TEXT = "_telegram_response_voice_text"
