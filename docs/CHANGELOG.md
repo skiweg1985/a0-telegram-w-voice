@@ -17,8 +17,8 @@
 - Progress messages that exceed Telegram's 4096-char limit are now truncated at a safe boundary before sending, preventing API errors from oversized debug payloads.
 - New Telegram progress config keys `live_response_preview_interval_ms` and `live_response_preview_buffer_threshold` to tune live-preview cadence and early flush behavior.
 - Response transform quick actions on text replies: **Shorter** and **Longer** rewrite the last assistant answer in place (no more `More technical` / `Step by step`).
-- New `/shortcut <sub>` slash command works on the active session. Sub-commands: `shorter` / `longer` (re-trigger the inline transforms) and `summary` (utility-LLM summary delivered as a separate Telegram message).
-- `/session` picker details view now always shows a 📝 Summary block (4 short recent-turn lines) instead of the old single-line "Topic" extract.
+- New `/shortcut` slash command works on the active session. With no argument it shows inline buttons; sub-commands/buttons: `shorter` / `longer` (re-trigger the transforms) and `summary` (utility-LLM summary delivered as a separate Telegram message).
+- `/session` picker details view now shows a fresh utility-LLM-generated 📝 Summary block instead of the old single-line "Topic" extract.
 - `/session` picker gained a **🗑 Delete** action: open a session's details and tap Delete to permanently remove the on-disk chat file. Deleting the active session automatically starts a fresh new chat. Deletion is **button-driven** (no text command) and applies to bound sessions plus unbound web sessions whose `CTX_TG_USER_ID` matches the current Telegram user; one confirmation step before the file is removed.
 
 ### Removed

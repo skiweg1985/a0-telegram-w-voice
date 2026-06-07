@@ -2386,50 +2386,53 @@ class TelegramSessionPickerTests(unittest.TestCase):
             self.assertNotIn("technical", b["callback_data"])
             self.assertNotIn("step_by_step", b["callback_data"])
 
-    def test_extract_recent_session_summary_returns_short_topic_style_lines(self):
-        """Smart extract for the picker: max 4-5 lines, recent log items, single line per item."""
+    def test_session_transcript_text_uses_history_output_and_redacts(self):
+        """Transcript comes from history.output_text, with secrets redacted."""
         handler = self.handler
-        meta = {
-            "id": "abc",
-            "log": {
-                "logs": [
-                    {"type": "user", "content": "Hi! Can you help me debug the printer setup?"},
-                    {"type": "assistant", "content": "Sure. What model is it?"},
-                    {"type": "user", "content": "PRTG multi-function.\nIt keeps dropping offline."},
-                    {"type": "assistant", "content": "Let's check the network."},
-                    {"type": "tool", "content": "network_diag ok"},
-                    {"type": "user", "content": "How long should this take?"},
+
+        class _Hist:
+            def output_text(self, human_label="user", ai_label="assistant"):
+                return (
+                    f"{human_label}: My api_key=sk-LIVE-SECRET-1234567 broke\n"
+                    f"{ai_label}: Try resetting it."
+                )
+
+        agent = types.SimpleNamespace(history=_Hist())
+        ctx = types.SimpleNamespace(id="ctx-1", name="PRTG debug", agent0=agent)
+        text = handler._session_transcript_text(ctx)
+        self.assertIn("user:", text)
+        self.assertIn("assistant:", text)
+        self.assertIn("api_key=[REDACTED]", text)
+        self.assertNotIn("sk-LIVE-SECRET-1234567", text)
+
+    def test_session_transcript_text_falls_back_to_output_list(self):
+        """When output_text is unavailable, iterate the OutputMessage list."""
+        handler = self.handler
+
+        class _Hist:
+            def output_text(self, **kwargs):
+                raise RuntimeError("no helper")
+
+            def output(self):
+                return [
+                    {"ai": False, "content": "Hello there"},
+                    {"ai": True, "content": [{"type": "text", "text": "Hi back"}]},
                 ]
-            },
-        }
-        text = handler._extract_recent_session_summary(meta, max_lines=4)
-        # 4 lines
-        self.assertEqual(len(text.splitlines()), 4)
-        # Each line starts with an icon
-        for line in text.splitlines():
-            self.assertTrue(line.startswith(("👤", "🤖", "🔧", "·")))
-        # Last line should be the most recent user message
-        self.assertIn("How long should this take?", text.splitlines()[-1])
-        # Multi-line content was collapsed to the first line
-        self.assertNotIn("It keeps dropping offline.", text)
-        # Truncation marker is added for very long lines
-        long_content = "x" * 200
-        long_meta = {
-            "log": {
-                "logs": [{"type": "user", "content": long_content}],
-            }
-        }
-        long_text = handler._extract_recent_session_summary(long_meta, max_chars_per_line=80)
-        self.assertIn("…", long_text)
 
-    def test_extract_recent_session_summary_handles_empty_log(self):
+        agent = types.SimpleNamespace(history=_Hist())
+        ctx = types.SimpleNamespace(id="ctx-1", name="X", agent0=agent)
+        text = handler._session_transcript_text(ctx)
+        self.assertIn("user: Hello there", text)
+        self.assertIn("assistant: Hi back", text)
+
+    def test_session_transcript_text_empty_when_no_history(self):
         handler = self.handler
-        self.assertEqual(handler._extract_recent_session_summary({"log": {}}), "")
-        self.assertEqual(handler._extract_recent_session_summary({"log": {"logs": []}}), "")
-        self.assertEqual(handler._extract_recent_session_summary({}), "")
+        ctx = types.SimpleNamespace(id="ctx-1", name="X", agent0=types.SimpleNamespace())
+        self.assertEqual(handler._session_transcript_text(ctx), "")
+        self.assertEqual(handler._session_transcript_text(None), "")
 
-    def test_session_details_text_includes_summary_replacing_topic(self):
-        """Picker details view: 📝 Summary: line replaces the old Topic: line, drawn from recent log."""
+    def test_session_details_text_includes_summary_when_provided(self):
+        """Picker details view: 📝 Summary: block replaces the old Topic: line."""
         handler = self.handler
         meta = {
             "id": "abc",
@@ -2439,46 +2442,34 @@ class TelegramSessionPickerTests(unittest.TestCase):
             "last_message": "2026-01-02T00:00:00",
             "message_count": 5,
             "data": {},
-            "log": {
-                "logs": [
-                    {"type": "user", "content": "Help me with X"},
-                    {"type": "assistant", "content": "What about X?"},
-                    {"type": "user", "content": "It's broken"},
-                ]
-            },
         }
-        text = handler._session_details_text(meta, active_ctx_id=None)
+        text = handler._session_details_text(
+            meta, active_ctx_id=None, summary="Topic: printer debug\nState: blocked on network"
+        )
         self.assertIn("📝 Summary:", text)
-        self.assertIn("Help me with X", text)
-        self.assertNotIn("Topic:", text)
+        self.assertIn("printer debug", text)
+        self.assertNotIn("Topic: {", text)
+        # No summary → no summary block
+        text2 = handler._session_details_text(meta, active_ctx_id=None, summary="")
+        self.assertNotIn("📝 Summary:", text2)
 
     def test_session_llm_summary_calls_utility_model_and_redacts_secrets(self):
         """`/shortcut summary` must use the utility LLM and redact secrets before sending."""
         handler = self.handler
-        agent = types.SimpleNamespace()
         seen = {}
 
         async def call_utility_model(**kwargs):
             seen.update(kwargs)
             return "TL;DR — user asked about X, agent helped, currently blocked on Y."
 
-        agent.call_utility_model = call_utility_model
-        ctx = types.SimpleNamespace(
-            id="ctx-1",
-            name="PRTG debug",
-            agent0=agent,
-        )
-        logs = [
-            {"type": "user", "content": "My api_key=sk-LIVE-SECRET-1234567 is broken"},
-            {"type": "assistant", "content": "Did you try resetting it?"},
-        ]
+        class _Hist:
+            def output_text(self, human_label="user", ai_label="assistant"):
+                return f"{human_label}: My api_key=sk-LIVE-SECRET-1234567 is broken"
 
-        async def _load_logs():
-            return logs
+        agent = types.SimpleNamespace(history=_Hist(), call_utility_model=call_utility_model)
+        ctx = types.SimpleNamespace(id="ctx-1", name="PRTG debug", agent0=agent)
 
-        # Patch the helper to return our fixture logs
-        with mock.patch.object(handler, "_session_log_items", return_value=logs):
-            summary = asyncio.run(handler._session_llm_summary(ctx))
+        summary = asyncio.run(handler._session_llm_summary(ctx, detailed=True))
 
         self.assertIn("TL;DR", summary)
         self.assertIn("system", seen)
@@ -2487,25 +2478,55 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertNotIn("sk-LIVE-SECRET-1234567", seen["message"])
         self.assertIn("PRTG debug", seen["message"])
 
-    def test_session_llm_summary_returns_empty_when_no_log(self):
+    def test_session_llm_summary_detailed_vs_short_prompts_differ(self):
         handler = self.handler
-        agent = types.SimpleNamespace()
+        seen = {}
+
+        async def call_utility_model(**kwargs):
+            seen.setdefault("systems", []).append(kwargs.get("system", ""))
+            return "ok"
+
+        class _Hist:
+            def output_text(self, human_label="user", ai_label="assistant"):
+                return "user: hi\nassistant: hello"
+
+        agent = types.SimpleNamespace(history=_Hist(), call_utility_model=call_utility_model)
+        ctx = types.SimpleNamespace(id="c", name="n", agent0=agent)
+        asyncio.run(handler._session_llm_summary(ctx, detailed=True))
+        asyncio.run(handler._session_llm_summary(ctx, detailed=False))
+        self.assertIn("multi-paragraph", seen["systems"][0])
+        self.assertIn("3-4 short", seen["systems"][1])
+
+    def test_session_llm_summary_returns_empty_when_no_history(self):
+        handler = self.handler
         called = {"n": 0}
 
         async def call_utility_model(**kwargs):
             called["n"] += 1
             return "should not be called"
 
-        agent.call_utility_model = call_utility_model
+        agent = types.SimpleNamespace(call_utility_model=call_utility_model)
         ctx = types.SimpleNamespace(id="ctx-1", name="empty", agent0=agent)
 
-        with mock.patch.object(handler, "_session_log_items", return_value=[]):
-            summary = asyncio.run(handler._session_llm_summary(ctx))
+        summary = asyncio.run(handler._session_llm_summary(ctx, detailed=True))
 
         self.assertEqual(summary, "")
         self.assertEqual(called["n"], 0)
 
-    def test_handle_shortcut_without_subcommand_shows_usage(self):
+    def test_shortcut_inline_keyboard_has_three_action_buttons(self):
+        handler = self.handler
+        rows = handler._shortcut_inline_keyboard()
+        flat = [b for row in rows for b in row]
+        texts = [b["text"] for b in flat]
+        self.assertEqual(texts, ["✂️ Shorter", "📏 Longer", "📝 Summary"])
+        for b in flat:
+            self.assertTrue(b["callback_data"].startswith(handler.TG_UI_CALLBACK_PREFIX + "sx|"))
+        cbs = [b["callback_data"] for b in flat]
+        self.assertIn(handler.TG_UI_CALLBACK_PREFIX + "sx|shorter", cbs)
+        self.assertIn(handler.TG_UI_CALLBACK_PREFIX + "sx|longer", cbs)
+        self.assertIn(handler.TG_UI_CALLBACK_PREFIX + "sx|summary", cbs)
+
+    def test_handle_shortcut_without_subcommand_shows_inline_buttons(self):
         handler = self.handler
         message = types.SimpleNamespace(
             text="/shortcut",
@@ -2516,7 +2537,11 @@ class TelegramSessionPickerTests(unittest.TestCase):
         with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
              mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
             asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
-        self.assertTrue(any("Usage" in str(a[2]) for a, _ in sent))
+        # An inline keyboard was attached
+        self.assertTrue(any(k.get("keyboard") for _, k in sent))
+        kb = next(k["keyboard"] for _, k in sent if k.get("keyboard"))
+        flat = [b for row in kb for b in row]
+        self.assertEqual([b["text"] for b in flat], ["✂️ Shorter", "📏 Longer", "📝 Summary"])
 
     def test_handle_shortcut_shorter_triggers_transform_with_last_answer(self):
         handler = self.handler
@@ -2601,7 +2626,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         )
         sent = []
 
-        async def _fake_summary(_ctx):
+        async def _fake_summary(_ctx, **kwargs):
             return "TL;DR: agent helped with PRTG; current state: printer back online."
 
         with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
@@ -2645,6 +2670,57 @@ class TelegramSessionPickerTests(unittest.TestCase):
              mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
             asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
         self.assertTrue(any("Unknown shortcut" in str(a[2]) for a, _ in sent))
+
+    def test_callback_sh_summary_runs_llm_summary(self):
+        """tgx|sx|summary callback generates an LLM summary against the active session."""
+        handler = self.handler
+        ctx = _DummyAgentContext(name="PRTG debug")
+        ctx.data = {}
+        sent = []
+
+        async def _fake_summary(_ctx, **kwargs):
+            return "TL;DR via button: printer fixed."
+
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sx|summary",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_session_llm_summary", new=mock.AsyncMock(side_effect=_fake_summary)):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        query.answer.assert_awaited()
+        texts = [str(a[2]) for a, _ in sent]
+        self.assertTrue(any("Session summary" in t for t in texts))
+        self.assertTrue(any("TL;DR via button" in t for t in texts))
+
+    def test_callback_sh_shorter_dispatches_transform(self):
+        """tgx|sx|shorter callback re-runs the shorter transform against the active session."""
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {handler.CTX_TG_LAST_TEXT_RESPONSE: "A long answer to shorten."}
+        sent = []
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sx|shorter",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=mock.AsyncMock()) as dispatch:
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        dispatch.assert_awaited_once()
+        self.assertIn("A long answer to shorten.", dispatch.await_args.kwargs["body"])
+        self.assertIn("shorter", dispatch.await_args.kwargs["source"])
 
 
 if __name__ == "__main__":

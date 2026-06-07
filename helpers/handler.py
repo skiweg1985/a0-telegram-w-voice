@@ -726,142 +726,130 @@ def _extract_user_prompt_summary(meta: dict) -> str:
     return ""
 
 
-def _extract_recent_session_summary(
-    meta: dict,
-    *,
-    max_lines: int = 4,
-    max_chars_per_line: int = 80,
-) -> str:
-    """Compact, topic-style summary drawn from the most recent log items.
+def _session_transcript_text(ctx: AgentContext, *, max_chars: int = 8000) -> str:
+    """Plain-text transcript of a session's history, newest turns prioritized.
 
-    Used by the session picker details view instead of the previous
-    single-line "Topic:" extract. No LLM, no async — just a deterministic
-    format that fits in 4-5 lines.
-    """
-    log = meta.get("log") or {}
-    logs = log.get("logs") if isinstance(log, dict) else []
-    if not isinstance(logs, list) or not logs:
-        return ""
-    window = logs[-max(8, max_lines * 2):]
-    icons = {
-        "user": "👤",
-        "assistant": "🤖",
-        "tool": "🔧",
-        "warning": "⚠️",
-        "error": "❌",
-    }
-    lines: list[str] = []
-    for item in window:
-        if not isinstance(item, dict):
-            continue
-        item_type = str(item.get("type") or "").strip().lower()
-        content = str(item.get("content") or "").strip()
-        if not content:
-            continue
-        first_line = content.splitlines()[0].strip()
-        first_line = re.sub(r"\s+", " ", first_line)
-        if not first_line:
-            continue
-        if len(first_line) > max_chars_per_line:
-            first_line = first_line[: max_chars_per_line - 1].rstrip() + "…"
-        icon = icons.get(item_type, "·")
-        lines.append(f"{icon} {first_line}")
-    if not lines:
-        return ""
-    if len(lines) > max_lines:
-        lines = lines[-max_lines:]
-    return "\n".join(lines)
-
-
-def _session_log_items(ctx: AgentContext) -> list[dict]:
-    """Best-effort extract of recent chat log items for an in-memory context.
-
-    Returns a list of plain ``dict``s with at least ``type`` and ``content``
-    keys. Defensive against schema changes in Agent Zero's history model.
+    Uses Agent Zero's own ``history.output_text`` (OutputMessage list) so it
+    works for both in-memory and freshly-deserialized (on-disk) contexts —
+    no guessing at private attributes. Secrets are redacted. Returns ``""``
+    when there is no usable history.
     """
     if ctx is None:
-        return []
-    history = getattr(ctx.agent0, "history", None)
+        return ""
+    agent = getattr(ctx, "agent0", None)
+    history = getattr(agent, "history", None)
     if history is None:
-        return []
-    # Prefer the public list of log entries; fall back to ``log.logs`` for older versions.
-    candidates: list | None = None
-    for attr in ("logs", "_logs", "entries", "items"):
-        if hasattr(history, attr):
-            value = getattr(history, attr)
-            if isinstance(value, list):
-                candidates = value
-                break
-    if candidates is None:
-        log_obj = getattr(history, "log", None)
-        if log_obj is not None and hasattr(log_obj, "logs"):
-            value = getattr(log_obj, "logs")
-            if isinstance(value, list):
-                candidates = value
-    if not candidates:
-        return []
-    out: list[dict] = []
-    for entry in candidates[-30:]:
-        if isinstance(entry, dict):
-            out.append({
-                "type": str(entry.get("type") or ""),
-                "content": str(entry.get("content") or ""),
-            })
-        else:
-            t = str(getattr(entry, "type", "") or "")
-            c = str(getattr(entry, "content", "") or "")
-            if c or t:
-                out.append({"type": t, "content": c})
-    return out
-
-
-async def _session_llm_summary(ctx: AgentContext) -> str:
-    """Generate a detailed session summary via the utility LLM (for /shortcut summary).
-
-    Returns an empty string when the session has no log to summarize or the
-    utility model is unavailable. Secrets are redacted before the LLM call.
-    """
-    if ctx is None:
         return ""
-    items = _session_log_items(ctx)
-    if not items:
+    text = ""
+    # Preferred: framework helper that renders the whole history as labeled text.
+    try:
+        out = history.output_text(human_label="user", ai_label="assistant")
+        if isinstance(out, str):
+            text = out.strip()
+    except Exception:
+        text = ""
+    # Fallback: iterate the OutputMessage list ourselves.
+    if not text:
+        try:
+            messages = history.output()
+        except Exception:
+            messages = None
+        if isinstance(messages, list):
+            parts: list[str] = []
+            for m in messages:
+                try:
+                    is_ai = bool(m.get("ai")) if isinstance(m, dict) else bool(getattr(m, "ai", False))
+                    content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+                except Exception:
+                    continue
+                rendered = _stringify_message_content(content)
+                if not rendered:
+                    continue
+                label = "assistant" if is_ai else "user"
+                parts.append(f"{label}: {rendered}")
+            text = "\n".join(parts).strip()
+    if not text:
         return ""
+    # Keep the most recent portion if very long.
+    if len(text) > max_chars:
+        text = "…\n" + text[-max_chars:]
     try:
         from helpers.detail_status import redact_sensitive
+
+        redacted = redact_sensitive(text)
+        if isinstance(redacted, str):
+            text = redacted
     except Exception:
-        redact_sensitive = None  # type: ignore[assignment]
-    parts: list[str] = []
-    for entry in items:
-        item_type = str(entry.get("type") or "unknown").strip().lower() or "unknown"
-        content = str(entry.get("content") or "").strip()
-        if not content:
-            continue
-        if redact_sensitive is not None:
-            try:
-                content = redact_sensitive(content)
-            except Exception:
-                pass
-        if len(content) > 500:
-            content = content[:499].rstrip() + "…"
-        parts.append(f"[{item_type}] {content}")
-    transcript = "\n\n".join(parts)
+        pass
+    return text
+
+
+def _stringify_message_content(content) -> str:
+    """Flatten Agent Zero MessageContent (str | dict | list) into plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, dict):
+        # Common shapes: {"text": ...}, {"type": "text", "text": ...}, or arbitrary fields.
+        if "text" in content and isinstance(content["text"], str):
+            return content["text"].strip()
+        parts = []
+        for value in content.values():
+            rendered = _stringify_message_content(value)
+            if rendered:
+                parts.append(rendered)
+        return " ".join(parts).strip()
+    if isinstance(content, (list, tuple)):
+        parts = [_stringify_message_content(item) for item in content]
+        return "\n".join(p for p in parts if p).strip()
+    return str(content).strip()
+
+
+async def _session_llm_summary(
+    ctx: AgentContext,
+    *,
+    detailed: bool = True,
+) -> str:
+    """Generate a session summary via the utility LLM.
+
+    Used by both ``/shortcut summary`` (detailed=True, multi-paragraph) and the
+    session-picker details view (detailed=False, a few short lines). Returns an
+    empty string when the session has no history or the utility model is
+    unavailable. Secrets are redacted before the LLM call.
+    """
+    if ctx is None:
+        return ""
+    agent = getattr(ctx, "agent0", None)
+    if agent is None or not hasattr(agent, "call_utility_model"):
+        return ""
+    transcript = _session_transcript_text(ctx)
     if not transcript:
         return ""
-    system = (
-        "You summarize an Agent Zero chat session for a Telegram reply. "
-        "Return a clear, multi-paragraph summary in plain text (no markdown, no JSON). "
-        "Cover: what the user asked, what the agent did, and the current state. "
-        "Do not reveal internal tooling, JSON, or secrets."
-    )
+    if detailed:
+        system = (
+            "You summarize an Agent Zero chat session for a Telegram reply. "
+            "Return a clear, multi-paragraph summary in plain text (no markdown, no JSON). "
+            "Cover: what the user asked, what the agent did, and the current state. "
+            "Do not reveal internal tooling, JSON, or secrets."
+        )
+        instruction = "Write the summary."
+    else:
+        system = (
+            "You write an ultra-short recap of an Agent Zero chat session for a "
+            "Telegram session list. Return 3-4 short plain-text lines (one fact per line, "
+            "no bullets, no markdown, no JSON). Capture the topic and where things stand. "
+            "Do not reveal internal tooling, JSON, or secrets."
+        )
+        instruction = "Write the 3-4 line recap."
     message = (
         f"Session: {ctx.id}\n"
-        f"Name: {ctx.name or '(unnamed)'}\n\n"
-        f"Recent transcript (last {len(items)} items):\n"
-        f"<transcript>\n{transcript}\n</transcript>\n\n"
-        "Write the summary."
+        f"Name: {getattr(ctx, 'name', '') or '(unnamed)'}\n\n"
+        f"Transcript:\n<transcript>\n{transcript}\n</transcript>\n\n"
+        f"{instruction}"
     )
     try:
-        summary = await ctx.agent0.call_utility_model(
+        summary = await agent.call_utility_model(
             system=system, message=message, background=True
         )
     except Exception:
@@ -1076,7 +1064,7 @@ def _session_selector_keyboard(
     return rows
 
 
-def _session_details_text(meta: dict, active_ctx_id: str | None) -> str:
+def _session_details_text(meta: dict, active_ctx_id: str | None, *, summary: str = "") -> str:
     ctx_id = str(meta.get("id") or "")
     active = ctx_id == str(active_ctx_id or "")
     binding_state = str(meta.get("telegram_binding") or "bound")
@@ -1097,9 +1085,9 @@ def _session_details_text(meta: dict, active_ctx_id: str | None) -> str:
     ]
     if binding_state == "unbound" and not active:
         lines.extend(["", "Opening this session will bind it to this Telegram chat."])
-    recent_summary = _extract_recent_session_summary(meta)
-    if recent_summary:
-        lines.extend(["", "📝 Summary:", recent_summary])
+    summary_text = str(summary or "").strip()
+    if summary_text:
+        lines.extend(["", "📝 Summary:", summary_text])
     return "\n".join(lines)
 
 
@@ -1465,8 +1453,18 @@ async def _show_session_details(
     active_ctx_id: str | None,
     meta: dict,
     message_id: int | None = None,
+    bot_cfg: dict | None = None,
+    bot_name: str | None = None,
+    user_id: int | None = None,
 ) -> int | None:
-    text = _session_details_text(meta, active_ctx_id)
+    summary = await _session_details_summary(
+        meta,
+        bot_cfg=bot_cfg or {},
+        bot_name=bot_name,
+        user_id=user_id,
+        chat_id=chat_id,
+    )
+    text = _session_details_text(meta, active_ctx_id, summary=summary)
     keyboard = _session_details_keyboard(meta, active_ctx_id)
     async with _temp_bot(token) as bot:
         if message_id:
@@ -1476,6 +1474,41 @@ async def _show_session_details(
             if edited:
                 return message_id
         return await tc.send_text_with_keyboard(bot, chat_id, text, keyboard, parse_mode=None)
+
+
+async def _session_details_summary(
+    meta: dict,
+    *,
+    bot_cfg: dict,
+    bot_name: str | None,
+    user_id: int | None,
+    chat_id: int | None,
+) -> str:
+    """Short utility-LLM recap for a session shown in the picker details view.
+
+    Loads the target session's context (in-memory or from disk) and asks the
+    utility model for a 3-4 line recap. Returns ``""`` on any failure so the
+    details view still renders without a summary block.
+    """
+    ctx_id = str(meta.get("id") or "")
+    if not ctx_id:
+        return ""
+    try:
+        ctx = _load_persisted_context(
+            ctx_id,
+            bot_cfg or {},
+            expected_bot_name=bot_name,
+            expected_user_id=user_id,
+            expected_chat_id=chat_id,
+        )
+    except Exception:
+        ctx = None
+    if ctx is None:
+        return ""
+    try:
+        return await _session_llm_summary(ctx, detailed=False)
+    except Exception:
+        return ""
 
 
 def _get_existing_context(message: TgMessage, bot_name: str) -> AgentContext | None:
@@ -2159,10 +2192,92 @@ async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+def _shortcut_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "✂️ Shorter", "callback_data": f"{p}sx|shorter"},
+            {"text": "📏 Longer", "callback_data": f"{p}sx|longer"},
+        ],
+        [
+            {"text": "📝 Summary", "callback_data": f"{p}sx|summary"},
+        ],
+    ]
+
+
+async def _run_shortcut_transform(
+    ctx: AgentContext,
+    *,
+    token: str,
+    chat_id: int,
+    user,
+    sub: str,
+) -> None:
+    """Execute a /shortcut shorter|longer transform against the active session.
+
+    Sends user-facing notices via the bot; returns nothing.
+    """
+    spec = _response_transform_spec(sub)
+    if not spec:
+        await _send_with_temp_bot(
+            token, chat_id, "Usage: /shortcut shorter | longer | summary", parse_mode=None
+        )
+        return
+    last_answer = str(ctx.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+    if not last_answer:
+        await _send_with_temp_bot(
+            token, chat_id,
+            "No previous answer to transform — send a message first.",
+            parse_mode=None,
+        )
+        return
+    try:
+        body = _build_response_transform_body(sub, last_answer)
+    except ValueError:
+        await _send_with_temp_bot(
+            token, chat_id, "Usage: /shortcut shorter | longer | summary", parse_mode=None
+        )
+        return
+    await _send_with_temp_bot(token, chat_id, f"{spec['ack']}…", parse_mode=None)
+    await _dispatch_telegram_user_turn(
+        ctx,
+        bot_token=token,
+        chat_id=chat_id,
+        sender=_format_user(user),
+        body=body,
+        attachments=[],
+        source=f" (telegram /shortcut {sub})",
+        busy_message="Agent is still working — use /stop first, then try again.",
+    )
+
+
+async def _run_shortcut_summary(
+    ctx: AgentContext,
+    *,
+    token: str,
+    chat_id: int,
+) -> None:
+    """Generate and send a utility-LLM summary of the active session."""
+    await _send_with_temp_bot(
+        token, chat_id, "📝 Summarizing session…", parse_mode=None
+    )
+    summary = await _session_llm_summary(ctx, detailed=True)
+    if not summary:
+        await _send_with_temp_bot(
+            token, chat_id,
+            "Nothing to summarize yet — send a message first.",
+            parse_mode=None,
+        )
+        return
+    text = f"📝 Session summary\n\n{summary}"
+    await _send_with_temp_bot(token, chat_id, text, parse_mode=None)
+
+
 async def handle_shortcut(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /shortcut — trigger response transforms or session summary.
 
-    Sub-commands (all work on the active session):
+    With no sub-command (or an unknown one) it shows inline buttons. Explicit
+    sub-commands (all work on the active session):
       - ``shorter`` — rewrite the last answer shorter
       - ``longer``  — rewrite the last answer with more detail
       - ``summary`` — utility-LLM summary of the active session
@@ -2178,17 +2293,18 @@ async def handle_shortcut(message: TgMessage, bot_name: str, bot_cfg: dict):
     arg = _cmd_rest(message).strip()
     parts = arg.split(maxsplit=1)
     sub = parts[0].strip().lower() if parts else ""
-    usage = "Usage: /shortcut shorter | longer | summary"
 
     if not sub:
-        await _send_with_temp_bot(token, message.chat.id, usage, parse_mode=None)
+        await _send_with_temp_bot(
+            token,
+            message.chat.id,
+            "Pick a shortcut for the current session:",
+            parse_mode=None,
+            keyboard=_shortcut_inline_keyboard(),
+        )
         return
 
-    if sub in ("shorter", "longer"):
-        spec = _response_transform_spec(sub)
-        if not spec:
-            await _send_with_temp_bot(token, message.chat.id, usage, parse_mode=None)
-            return
+    if sub in ("shorter", "longer", "summary"):
         ctx = _get_existing_context(message, bot_name)
         if not ctx:
             await _send_with_temp_bot(
@@ -2197,63 +2313,20 @@ async def handle_shortcut(message: TgMessage, bot_name: str, bot_cfg: dict):
                 parse_mode=None,
             )
             return
-        last_answer = str(ctx.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
-        if not last_answer:
-            await _send_with_temp_bot(
-                token, message.chat.id,
-                "No previous answer to transform — send a message first.",
-                parse_mode=None,
+        if sub == "summary":
+            await _run_shortcut_summary(ctx, token=token, chat_id=message.chat.id)
+        else:
+            await _run_shortcut_transform(
+                ctx, token=token, chat_id=message.chat.id, user=user, sub=sub
             )
-            return
-        try:
-            body = _build_response_transform_body(sub, last_answer)
-        except ValueError:
-            await _send_with_temp_bot(token, message.chat.id, usage, parse_mode=None)
-            return
-        await _send_with_temp_bot(
-            token, message.chat.id, f"{spec['ack']}…", parse_mode=None
-        )
-        await _dispatch_telegram_user_turn(
-            ctx,
-            bot_token=token,
-            chat_id=message.chat.id,
-            sender=_format_user(user),
-            body=body,
-            attachments=[],
-            source=f" (telegram /shortcut {sub})",
-            busy_message="Agent is still working — use /stop first, then try again.",
-        )
-        return
-
-    if sub == "summary":
-        ctx = _get_existing_context(message, bot_name)
-        if not ctx:
-            await _send_with_temp_bot(
-                token, message.chat.id,
-                "No active session. Use /start first.",
-                parse_mode=None,
-            )
-            return
-        await _send_with_temp_bot(
-            token, message.chat.id, "📝 Summarizing session…", parse_mode=None
-        )
-        summary = await _session_llm_summary(ctx)
-        if not summary:
-            await _send_with_temp_bot(
-                token, message.chat.id,
-                "Nothing to summarize yet — send a message first.",
-                parse_mode=None,
-            )
-            return
-        text = f"📝 Session summary\n\n{summary}"
-        await _send_with_temp_bot(token, message.chat.id, text, parse_mode=None)
         return
 
     await _send_with_temp_bot(
         token,
         message.chat.id,
-        f"Unknown shortcut: {sub}\n{usage}",
+        f"Unknown shortcut: {sub}\nPick one below:",
         parse_mode=None,
+        keyboard=_shortcut_inline_keyboard(),
     )
 
 
@@ -2905,6 +2978,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
                 meta=target,
                 message_id=query.message.message_id,
+                bot_cfg=bot_cfg,
+                bot_name=bot_name,
+                user_id=user.id,
             )
             await query.answer()
             return
@@ -3037,6 +3113,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
                 meta=target,
                 message_id=query.message.message_id if query.message else None,
+                bot_cfg=bot_cfg,
+                bot_name=bot_name,
+                user_id=user.id,
             )
             await query.answer()
             return
@@ -3257,6 +3336,19 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             await _send_with_temp_bot(
                 token, chat_id, reply, parse_mode=None
             )
+            return
+
+        if kind == "sx":
+            if payload not in ("shorter", "longer", "summary"):
+                await query.answer("Unknown option.")
+                return
+            await query.answer("Working…")
+            if payload == "summary":
+                await _run_shortcut_summary(context, token=token, chat_id=chat_id)
+            else:
+                await _run_shortcut_transform(
+                    context, token=token, chat_id=chat_id, user=user, sub=payload
+                )
             return
 
         if kind == "rm":
