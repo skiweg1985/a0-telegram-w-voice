@@ -42,6 +42,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_USER_ID,
     CTX_TG_USERNAME,
     CTX_TG_TYPING_STOP,
+    CTX_TG_RECORD_VOICE_STOP,
     CTX_TG_REPLY_TO,
     CTX_TG_REPLY_CONTEXT,
     CTX_TG_ATTACHMENTS,
@@ -119,6 +120,13 @@ def _stop_typing_handle(stop_event):
         stop_event.set()
 
 
+def _stop_record_voice_handle(stop_event):
+    if not stop_event:
+        return
+    with suppress(Exception):
+        stop_event.set()
+
+
 def _stop_context_typing(context: AgentContext | None):
     if not context:
         return
@@ -128,9 +136,36 @@ def _stop_context_typing(context: AgentContext | None):
     _stop_typing_handle(data.pop(CTX_TG_TYPING_STOP, None))
 
 
-def _replace_context_typing_stop(context: AgentContext, stop_event):
+def _stop_context_record_voice(context: AgentContext | None):
+    if not context:
+        return
+    data = getattr(context, "data", None)
+    if not isinstance(data, dict):
+        return
+    _stop_record_voice_handle(data.pop(CTX_TG_RECORD_VOICE_STOP, None))
+
+
+def _stop_context_chat_actions(context: AgentContext | None):
     _stop_context_typing(context)
+    _stop_context_record_voice(context)
+
+
+def _replace_context_typing_stop(context: AgentContext, stop_event):
+    _stop_context_chat_actions(context)
     context.data[CTX_TG_TYPING_STOP] = stop_event
+
+
+def _replace_context_record_voice_stop(context: AgentContext, stop_event):
+    _stop_context_record_voice(context)
+    context.data[CTX_TG_RECORD_VOICE_STOP] = stop_event
+
+
+def _activate_context_record_voice(context: AgentContext, token: str, chat_id: int):
+    _stop_context_typing(context)
+    _stop_context_record_voice(context)
+    stop_event = _start_record_voice(token, chat_id)
+    context.data[CTX_TG_RECORD_VOICE_STOP] = stop_event
+    return stop_event
 
 
 def _map_key(bot_name: str, user_id: int, chat_id: int) -> str:
@@ -1107,7 +1142,7 @@ def _activate_existing_session(
         if old_ctx_id and old_ctx_id != ctx.id:
             old_ctx = AgentContext.get(old_ctx_id)
             if old_ctx:
-                _stop_context_typing(old_ctx)
+                _stop_context_chat_actions(old_ctx)
                 old_ctx.kill_process()
                 save_tmp_chat(old_ctx)
         chats[key] = ctx.id
@@ -1139,7 +1174,7 @@ async def _start_new_session_for_user(
         if old_ctx_id:
             old_ctx = AgentContext.get(old_ctx_id)
             if old_ctx:
-                _stop_context_typing(old_ctx)
+                _stop_context_chat_actions(old_ctx)
                 old_ctx.kill_process()
                 save_tmp_chat(old_ctx)
             _save_state(state)
@@ -2017,7 +2052,7 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
             parse_mode=None,
             )
         return
-    _stop_context_typing(ctx)
+    _stop_context_chat_actions(ctx)
     ctx.kill_process()
     save_tmp_chat(ctx)
     await _send_with_temp_bot(
@@ -2456,7 +2491,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         save_tmp_chat(context)
     except Exception:
         if context and context.data.get(CTX_TG_TYPING_STOP) is typing_stop:
-            _stop_context_typing(context)
+            _stop_context_chat_actions(context)
         else:
             _stop_typing_handle(typing_stop)
         raise
@@ -2697,11 +2732,12 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     await query.answer("Bot is offline.")
                     return
                 voice_file = None
+                voice_stop = None
                 try:
                     async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
                         reply_cfg = speech.voice_reply_settings(bot_cfg)
                         max_chars = max(100, int(reply_cfg["max_chars"]))
-                        await tc.send_record_voice(bot, chat_id)
+                        voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                         voice_file, _meta = await asyncio.to_thread(
                             speech.synthesize_to_voice_file,
                             bot_cfg,
@@ -2718,6 +2754,10 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     PrintStyle.error(f"Telegram response to_voice failed: {format_error(e)}")
                     await query.answer("Voice conversion failed.")
                 finally:
+                    if context.data.get(CTX_TG_RECORD_VOICE_STOP) is voice_stop:
+                        _stop_context_record_voice(context)
+                    else:
+                        _stop_record_voice_handle(voice_stop)
                     if voice_file:
                         with suppress(Exception):
                             os.remove(voice_file)
@@ -3154,7 +3194,7 @@ async def _dispatch_telegram_user_turn(
         return None
     except Exception:
         if ctx.data.get(CTX_TG_TYPING_STOP) is typing_stop:
-            _stop_context_typing(ctx)
+            _stop_context_chat_actions(ctx)
         else:
             _stop_typing_handle(typing_stop)
         raise
@@ -3960,6 +4000,16 @@ def _log_background_progress_result(task):
 _PROGRESS_RL_NOTIFY_THRESHOLD = 3
 
 
+def _typing_rearm_blocked(context: AgentContext | None) -> bool:
+    if not context:
+        return False
+    data = getattr(context, "data", None)
+    if not isinstance(data, dict):
+        return False
+    phase = str(data.get(CTX_TG_PROGRESS_PHASE, "") or "").strip().lower()
+    return phase == "tts" or bool(data.get(CTX_TG_RECORD_VOICE_STOP))
+
+
 async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int):
     """Send a single 'still working' notice when progress edits keep getting rate-limited."""
     skips = int(context.data.get(CTX_TG_PROGRESS_RL_SKIPS, 0) or 0) + 1
@@ -3974,7 +4024,8 @@ async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int)
             "⏳ Still working — live updates are paused by Telegram rate limits.",
             parse_mode=None,
         )
-        await tc.send_typing(bot, chat_id)
+        if not _typing_rearm_blocked(context):
+            await tc.send_typing(bot, chat_id)
     except Exception as e:
         PrintStyle.warning(f"Telegram updates-paused notice failed: {format_error(e)}")
 
@@ -4084,8 +4135,10 @@ async def send_telegram_progress_update(
                     context.data[CTX_TG_PROGRESS_MESSAGE_ID] = int(new_id)
                     sent_or_edited = True
                     # A new message clears the typing indicator; re-arm it so long
-                    # runs keep showing activity (Hermes pattern).
-                    await tc.send_typing(reply_bot, chat_id)
+                    # runs keep showing activity (Hermes pattern), except while TTS
+                    # owns the visible chat action.
+                    if not _typing_rearm_blocked(context):
+                        await tc.send_typing(reply_bot, chat_id)
 
             if sent_or_edited:
                 context.data[CTX_TG_PROGRESS_LAST_HASH] = fp
@@ -4732,10 +4785,11 @@ async def send_telegram_reply(
                     "tts",
                     require_existing_message=True,
                 )
+                voice_stop = None
                 try:
                     max_chars = max(100, int(reply_cfg["max_chars"]))
                     tts_payload = tts_raw[:max_chars]
-                    await tc.send_record_voice(reply_bot, chat_id)
+                    voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                     voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
                     msg_id = await tc.send_voice(
                         reply_bot,
@@ -4762,6 +4816,10 @@ async def send_telegram_reply(
                 except Exception as e:
                     PrintStyle.error(f"Telegram TTS failed: {format_error(e)}")
                 finally:
+                    if context.data.get(CTX_TG_RECORD_VOICE_STOP) is voice_stop:
+                        _stop_context_record_voice(context)
+                    else:
+                        _stop_record_voice_handle(voice_stop)
                     _set_progress_phase(context, None)
                     if voice_file:
                         with suppress(Exception):
@@ -4861,8 +4919,14 @@ async def _send_with_temp_bot(
             )
 
 
-def _start_typing(token: str, chat_id: int) -> threading.Event:
-    """Spawn a daemon thread that sends typing every 4s. Returns a stop Event."""
+def _start_chat_action(
+    token: str,
+    chat_id: int,
+    send_action,
+    *,
+    interval_s: float = 4.0,
+) -> threading.Event:
+    """Spawn a daemon thread that keeps a Telegram chat action alive."""
     stop = threading.Event()
 
     def _run():
@@ -4871,11 +4935,14 @@ def _start_typing(token: str, chat_id: int) -> threading.Event:
         async def _loop():
             async with _temp_bot(token) as bot:
                 while not stop.is_set():
-                    await tc.send_typing(bot, chat_id)
-                    for _ in range(8):
+                    await send_action(bot, chat_id)
+                    remaining = max(0.5, float(interval_s))
+                    while remaining > 0:
                         if stop.is_set():
                             return
-                        await asyncio.sleep(0.5)
+                        sleep_for = min(0.5, remaining)
+                        await asyncio.sleep(sleep_for)
+                        remaining -= sleep_for
 
         try:
             asyncio.run(_loop())
@@ -4884,6 +4951,16 @@ def _start_typing(token: str, chat_id: int) -> threading.Event:
 
     threading.Thread(target=_run, daemon=True).start()
     return stop
+
+
+def _start_typing(token: str, chat_id: int) -> threading.Event:
+    """Spawn a daemon thread that sends typing every 4s. Returns a stop Event."""
+    return _start_chat_action(token, chat_id, tc.send_typing)
+
+
+def _start_record_voice(token: str, chat_id: int) -> threading.Event:
+    """Spawn a daemon thread that keeps Telegram record_voice active during TTS."""
+    return _start_chat_action(token, chat_id, tc.send_record_voice)
 
 
 def _format_user(user) -> str:

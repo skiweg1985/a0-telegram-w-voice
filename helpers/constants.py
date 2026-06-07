@@ -12,6 +12,7 @@ CTX_TG_CHAT_TYPE = "telegram_chat_type"
 CTX_TG_USER_ID = "telegram_user_id"
 CTX_TG_USERNAME = "telegram_username"
 CTX_TG_TYPING_STOP = "_telegram_typing_stop"
+CTX_TG_RECORD_VOICE_STOP = "_telegram_record_voice_stop"
 CTX_TG_REPLY_TO = "_telegram_reply_to_message_id"
 CTX_TG_REPLY_CONTEXT = "_telegram_reply_context"
 

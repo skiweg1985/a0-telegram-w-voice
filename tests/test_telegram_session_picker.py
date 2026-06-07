@@ -415,8 +415,13 @@ class TelegramSessionPickerTests(unittest.TestCase):
     def test_handle_stop_stops_typing_before_killing_process(self):
         handler = self.handler
         typing_stop = mock.Mock()
+        voice_stop = mock.Mock()
+        voice_key = getattr(handler, "CTX_TG_RECORD_VOICE_STOP", "_telegram_record_voice_stop")
         ctx = types.SimpleNamespace(
-            data={handler.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=typing_stop)},
+            data={
+                handler.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=typing_stop),
+                voice_key: types.SimpleNamespace(set=voice_stop),
+            },
             kill_process=mock.Mock(),
         )
         message = types.SimpleNamespace(
@@ -432,8 +437,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
             asyncio.run(handler.handle_stop(message, "mainbot", {}))
 
         typing_stop.assert_called_once_with()
+        voice_stop.assert_called_once_with()
         ctx.kill_process.assert_called_once_with()
         self.assertNotIn(handler.CTX_TG_TYPING_STOP, ctx.data)
+        self.assertNotIn(voice_key, ctx.data)
         send_temp.assert_awaited_once()
 
     def test_start_new_session_stops_old_typing_before_kill(self):
@@ -1095,6 +1102,57 @@ class TelegramSessionPickerTests(unittest.TestCase):
             )
             self.assertNotIn(handler.CTX_TG_PROGRESS_PHASE, ctx.data)
 
+    def test_send_telegram_reply_replaces_typing_with_record_voice_worker_during_tts(self):
+        handler = self.handler
+        voice_key = getattr(handler, "CTX_TG_RECORD_VOICE_STOP", "_telegram_record_voice_stop")
+        typing_stop = mock.Mock()
+        voice_stop = types.SimpleNamespace(set=mock.Mock())
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_LAST_INPUT_WAS_VOICE] = True
+        ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
+        ctx.data[handler.CTX_TG_TYPING_STOP] = types.SimpleNamespace(set=typing_stop)
+
+        with self._patch_reply_dependencies(
+            handler,
+            edit_ok=True,
+            voice_mode="auto",
+            tts_enabled=True,
+            also_send_text=False,
+        ), mock.patch.object(handler, "_start_record_voice", return_value=voice_stop, create=True) as start_voice:
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
+            self.assertIsNone(result)
+            start_voice.assert_called_once_with("token", 123456)
+            typing_stop.assert_called_once_with()
+            voice_stop.set.assert_called_once_with()
+            self.assertNotIn(handler.CTX_TG_TYPING_STOP, ctx.data)
+            self.assertNotIn(voice_key, ctx.data)
+
+    def test_send_telegram_progress_update_does_not_rearm_typing_during_tts(self):
+        handler = self.handler
+        ctx = self._reply_context()
+        voice_key = getattr(handler, "CTX_TG_RECORD_VOICE_STOP", "_telegram_record_voice_stop")
+        ctx.data.pop(handler.CTX_TG_PROGRESS_MESSAGE_ID, None)
+        ctx.data[handler.CTX_TG_PROGRESS_PHASE] = "tts"
+        ctx.data[voice_key] = object()
+
+        class _AsyncBotCM:
+            async def __aenter__(self):
+                return types.SimpleNamespace(token="t")
+
+            async def __aexit__(self, *a):
+                return False
+
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="token"))), \
+             mock.patch.object(handler, "_temp_bot", lambda *a, **k: _AsyncBotCM()), \
+             mock.patch.object(handler.tc, "md_to_telegram_html", side_effect=lambda text: text, create=True), \
+             mock.patch.object(handler.tc, "MAX_MESSAGE_LENGTH", 4096, create=True), \
+             mock.patch.object(handler.tc, "send_text", new=mock.AsyncMock(return_value=888), create=True), \
+             mock.patch.object(handler.tc, "send_typing", new=mock.AsyncMock(return_value=None), create=True) as send_typing:
+            result = asyncio.run(handler.send_telegram_progress_update(ctx, "Still working"))
+
+        self.assertIsNone(result)
+        send_typing.assert_not_awaited()
+
     def test_send_telegram_reply_voice_only_edits_progress_with_voice_completion_copy(self):
         handler = self.handler
         ctx = self._reply_context({"completed_mode": "edit"})
@@ -1692,6 +1750,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
     def test_handle_callback_query_to_voice_sends_voice_reply(self):
         handler = self.handler
+        voice_key = getattr(handler, "CTX_TG_RECORD_VOICE_STOP", "_telegram_record_voice_stop")
         ctx = _DummyAgentContext(name="Shipping dashboard")
         ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "resp123"
         ctx.data[handler.CTX_TG_LAST_TEXT_RESPONSE] = "Use the queue worker and retry policy."
@@ -1713,20 +1772,25 @@ class TelegramSessionPickerTests(unittest.TestCase):
             async def __aexit__(self, exc_type, exc, tb):
                 return False
 
+        voice_stop = types.SimpleNamespace(set=mock.Mock())
+
         with mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): ctx.id}}), \
              mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
              mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
              mock.patch.object(handler.speech, "tts_enabled", return_value=True), \
              mock.patch.object(handler.speech, "voice_reply_settings", return_value={"max_chars": 700}), \
-             mock.patch.object(handler.tc, "send_record_voice", new=mock.AsyncMock(return_value=None)), \
+             mock.patch.object(handler, "_start_record_voice", return_value=voice_stop, create=True) as start_voice, \
              mock.patch.object(handler.tc, "send_voice", new=mock.AsyncMock(return_value=900)) as send_voice, \
              mock.patch.object(handler.asyncio, "to_thread", new=mock.AsyncMock(return_value=("/tmp/fake.ogg", {}))), \
              mock.patch.object(handler.os.path, "isfile", return_value=False):
             asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
 
         query.answer.assert_awaited_once_with("Sent as voice")
+        start_voice.assert_called_once_with("tok", 99)
+        voice_stop.set.assert_called_once_with()
         send_voice.assert_awaited_once()
         self.assertEqual(send_voice.await_args.kwargs["reply_to_message_id"], 77)
+        self.assertNotIn(voice_key, ctx.data)
 
     def test_handle_title_sets_manual_chat_title_and_lock(self):
         handler = self.handler

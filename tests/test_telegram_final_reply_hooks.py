@@ -327,11 +327,14 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         constants, handler = _install_stubs()
         module = _load_module(CHAIN_HOOK_PATH, "telegram_chain_end_hook_under_test")
 
+        typing_stop = mock.Mock()
+        voice_stop = mock.Mock()
         context = types.SimpleNamespace(
             data={
                 constants.CTX_TG_BOT: "mainbot",
                 constants.CTX_TG_FINAL_REPLY_SENT: True,
-                constants.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=mock.Mock()),
+                constants.CTX_TG_TYPING_STOP: types.SimpleNamespace(set=typing_stop),
+                constants.CTX_TG_RECORD_VOICE_STOP: types.SimpleNamespace(set=voice_stop),
             },
             log=_Log(),
         )
@@ -342,7 +345,11 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         asyncio.run(ext.execute())
 
         ext._send_reply.assert_not_awaited()
+        typing_stop.assert_called_once_with()
+        voice_stop.assert_called_once_with()
         self.assertNotIn(constants.CTX_TG_FINAL_REPLY_SENT, context.data)
+        self.assertNotIn(constants.CTX_TG_TYPING_STOP, context.data)
+        self.assertNotIn(constants.CTX_TG_RECORD_VOICE_STOP, context.data)
         handler._clear_progress_state.assert_called_once_with(context)
 
     def test_detail_status_clears_gen_phase_even_when_tool_line_is_throttled(self):
