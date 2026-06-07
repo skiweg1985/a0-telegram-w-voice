@@ -40,8 +40,8 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     ),
     (
         "session",
-        "Browse saved sessions",
-        "/session [id|search …] — browse, search, or switch saved sessions for this Telegram chat",
+        "Browse and delete sessions",
+        "/session [search …] — browse saved sessions, search, and open a session to delete it",
     ),
     (
         "title",

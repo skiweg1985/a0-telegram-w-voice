@@ -1867,6 +1867,421 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertIn("Current title: Shipping dashboard", sent[-1][0][2])
         self.assertIn("/title auto", sent[-1][0][2])
 
+    # --- Session delete (button-driven) ----------------------------------
+
+    def test_session_details_keyboard_includes_delete_button(self):
+        """Details keyboard now exposes a button-driven delete flow."""
+        handler = self.handler
+        meta = {
+            "id": "abc",
+            "display_name": "Old chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {},
+        }
+        keyboard = handler._session_details_keyboard(meta, active_ctx_id="other")
+        flat = [btn for row in keyboard for btn in row]
+        delete_buttons = [b for b in flat if b["text"] == "🗑 Delete"]
+        self.assertEqual(len(delete_buttons), 1)
+        self.assertTrue(delete_buttons[0]["callback_data"].endswith("|abc"))
+
+    def test_session_delete_confirm_keyboard_has_yes_and_cancel(self):
+        handler = self.handler
+        keyboard = handler._session_delete_confirm_keyboard("abc")
+        flat = [btn for row in keyboard for btn in row]
+        texts = [b["text"] for b in flat]
+        self.assertEqual(texts, ["🗑 Yes, delete", "⬅️ Cancel"])
+        cb_datas = [b["callback_data"] for b in flat]
+        self.assertTrue(any("|abc" in c for c in cb_datas))
+        # Yes callback must be sdy|, cancel must be sdn|
+        yes_btn = next(b for b in flat if b["text"] == "🗑 Yes, delete")
+        cancel_btn = next(b for b in flat if b["text"] == "⬅️ Cancel")
+        self.assertIn("sdy|", yes_btn["callback_data"])
+        self.assertIn("sdn|", cancel_btn["callback_data"])
+
+    def test_session_delete_confirm_text_warns_about_new_chat_when_active(self):
+        handler = self.handler
+        meta = {
+            "id": "active",
+            "display_name": "Current chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {},
+        }
+        text = handler._session_delete_confirm_text(meta, active_ctx_id="active")
+        self.assertIn("Current chat", text)
+        self.assertIn("new session", text.lower())
+        self.assertIn("cannot be undone", text.lower())
+
+    def test_session_delete_confirm_text_is_short_for_inactive_sessions(self):
+        handler = self.handler
+        meta = {
+            "id": "old",
+            "display_name": "Old chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {},
+        }
+        text = handler._session_delete_confirm_text(meta)
+        self.assertIn("Old chat", text)
+        self.assertNotIn("new session", text.lower())
+
+    def test_delete_session_for_user_bound_active_removes_file_and_clears_state(self):
+        """Deleting the active bound session removes the file and clears the state mapping."""
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Active chat")
+        _DummyAgentContext.registry[ctx.id] = ctx
+        meta = {
+            "id": ctx.id,
+            "display_name": "Active chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {
+                handler.CTX_TG_BOT: "mainbot",
+                handler.CTX_TG_USER_ID: 42,
+                handler.CTX_TG_CHAT_ID: 99,
+            },
+        }
+        saved_states = []
+        removed_paths = []
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
+             mock.patch.object(handler, "_mapped_context_id", return_value=ctx.id), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": ctx.id}}), \
+             mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
+             mock.patch.object(handler.os.path, "isfile", return_value=True), \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed_paths.append(p)):
+            ok, msg, was_active = handler._delete_session_for_user("mainbot", 42, 99, ctx.id)
+
+        self.assertTrue(ok)
+        self.assertTrue(was_active)
+        self.assertIn("Active chat", msg)
+        self.assertTrue(ctx.killed)
+        # state.json chats mapping was cleared for this (bot, user, chat)
+        self.assertEqual(saved_states[-1]["chats"], {})
+        # File was removed
+        self.assertEqual(len(removed_paths), 1)
+        self.assertTrue(removed_paths[0].endswith(f"{ctx.id}/chat.json"))
+
+    def test_delete_session_for_user_unbound_owned_removes_file(self):
+        """Unbound web session whose CTX_TG_USER_ID matches the current user is deletable."""
+        handler = self.handler
+        meta = {
+            "id": "web-1",
+            "display_name": "Web chat",
+            "telegram_binding": "unbound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {
+                handler.CTX_TG_BOT: "mainbot",
+                handler.CTX_TG_USER_ID: 42,
+                handler.CTX_TG_CHAT_ID: 0,
+            },
+        }
+        saved_states = []
+        removed_paths = []
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
+             mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": "other"}}), \
+             mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
+             mock.patch.object(handler.os.path, "isfile", return_value=True), \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed_paths.append(p)):
+            ok, msg, was_active = handler._delete_session_for_user("mainbot", 42, 99, "web-1")
+
+        self.assertTrue(ok)
+        self.assertFalse(was_active)
+        # Active mapping was NOT touched (we are not the active session)
+        self.assertEqual(saved_states, [])
+        # File was removed
+        self.assertEqual(len(removed_paths), 1)
+        self.assertTrue(removed_paths[0].endswith("web-1/chat.json"))
+
+    def test_delete_session_for_user_unbound_other_user_refused(self):
+        """Unbound web session belonging to a different user is refused."""
+        handler = self.handler
+        meta = {
+            "id": "web-other",
+            "display_name": "Other user",
+            "telegram_binding": "unbound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {
+                handler.CTX_TG_BOT: "mainbot",
+                handler.CTX_TG_USER_ID: 999,
+                handler.CTX_TG_CHAT_ID: 0,
+            },
+        }
+        removed_paths = []
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
+             mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {}}), \
+             mock.patch.object(handler.os.path, "isfile", return_value=True), \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed_paths.append(p)):
+            ok, msg, was_active = handler._delete_session_for_user("mainbot", 42, 99, "web-other")
+
+        self.assertFalse(ok)
+        self.assertFalse(was_active)
+        self.assertIn("not allowed", msg.lower())
+        self.assertEqual(removed_paths, [])
+
+    def test_delete_session_for_user_unknown_session_refused(self):
+        """Sessions not visible in the picker cannot be deleted."""
+        handler = self.handler
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[]), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {}}), \
+             mock.patch.object(handler.os, "remove") as remove_mock:
+            ok, msg, was_active = handler._delete_session_for_user("mainbot", 42, 99, "missing")
+
+        self.assertFalse(ok)
+        self.assertFalse(was_active)
+        self.assertIn("not found", msg.lower())
+        remove_mock.assert_not_called()
+
+    def test_handle_callback_query_session_delete_shows_confirm(self):
+        """sd| callback edits the message with the confirm screen; file untouched."""
+        handler = self.handler
+        meta = {
+            "id": "abc",
+            "display_name": "Old chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {},
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sd|abc",
+            message=types.SimpleNamespace(message_id=55, chat=types.SimpleNamespace(id=99, type="private")),
+            answer=mock.AsyncMock(),
+        )
+        removed = []
+
+        class _BotCtx:
+            async def __aenter__(self):
+                return types.SimpleNamespace()
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {}}), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
+             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=mock.AsyncMock(return_value=True)) as edit_kb, \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed.append(p)):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        query.answer.assert_awaited()
+        edit_kb.assert_awaited_once()
+        args = edit_kb.await_args.args
+        self.assertEqual(args[2], 55)  # message_id
+        self.assertIn("Delete session", args[3])
+        self.assertIn("Old chat", args[3])
+        keyboard = args[4]
+        flat_texts = [b["text"] for row in keyboard for b in row]
+        self.assertIn("🗑 Yes, delete", flat_texts)
+        self.assertIn("⬅️ Cancel", flat_texts)
+        self.assertEqual(removed, [])
+
+    def test_handle_callback_query_session_delete_confirm_executes(self):
+        """sdy| callback removes the file and re-renders the picker with the existing active id."""
+        handler = self.handler
+        meta = {
+            "id": "abc",
+            "display_name": "Old chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {
+                handler.CTX_TG_BOT: "mainbot",
+                handler.CTX_TG_USER_ID: 42,
+                handler.CTX_TG_CHAT_ID: 99,
+            },
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sdy|abc",
+            message=types.SimpleNamespace(message_id=55, chat=types.SimpleNamespace(id=99, type="private")),
+            answer=mock.AsyncMock(),
+        )
+        removed = []
+        sent = []
+        saved_states = []
+
+        class _BotCtx:
+            async def __aenter__(self):
+                return types.SimpleNamespace()
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
+             mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": "other"}}), \
+             mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
+             mock.patch.object(handler, "_show_session_picker", new=mock.AsyncMock()) as show_picker, \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler.os.path, "isfile", return_value=True), \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed.append(p)):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        self.assertEqual(len(removed), 1)
+        self.assertTrue(removed[0].endswith("abc/chat.json"))
+        # state.json untouched (not the active session)
+        self.assertEqual(saved_states, [])
+        # Picker was re-rendered with the existing active id
+        show_picker.assert_awaited_once()
+        self.assertEqual(show_picker.await_args.kwargs["bot_name"], "mainbot")
+        self.assertEqual(show_picker.await_args.kwargs["user_id"], 42)
+        self.assertEqual(show_picker.await_args.kwargs["active_ctx_id"], "other")
+        # Notice was sent
+        self.assertTrue(any("Deleted session" in str(a) for a, _ in sent))
+
+    def test_handle_callback_query_session_delete_confirm_active_triggers_newchat(self):
+        """When the deleted session is the active one, a fresh session is started and the picker shows it."""
+        handler = self.handler
+        meta = {
+            "id": "active",
+            "display_name": "Active chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {
+                handler.CTX_TG_BOT: "mainbot",
+                handler.CTX_TG_USER_ID: 42,
+                handler.CTX_TG_CHAT_ID: 99,
+            },
+        }
+        new_ctx = _DummyAgentContext(name="Fresh chat")
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sdy|active",
+            message=types.SimpleNamespace(message_id=55, chat=types.SimpleNamespace(id=99, type="private")),
+            answer=mock.AsyncMock(),
+        )
+        removed = []
+        sent = []
+        saved_states = []
+
+        class _BotCtx:
+            async def __aenter__(self):
+                return types.SimpleNamespace()
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def _fake_start_new_session(bot, bot_cfg, user_id, username, chat_id):
+            return True, "New chat started.", new_ctx
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
+             mock.patch.object(handler, "_mapped_context_id", return_value="active"), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": "active"}}), \
+             mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
+             mock.patch.object(handler, "_start_new_session_for_user", new=mock.AsyncMock(side_effect=_fake_start_new_session)) as start_new, \
+             mock.patch.object(handler, "_show_session_picker", new=mock.AsyncMock()) as show_picker, \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler.os.path, "isfile", return_value=True), \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed.append(p)):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        # state.json was cleared for the active mapping
+        self.assertEqual(saved_states[0]["chats"], {})
+        # New session was started
+        start_new.assert_awaited_once()
+        # File was removed
+        self.assertEqual(len(removed), 1)
+        self.assertTrue(removed[0].endswith("active/chat.json"))
+        # Picker was re-rendered with the new active id
+        show_picker.assert_awaited_once()
+        self.assertEqual(show_picker.await_args.kwargs["active_ctx_id"], new_ctx.id)
+        # Notice was sent
+        self.assertTrue(any("Deleted session" in str(a) for a, _ in sent))
+
+    def test_handle_callback_query_session_delete_confirm_unauthorized_notifies(self):
+        """When the helper refuses (e.g. cross-user), the callback answers with the error and does not touch the file."""
+        handler = self.handler
+        meta = {
+            "id": "web-other",
+            "display_name": "Other user",
+            "telegram_binding": "unbound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {
+                handler.CTX_TG_BOT: "mainbot",
+                handler.CTX_TG_USER_ID: 999,
+                handler.CTX_TG_CHAT_ID: 0,
+            },
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sdy|web-other",
+            message=types.SimpleNamespace(message_id=55, chat=types.SimpleNamespace(id=99, type="private")),
+            answer=mock.AsyncMock(),
+        )
+        removed = []
+
+        class _BotCtx:
+            async def __aenter__(self):
+                return types.SimpleNamespace()
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
+             mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {}}), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
+             mock.patch.object(handler, "_show_session_picker", new=mock.AsyncMock()) as show_picker, \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed.append(p)):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        query.answer.assert_awaited_once()
+        self.assertIn("not allowed", query.answer.await_args.args[0].lower())
+        show_picker.assert_not_awaited()
+        self.assertEqual(removed, [])
+
+    def test_handle_callback_query_session_delete_cancel_returns_to_details(self):
+        """sdn| callback shows details again, leaving the file untouched."""
+        handler = self.handler
+        meta = {
+            "id": "abc",
+            "display_name": "Old chat",
+            "telegram_binding": "bound",
+            "last_message": "2026-01-01T00:00:00",
+            "data": {},
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sdn|abc",
+            message=types.SimpleNamespace(message_id=55, chat=types.SimpleNamespace(id=99, type="private")),
+            answer=mock.AsyncMock(),
+        )
+        removed = []
+
+        class _BotCtx:
+            async def __aenter__(self):
+                return types.SimpleNamespace()
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
+             mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {}}), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
+             mock.patch.object(handler, "_show_session_details", new=mock.AsyncMock()) as show_details, \
+             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed.append(p)):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        show_details.assert_awaited_once()
+        kwargs = show_details.await_args.kwargs
+        self.assertEqual(kwargs["meta"]["id"], "abc")
+        self.assertEqual(removed, [])
+
 
 if __name__ == "__main__":
     unittest.main()

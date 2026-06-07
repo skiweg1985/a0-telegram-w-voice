@@ -980,8 +980,109 @@ def _session_details_keyboard(meta: dict, active_ctx_id: str | None) -> list[lis
         switch_label = "✅ Open this session"
     return [
         [{"text": switch_label, "callback_data": f"{p}ss|{ctx_id}"}],
+        [{"text": "🗑 Delete", "callback_data": f"{p}sd|{ctx_id}"}],
         [{"text": "⬅️ Back", "callback_data": f"{p}sb|back"}],
     ]
+
+
+def _session_delete_confirm_text(meta: dict, *, active_ctx_id: str | None = None) -> str:
+    """Render the confirmation text for deleting a saved session."""
+    name = str(meta.get("display_name") or meta.get("id") or "?").strip() or "?"
+    ctx_id = str(meta.get("id") or "")
+    is_active = bool(ctx_id) and ctx_id == str(active_ctx_id or "")
+    lines = [
+        "🗑 Delete session",
+        "",
+        name,
+        "",
+        "This permanently removes the on-disk chat file. This cannot be undone.",
+    ]
+    if is_active:
+        lines.extend(
+            [
+                "",
+                "This session is the active chat for this Telegram conversation. "
+                "A fresh new session will be started automatically after deletion.",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _session_delete_confirm_keyboard(ctx_id: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [{"text": "🗑 Yes, delete", "callback_data": f"{p}sdy|{ctx_id}"}],
+        [{"text": "⬅️ Cancel", "callback_data": f"{p}sdn|{ctx_id}"}],
+    ]
+
+
+def _delete_session_for_user(
+    bot_name: str,
+    user_id: int,
+    chat_id: int,
+    ctx_id: str,
+) -> tuple[bool, str, bool]:
+    """Delete a saved session's chat file.
+
+    Returns ``(ok, message, was_active)``. ``was_active`` is True when the
+    deleted session was the active one for ``(bot_name, user_id, chat_id)``;
+    the caller is expected to start a fresh session in that case.
+    """
+    sessions = _list_switchable_sessions(bot_name, user_id, chat_id)
+    target = next((s for s in sessions if str(s.get("id") or "") == str(ctx_id)), None)
+    if not target:
+        return False, "Session not found for this Telegram chat.", False
+
+    meta = _read_persisted_chat_meta(ctx_id)
+    if not meta:
+        return False, "Session file is missing or unreadable.", False
+
+    data = meta.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
+    is_bound = _session_matches_identity(meta, bot_name, user_id, chat_id)
+    owner_user_id = data.get(CTX_TG_USER_ID)
+    try:
+        owner_user_id_int = int(owner_user_id) if owner_user_id is not None else None
+    except (TypeError, ValueError):
+        owner_user_id_int = None
+    is_owned_unbound = (
+        not is_bound
+        and str(data.get(CTX_TG_BOT) or "") == str(bot_name)
+        and (owner_user_id_int is None or owner_user_id_int == int(user_id))
+    )
+    if not (is_bound or is_owned_unbound):
+        return False, (
+            "Not allowed: this session belongs to a different Telegram user or chat."
+        ), False
+
+    key = _map_key(bot_name, user_id, chat_id)
+    with _chat_map_lock:
+        state = _load_state()
+        chats = state.setdefault("chats", {})
+        was_active = str(chats.get(key) or "") == str(ctx_id)
+        if was_active:
+            chats.pop(key, None)
+            _save_state(state)
+
+    in_mem = AgentContext.get(ctx_id)
+    if in_mem:
+        with suppress(Exception):
+            _stop_context_chat_actions(in_mem)
+        with suppress(Exception):
+            in_mem.kill_process()
+
+    path = _persisted_chat_file_path(ctx_id)
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError as e:
+        PrintStyle.warning(
+            f"Telegram: failed to delete chat file {path}: {format_error(e)}"
+        )
+
+    name = str(target.get("display_name") or ctx_id).strip() or ctx_id
+    return True, f"Deleted session {name}.", was_active
 
 
 def _session_search_help_text() -> str:
@@ -2638,6 +2739,75 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 query="",
                 page=0,
                 message_id=query.message.message_id,
+            )
+            await query.answer()
+            return
+
+        if kind == "sd":
+            sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
+            target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
+            if not target:
+                await query.answer("Session not found")
+                return
+            text = _session_delete_confirm_text(
+                target, active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id)
+            )
+            keyboard = _session_delete_confirm_keyboard(payload)
+            edited = False
+            async with _temp_bot(token) as bot:
+                if query.message:
+                    edited = bool(
+                        await tc.edit_text_with_keyboard(
+                            bot, chat_id, query.message.message_id, text, keyboard, parse_mode=None
+                        )
+                    )
+                if not edited:
+                    await tc.send_text_with_keyboard(bot, chat_id, text, keyboard, parse_mode=None)
+            await query.answer()
+            return
+
+        if kind == "sdy":
+            ok, msg, was_active = _delete_session_for_user(
+                bot_name, user.id, chat_id, payload
+            )
+            if not ok:
+                await query.answer(msg[:200] if msg else "Not allowed")
+                return
+            if was_active:
+                new_ok, _new_msg, new_ctx = await _start_new_session_for_user(
+                    bot_name, bot_cfg, user.id, user.username, chat_id
+                )
+                active_ctx_id = new_ctx.id if new_ok and new_ctx else _mapped_context_id(
+                    bot_name, user.id, chat_id
+                )
+            else:
+                active_ctx_id = _mapped_context_id(bot_name, user.id, chat_id)
+            await _show_session_picker(
+                token,
+                chat_id,
+                bot_name=bot_name,
+                user_id=user.id,
+                active_ctx_id=active_ctx_id,
+                query="",
+                page=0,
+                message_id=query.message.message_id if query.message else None,
+            )
+            await query.answer("Deleted")
+            await _send_with_temp_bot(token, chat_id, msg, parse_mode=None)
+            return
+
+        if kind == "sdn":
+            sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
+            target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
+            if not target:
+                await query.answer("Session not found")
+                return
+            await _show_session_details(
+                token,
+                chat_id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                meta=target,
+                message_id=query.message.message_id if query.message else None,
             )
             await query.answer()
             return

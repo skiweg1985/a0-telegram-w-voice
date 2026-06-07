@@ -95,7 +95,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 - `/actions` toggles the per-reply **More** menu for the current session.
 - **Approve / Cancel flows**: the agent can present risky actions as inline keyboard choices; taps are fed back into the agent automatically.
 - **Unauthorized users** receive a clear, throttled reply with their Telegram user ID so they can request access.
-- **`/session` picker**: paginated list of saved sessions with inline navigation, details view, and **button-driven search** — tap Search, send a term, results filter inline.
+- **`/session` picker**: paginated list of saved sessions with inline navigation, details view, **button-driven search** (tap Search, send a term, results filter inline) and a **🗑 Delete** action that removes the on-disk chat file (a fresh new session is started automatically when deleting the active one).
 - `/retry` re-runs your last message; `/undo` drops the last exchange (your message and the agent's reply) from session history.
 - `/topic [name]` opens a named conversation thread in the same chat, or lists existing topics without a name.
 
@@ -119,7 +119,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/status` | Model, tokens, project, TTS/STT, run state |
 | `/clear` | Reset conversation history (same context) |
 | `/newchat` | New session; old chat stays in browser UI |
-| `/session` | Paginated session picker; `/session search <term>` or `/session <id>` to switch directly |
+| `/session` | Paginated session picker; `/session search <term>` to filter, open a session and tap **🗑 Delete** to remove it (active session triggers a fresh new chat) |
 | `/title` | Set a manual session title, or `/title auto` to restore automatic naming |
 | `/actions` | Toggle the per-reply **More** menu for this session |
 | `/detail` | `off` / `info` / `smart` / `verbose`, or no arg shows level + **inline buttons** |
@@ -195,12 +195,13 @@ bots:
 
 - `/clear` resets the currently active session history.
 - `/newchat` creates a fresh session and keeps older sessions available in Agent Zero/browser history.
-- `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat. Supports inline details navigation and **button-driven search**: tap Search, send a search term, and results filter inline without typing a command.
+- `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat. Supports inline details navigation and **button-driven search**: tap Search, send a search term, and results filter inline without typing a command. From the details view you can **delete** a session — the on-disk chat file is removed (and a fresh new session is started automatically if you delete the active one).
 - `/title` sets a manual session name on the current chat context; `/title auto` clears the manual lock and returns to automatic naming.
 - `/topic [name]` opens or resumes a named thread within the same chat; without a name it lists existing topics.
 - Session switching is scoped to the same Telegram bot, Telegram user, and Telegram chat for safety.
 - When a reply is delivered as voice without a visible text bubble, the optional `📝 Show text` quick action can reveal the text version on demand, including `auto` after voice input.
 - `/actions on|off` controls whether the per-reply **More** menu is shown in the current session; the bot default comes from `speech.reply.quick_actions.enabled`.
+- From the `/session` picker, open a session's details and tap **🗑 Delete** to remove the chat file. The active session can also be deleted — a fresh new session is started automatically afterwards. Deletion is **button-driven** (no `/session delete` text command) and applies to bound sessions plus any unbound web session whose `CTX_TG_USER_ID` matches the current Telegram user.
 
 ## Notes
 
