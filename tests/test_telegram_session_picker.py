@@ -51,14 +51,28 @@ class _DummyAgentContext:
         self.paused = False
         self.agent0 = types.SimpleNamespace(history=types.SimpleNamespace(compress=lambda: False))
         self.killed = False
+        self.reset_called = False
+        self.removed = False
         self.__class__.registry[self.id] = self
 
     @classmethod
     def get(cls, ctx_id):
         return cls.registry.get(ctx_id)
 
+    @classmethod
+    def remove(cls, ctx_id):
+        ctx = cls.registry.pop(ctx_id, None)
+        if ctx is not None:
+            ctx.removed = True
+        return ctx
+
     def kill_process(self):
         self.killed = True
+
+    def reset(self):
+        self.kill_process()
+        self.reset_called = True
+        self.paused = False
 
     def set_data(self, key, value):
         self.data[key] = value
@@ -185,6 +199,12 @@ def _install_stub_modules():
     persist_chat = types.ModuleType("helpers.persist_chat")
     persist_chat.save_tmp_chat = lambda ctx: None
     persist_chat._deserialize_context = lambda payload: payload
+
+    def _persist_chat_remove_chat(ctx_id):
+        # Tests verify call count + ctx_id via side_effect below
+        return None
+
+    persist_chat.remove_chat = _persist_chat_remove_chat
     sys.modules["helpers.persist_chat"] = persist_chat
 
     print_style = types.ModuleType("helpers.print_style")
@@ -1927,7 +1947,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertNotIn("new session", text.lower())
 
     def test_delete_session_for_user_bound_active_removes_file_and_clears_state(self):
-        """Deleting the active bound session removes the file and clears the state mapping."""
+        """Deleting the active bound session removes the file, drops the in-memory context and clears the state mapping."""
         handler = self.handler
         ctx = _DummyAgentContext(name="Active chat")
         _DummyAgentContext.registry[ctx.id] = ctx
@@ -1943,26 +1963,33 @@ class TelegramSessionPickerTests(unittest.TestCase):
             },
         }
         saved_states = []
-        removed_paths = []
+        removed_ids = []
+        dirty = []
 
         with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
              mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
              mock.patch.object(handler, "_mapped_context_id", return_value=ctx.id), \
              mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": ctx.id}}), \
              mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
-             mock.patch.object(handler.os.path, "isfile", return_value=True), \
-             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed_paths.append(p)):
+             mock.patch.object(handler, "remove_chat", side_effect=lambda cid: removed_ids.append(cid)) as remove_chat_mock, \
+             mock.patch.object(handler, "_mark_chat_state_dirty", side_effect=lambda r: dirty.append(r)):
             ok, msg, was_active = handler._delete_session_for_user("mainbot", 42, 99, ctx.id)
 
         self.assertTrue(ok)
         self.assertTrue(was_active)
         self.assertIn("Active chat", msg)
+        # In-memory context was reset and removed from the AgentContext registry
+        self.assertTrue(ctx.reset_called)
         self.assertTrue(ctx.killed)
+        self.assertTrue(ctx.removed)
+        self.assertNotIn(ctx.id, _DummyAgentContext.registry)
+        # persist_chat.remove_chat was called for the right ctx_id
+        remove_chat_mock.assert_called_once_with(ctx.id)
+        self.assertEqual(removed_ids, [ctx.id])
         # state.json chats mapping was cleared for this (bot, user, chat)
         self.assertEqual(saved_states[-1]["chats"], {})
-        # File was removed
-        self.assertEqual(len(removed_paths), 1)
-        self.assertTrue(removed_paths[0].endswith(f"{ctx.id}/chat.json"))
+        # State monitor was notified so A0's WebUI refreshes
+        self.assertEqual(dirty, ["plugins.telegram_integration_voice.session.delete"])
 
     def test_delete_session_for_user_unbound_owned_removes_file(self):
         """Unbound web session whose CTX_TG_USER_ID matches the current user is deletable."""
@@ -1979,24 +2006,27 @@ class TelegramSessionPickerTests(unittest.TestCase):
             },
         }
         saved_states = []
-        removed_paths = []
+        removed_ids = []
+        dirty = []
 
         with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
              mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
              mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
              mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": "other"}}), \
              mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
-             mock.patch.object(handler.os.path, "isfile", return_value=True), \
-             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed_paths.append(p)):
+             mock.patch.object(handler, "remove_chat", side_effect=lambda cid: removed_ids.append(cid)) as remove_chat_mock, \
+             mock.patch.object(handler, "_mark_chat_state_dirty", side_effect=lambda r: dirty.append(r)):
             ok, msg, was_active = handler._delete_session_for_user("mainbot", 42, 99, "web-1")
 
         self.assertTrue(ok)
         self.assertFalse(was_active)
         # Active mapping was NOT touched (we are not the active session)
         self.assertEqual(saved_states, [])
-        # File was removed
-        self.assertEqual(len(removed_paths), 1)
-        self.assertTrue(removed_paths[0].endswith("web-1/chat.json"))
+        # persist_chat.remove_chat was called for the right ctx_id
+        remove_chat_mock.assert_called_once_with("web-1")
+        self.assertEqual(removed_ids, ["web-1"])
+        # State monitor was notified
+        self.assertEqual(dirty, ["plugins.telegram_integration_voice.session.delete"])
 
     def test_delete_session_for_user_unbound_other_user_refused(self):
         """Unbound web session belonging to a different user is refused."""
@@ -2105,9 +2135,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
             message=types.SimpleNamespace(message_id=55, chat=types.SimpleNamespace(id=99, type="private")),
             answer=mock.AsyncMock(),
         )
-        removed = []
+        removed_ids = []
         sent = []
         saved_states = []
+        dirty = []
 
         class _BotCtx:
             async def __aenter__(self):
@@ -2120,16 +2151,16 @@ class TelegramSessionPickerTests(unittest.TestCase):
              mock.patch.object(handler, "_mapped_context_id", return_value="other"), \
              mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": "other"}}), \
              mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
+             mock.patch.object(handler, "remove_chat", side_effect=lambda cid: removed_ids.append(cid)) as remove_chat_mock, \
+             mock.patch.object(handler, "_mark_chat_state_dirty", side_effect=lambda r: dirty.append(r)), \
              mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
              mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
              mock.patch.object(handler, "_show_session_picker", new=mock.AsyncMock()) as show_picker, \
-             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
-             mock.patch.object(handler.os.path, "isfile", return_value=True), \
-             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed.append(p)):
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
             asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
 
-        self.assertEqual(len(removed), 1)
-        self.assertTrue(removed[0].endswith("abc/chat.json"))
+        remove_chat_mock.assert_called_once_with("abc")
+        self.assertEqual(removed_ids, ["abc"])
         # state.json untouched (not the active session)
         self.assertEqual(saved_states, [])
         # Picker was re-rendered with the existing active id
@@ -2137,6 +2168,8 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertEqual(show_picker.await_args.kwargs["bot_name"], "mainbot")
         self.assertEqual(show_picker.await_args.kwargs["user_id"], 42)
         self.assertEqual(show_picker.await_args.kwargs["active_ctx_id"], "other")
+        # State monitor was notified
+        self.assertEqual(dirty, ["plugins.telegram_integration_voice.session.delete"])
         # Notice was sent
         self.assertTrue(any("Deleted session" in str(a) for a, _ in sent))
 
@@ -2154,16 +2187,21 @@ class TelegramSessionPickerTests(unittest.TestCase):
                 handler.CTX_TG_CHAT_ID: 99,
             },
         }
+        active_ctx = _DummyAgentContext(name="Active chat")
+        _DummyAgentContext.registry[active_ctx.id] = active_ctx
+        # Make sure the in-memory context is the active one for the lookup
+        meta["id"] = active_ctx.id
         new_ctx = _DummyAgentContext(name="Fresh chat")
         query = types.SimpleNamespace(
             from_user=types.SimpleNamespace(id=42, username="benji"),
-            data=f"{handler.TG_UI_CALLBACK_PREFIX}sdy|active",
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sdy|{active_ctx.id}",
             message=types.SimpleNamespace(message_id=55, chat=types.SimpleNamespace(id=99, type="private")),
             answer=mock.AsyncMock(),
         )
-        removed = []
+        removed_ids = []
         sent = []
         saved_states = []
+        dirty = []
 
         class _BotCtx:
             async def __aenter__(self):
@@ -2176,28 +2214,34 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         with mock.patch.object(handler, "_list_switchable_sessions", return_value=[meta]), \
              mock.patch.object(handler, "_read_persisted_chat_meta", return_value=meta), \
-             mock.patch.object(handler, "_mapped_context_id", return_value="active"), \
-             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": "active"}}), \
+             mock.patch.object(handler, "_mapped_context_id", return_value=active_ctx.id), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {"mainbot:42:99": active_ctx.id}}), \
              mock.patch.object(handler, "_save_state", side_effect=lambda s: saved_states.append(s.copy())), \
+             mock.patch.object(handler, "remove_chat", side_effect=lambda cid: removed_ids.append(cid)) as remove_chat_mock, \
+             mock.patch.object(handler, "_mark_chat_state_dirty", side_effect=lambda r: dirty.append(r)), \
              mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
              mock.patch.object(handler, "_temp_bot", return_value=_BotCtx()), \
              mock.patch.object(handler, "_start_new_session_for_user", new=mock.AsyncMock(side_effect=_fake_start_new_session)) as start_new, \
              mock.patch.object(handler, "_show_session_picker", new=mock.AsyncMock()) as show_picker, \
-             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
-             mock.patch.object(handler.os.path, "isfile", return_value=True), \
-             mock.patch.object(handler.os, "remove", side_effect=lambda p: removed.append(p)):
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
             asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
 
         # state.json was cleared for the active mapping
         self.assertEqual(saved_states[0]["chats"], {})
+        # In-memory context was reset and removed
+        self.assertTrue(active_ctx.reset_called)
+        self.assertTrue(active_ctx.removed)
+        self.assertNotIn(active_ctx.id, _DummyAgentContext.registry)
         # New session was started
         start_new.assert_awaited_once()
-        # File was removed
-        self.assertEqual(len(removed), 1)
-        self.assertTrue(removed[0].endswith("active/chat.json"))
+        # persist_chat.remove_chat was called for the right ctx_id
+        remove_chat_mock.assert_called_once_with(active_ctx.id)
+        self.assertEqual(removed_ids, [active_ctx.id])
         # Picker was re-rendered with the new active id
         show_picker.assert_awaited_once()
         self.assertEqual(show_picker.await_args.kwargs["active_ctx_id"], new_ctx.id)
+        # State monitor was notified
+        self.assertEqual(dirty, ["plugins.telegram_integration_voice.session.delete"])
         # Notice was sent
         self.assertTrue(any("Deleted session" in str(a) for a, _ in sent))
 

@@ -129,6 +129,7 @@ def _install_stub_modules():
     persist_chat = types.ModuleType("helpers.persist_chat")
     persist_chat.save_tmp_chat = lambda ctx: None
     persist_chat._deserialize_context = lambda payload: payload
+    persist_chat.remove_chat = lambda ctx_id: None
     sys.modules["helpers.persist_chat"] = persist_chat
 
     print_style = types.ModuleType("helpers.print_style")

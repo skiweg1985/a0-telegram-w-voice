@@ -19,7 +19,7 @@ from agent import Agent, AgentContext, UserMessage
 from helpers import plugins, files, projects
 from helpers import message_queue as mq
 from helpers.notification import NotificationManager, NotificationType, NotificationPriority
-from helpers.persist_chat import save_tmp_chat, _deserialize_context
+from helpers.persist_chat import save_tmp_chat, _deserialize_context, remove_chat
 from helpers.print_style import PrintStyle
 from helpers.errors import format_error
 from initialize import initialize_agent
@@ -1068,18 +1068,13 @@ def _delete_session_for_user(
     in_mem = AgentContext.get(ctx_id)
     if in_mem:
         with suppress(Exception):
-            _stop_context_chat_actions(in_mem)
-        with suppress(Exception):
-            in_mem.kill_process()
+            in_mem.reset()
+    with suppress(Exception):
+        AgentContext.remove(ctx_id)
+    with suppress(Exception):
+        remove_chat(ctx_id)
 
-    path = _persisted_chat_file_path(ctx_id)
-    try:
-        if os.path.isfile(path):
-            os.remove(path)
-    except OSError as e:
-        PrintStyle.warning(
-            f"Telegram: failed to delete chat file {path}: {format_error(e)}"
-        )
+    _mark_chat_state_dirty("plugins.telegram_integration_voice.session.delete")
 
     name = str(target.get("display_name") or ctx_id).strip() or ctx_id
     return True, f"Deleted session {name}.", was_active
