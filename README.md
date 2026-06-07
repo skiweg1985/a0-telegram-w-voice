@@ -90,9 +90,9 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 
 ### Slash Commands & Inline Buttons
 
-- **Inline keyboards** on all mode-switching commands: `/detail`, `/detail_before`, `/voice`, `/optimize_output`, `/project`, `/model` — tap to switch without typing.
+- **Inline keyboards** on mode-switching commands: `/detail`, `/detail_before`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` (no argument) — tap to switch or run shortcuts without typing.
 - `/title` sets a manual title for the current session, or `/title auto` returns to automatic naming.
-- `/actions` toggles the per-reply **More** menu for the current session.
+- `/actions` toggles the per-reply **More** menu for the current session. The More menu offers `Shorter`, `Longer`, `To voice`, and `Back`; voice-only replies can also show `Show text`.
 - **Approve / Cancel flows**: the agent can present risky actions as inline keyboard choices; taps are fed back into the agent automatically.
 - **Unauthorized users** receive a clear, throttled reply with their Telegram user ID so they can request access.
 - **`/session` picker**: paginated list of saved sessions with inline navigation, details view (with a 📝 Summary block of the most recent turns), **button-driven search** (tap Search, send a term, results filter inline) and a **🗑 Delete** action that removes the on-disk chat file (a fresh new session is started automatically when deleting the active one).
@@ -104,7 +104,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 - Per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`) directly in the plugin settings UI.
 - The WebUI currently exposes **Off**, **Info**, and **Verbose** for the default tool-detail level. `smart` is still available via YAML (`telegram_detail_level: smart`) or per-session with `/detail smart`.
 - **Walkie-talkie preset** button for quick voice-oriented configuration.
-- **Quick action buttons** can be enabled/disabled in the WebUI, including the voice-only **Show text** button.
+- **Quick action buttons** can be enabled/disabled in the WebUI. This controls the per-reply **More** menu (`Shorter`, `Longer`, `To voice`, `Back`) and the voice-only **Show text** button.
 - **Update from Git** and **Test Connection** actions are available in the WebUI for Git-based installs and token checks.
 - Operator-only tuning (detail throttling, icon overrides, progress timing, STT/TTS endpoint details) is YAML-only — no visual clutter in the UI.
 
@@ -211,10 +211,10 @@ bots:
 - For OpenAI-compatible Gemini PCM (`format: "pcm"`), the plugin assumes raw PCM `s16le`, `24000 Hz`, mono and converts it automatically before sending to Telegram.
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
-- **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, and `/model` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
+- **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
 - The WebUI's **Tool Status Detail** dropdown currently does not expose `smart`; use YAML or `/detail smart` if you want utility-model summaries by default or in the current session.
 - **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
-- Publishing to the Plugin Index: use `name` without a leading underscore; see `packaging/plugin-index/index.yaml.example` for an `a0-plugins` PR template.
+- Publishing to the Plugin Index: use `name` without a leading underscore. The exact Plugin Index repository/path is not part of this repo; verify current upstream publishing instructions before opening an index PR.
 
 ## TTS troubleshooting
 

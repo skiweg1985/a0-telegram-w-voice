@@ -96,7 +96,7 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
     (
         "shortcut",
         "Reply shortcuts",
-        "/shortcut shorter|longer|summary — rewrite the last answer (shorter/longer) or get a summary of the active session",
+        "/shortcut [shorter|longer|summary] — no arg = buttons; rewrite the last answer or summarize the active session",
     ),
     (
         "stop",

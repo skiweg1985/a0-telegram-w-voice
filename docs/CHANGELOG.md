@@ -1,5 +1,7 @@
 # Changelog
 
+Older entries are chronological release history and may mention commands/features that were later removed. For current operator documentation, use `README.md` plus the latest `[Unreleased]` notes.
+
 ## [Unreleased]
 
 ### Added
