@@ -408,6 +408,16 @@ def _detail_inline_keyboard() -> list[list[dict]]:
     ]
 
 
+def _actions_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "On", "callback_data": f"{p}a|on"},
+            {"text": "Off", "callback_data": f"{p}a|off"},
+        ],
+    ]
+
+
 def _detail_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
     eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
     return detail_status.detail_level_display(eff)
@@ -1586,11 +1596,21 @@ async def handle_actions(message: TgMessage, bot_name: str, bot_cfg: dict):
         effective = speech.effective_reply_actions_enabled(bot_cfg, ctx.data)
         reply = (
             f"Reply actions: {_reply_actions_status_text(effective)}.\n"
-            "Use /actions on or /actions off for this session."
+            "Tap a button or type /actions on|off for this session."
         )
-    else:
-        reply = _apply_reply_actions_setting(ctx, bot_cfg, arg)
+        kb = _actions_inline_keyboard()
         save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+            keyboard=kb,
+        )
+        return
+
+    reply = _apply_reply_actions_setting(ctx, bot_cfg, arg)
+    save_tmp_chat(ctx)
 
     await _send_with_temp_bot(
         instance.bot.token,
@@ -2663,6 +2683,18 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 await query.answer("Unknown option.")
                 return
             reply = _apply_voice_mode_setting(context, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
+            return
+
+        if kind == "a":
+            if payload not in ("on", "off"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_reply_actions_setting(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
             await _send_with_temp_bot(
