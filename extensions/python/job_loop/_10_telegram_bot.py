@@ -55,6 +55,7 @@ class TelegramBotManager(Extension):
         handle_actions = getattr(_tg_handler, "handle_actions", None)
         handle_voice = getattr(_tg_handler, "handle_voice", None)
         handle_detail = _tg_handler.handle_detail
+        handle_detail_before = getattr(_tg_handler, "handle_detail_before", None)
         handle_status = _tg_handler.handle_status
         handle_compact = _tg_handler.handle_compact
         handle_stop = _tg_handler.handle_stop
@@ -136,6 +137,11 @@ class TelegramBotManager(Extension):
                     else None
                 )
                 _on_detail = partial(_make_handler(handle_detail), bot_name=name, bot_cfg=bot_cfg)
+                _on_detail_before = (
+                    partial(_make_handler(handle_detail_before), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_detail_before
+                    else None
+                )
                 _on_optimize = (
                     partial(_make_handler(handle_optimize_output), bot_name=name, bot_cfg=bot_cfg)
                     if handle_optimize_output
@@ -171,6 +177,7 @@ class TelegramBotManager(Extension):
                     *(([("topic", _on_topic)]) if _on_topic else []),
                     *(([("voice", _on_voice)]) if _on_voice else []),
                     ("detail", _on_detail),
+                    *(([("detail_before", _on_detail_before)]) if _on_detail_before else []),
                 ]
                 if _on_optimize:
                     _extra_commands.append(("optimize_output", _on_optimize))

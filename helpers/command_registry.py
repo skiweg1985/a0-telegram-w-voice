@@ -69,6 +69,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/detail off|info|verbose — no arg = status + buttons (debug = verbose)",
     ),
     (
+        "detail_before",
+        "Tool start updates",
+        "/detail_before [on|off] — toggle execute-before tool updates; no arg = status + buttons",
+    ),
+    (
         "voice",
         "Voice reply mode",
         "/voice [voice_only|voice_text|auto|text_only|off] — auto speaks only after a voice message; no arg = status + buttons",

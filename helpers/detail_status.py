@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import html
+import importlib
 import json
+import re
 from typing import Any
 
 DETAIL_LEVELS = frozenset({"off", "info", "debug"})
 _DEFAULT_DETAIL_LEVEL = "info"
+_DEFAULT_EXECUTE_BEFORE = False
 
 _DEFAULT_ICONS: dict[str, str] = {
     "memory_load": "\U0001f9e0",
@@ -36,6 +40,136 @@ _PREFIX_ICONS: list[tuple[str, str]] = [
 ]
 
 _DEFAULT_MAX_BODY_CHARS = 3200
+_REDACTED = "[REDACTED]"
+_SENSITIVE_KEY_TOKENS = (
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "token",
+    "password",
+    "passwd",
+    "pass",
+    "secret",
+    "authorization",
+    "auth",
+    "cookie",
+    "session",
+    "client_secret",
+    "private_key",
+    "ssh_key",
+    "bearer",
+    "webhook_secret",
+    "x_api_key",
+)
+_SENSITIVE_ENV_RE = re.compile(
+    r"\b([A-Z0-9_]*(?:PASS|PASSWORD|TOKEN|SECRET|API_KEY|APIKEY|AUTH|COOKIE|SESSION)[A-Z0-9_]*)\s*=\s*([^\s'\"`]+|'[^']*'|\"[^\"]*\")"
+)
+_HEADER_REDACT_RE = re.compile(
+    r"(?i)\b(authorization|x-api-key|xi-api-key|proxy-authorization)\b\s*[:=]\s*([^\r\n,;]+)"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[^\s\"'<>()]+")
+_BASIC_AUTH_RE = re.compile(r"(?i)(^|\s)(-u\s+)([^\s:]+):([^\s]+)")
+_URL_CREDS_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s/@:]+):([^\s/@]+)@")
+
+
+def _normalize_key(key: Any) -> str:
+    return str(key).strip().lower().replace("-", "_")
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    norm = _normalize_key(key)
+    return any(token in norm for token in _SENSITIVE_KEY_TOKENS)
+
+
+def _resolve_secret_reference(value: str) -> str:
+    value = str(value or "")
+    if value.startswith("${") and value.endswith("}") and len(value) > 3:
+        return os.getenv(value[2:-1], "")
+    if value.startswith("os.environ/"):
+        return os.getenv(value.split("/", 1)[1], "")
+    return value
+
+
+def _collect_secret_values_from_obj(obj: Any, out: set[str]) -> None:
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if _is_sensitive_key(key):
+                _collect_scalar_secret_values(value, out)
+            _collect_secret_values_from_obj(value, out)
+        return
+    if isinstance(obj, (list, tuple, set)):
+        for item in obj:
+            _collect_secret_values_from_obj(item, out)
+
+
+def _collect_scalar_secret_values(value: Any, out: set[str]) -> None:
+    if isinstance(value, dict):
+        _collect_secret_values_from_obj(value, out)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _collect_scalar_secret_values(item, out)
+        return
+    if value is None:
+        return
+    text = str(value).strip()
+    if not text:
+        return
+    resolved = _resolve_secret_reference(text).strip()
+    candidate = resolved or text
+    if len(candidate) >= 6:
+        out.add(candidate)
+
+
+def collect_known_secret_values(bot_cfg: dict, agent: Any | None = None) -> list[str]:
+    found: set[str] = set()
+    _collect_secret_values_from_obj(bot_cfg or {}, found)
+
+    if agent is not None:
+        try:
+            mc = importlib.import_module("plugins._model_config.helpers.model_config")
+
+            _collect_secret_values_from_obj(mc.get_chat_model_config(agent) or {}, found)
+            _collect_secret_values_from_obj(mc.get_utility_model_config(agent) or {}, found)
+        except Exception:
+            pass
+
+    return sorted(found, key=len, reverse=True)
+
+
+def _redact_sensitive_text(text: str, known_secret_values: list[str] | None = None) -> str:
+    safe = str(text)
+    for secret in known_secret_values or []:
+        if secret:
+            safe = safe.replace(secret, _REDACTED)
+
+    safe = _HEADER_REDACT_RE.sub(lambda m: f"{m.group(1)}: {_REDACTED}", safe)
+    safe = _BEARER_RE.sub(f"Bearer {_REDACTED}", safe)
+    safe = _BASIC_AUTH_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}:{_REDACTED}", safe)
+    safe = _URL_CREDS_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}:{_REDACTED}@", safe)
+    safe = _SENSITIVE_ENV_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", safe)
+    return safe
+
+
+def redact_sensitive(value: Any, known_secret_values: list[str] | None = None) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            if _is_sensitive_key(key):
+                redacted[key] = _REDACTED
+            else:
+                redacted[key] = redact_sensitive(item, known_secret_values)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive(item, known_secret_values) for item in value]
+    if isinstance(value, tuple):
+        return [redact_sensitive(item, known_secret_values) for item in value]
+    if isinstance(value, set):
+        return [redact_sensitive(item, known_secret_values) for item in sorted(value, key=str)]
+    if isinstance(value, str):
+        return _redact_sensitive_text(value, known_secret_values)
+    return value
 
 
 def normalize_detail_level(value: Any) -> str:
@@ -64,6 +198,25 @@ def effective_detail_level(bot_cfg: dict, ctx_data: dict) -> str:
     if sess is not None and str(sess).strip() != "":
         return normalize_detail_level(sess)
     return normalize_detail_level(bot_cfg.get("telegram_detail_level"))
+
+
+def normalize_execute_before_enabled(value: Any) -> bool:
+    if value is None:
+        return _DEFAULT_EXECUTE_BEFORE
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "on", "enable", "enabled")
+
+
+def effective_execute_before_enabled(bot_cfg: dict, ctx_data: dict) -> bool:
+    from usr.plugins.telegram_integration_voice.helpers.constants import (
+        CTX_TG_DETAIL_BEFORE_SESSION,
+    )
+
+    sess = ctx_data.get(CTX_TG_DETAIL_BEFORE_SESSION)
+    if sess is not None and str(sess).strip() != "":
+        return normalize_execute_before_enabled(sess)
+    return normalize_execute_before_enabled(bot_cfg.get("telegram_detail_execute_before"))
 
 
 def detail_throttle_sec(bot_cfg: dict, level: str) -> float:
@@ -177,6 +330,7 @@ def format_step_html(
     *,
     level: str = "info",
     tool_args: dict | None = None,
+    known_secret_values: list[str] | None = None,
 ) -> str:
     """Format tool-step status with icon + label.
 
@@ -196,10 +350,11 @@ def format_step_html(
     parts = [f"{icon_prefix}<b>{safe_name}</b>"]
 
     if tool_args is not None:
+        safe_tool_args = redact_sensitive(tool_args, known_secret_values)
         try:
-            args_json = json.dumps(tool_args, ensure_ascii=False, sort_keys=True, indent=2)
+            args_json = json.dumps(safe_tool_args, ensure_ascii=False, sort_keys=True, indent=2)
         except Exception:
-            args_json = str(tool_args)
+            args_json = _redact_sensitive_text(str(safe_tool_args), known_secret_values)
         max_chars = _max_body_chars(bot_cfg)
         args_json = _truncate_body(args_json, max_chars)
         parts.append(f"<blockquote><code>{html.escape(args_json)}</code></blockquote>")

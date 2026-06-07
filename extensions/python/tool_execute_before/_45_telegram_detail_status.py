@@ -14,10 +14,10 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
 )
 
 
-class TelegramDetailStatus(Extension):
-    """Send throttled HTML status lines after each tool (except response) when detail is info/debug."""
+class TelegramDetailStatusBefore(Extension):
+    """Optionally send throttled HTML status lines when a tool starts (except response)."""
 
-    async def execute(self, tool_name: str = "", response=None, **kwargs):
+    async def execute(self, tool_name: str = "", **kwargs):
         if not self.agent or self.agent.number != 0:
             return
         name = (tool_name or "").strip()
@@ -31,37 +31,27 @@ class TelegramDetailStatus(Extension):
         try:
             from usr.plugins.telegram_integration_voice.helpers.handler import (
                 _append_progress_line,
-                _refresh_progress_status,
                 _render_progress_status_html,
-                _set_progress_phase,
                 schedule_telegram_progress_update,
                 send_telegram_progress_update,
             )
 
             bot_cfg = context.data.get(CTX_TG_BOT_CFG) or {}
-            phase_changed = _set_progress_phase(context, None)
             level = ds.effective_detail_level(bot_cfg, context.data)
-            before_enabled = ds.effective_execute_before_enabled(bot_cfg, context.data)
             if level == "off":
                 context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
                 return
-            if name in ds.detail_exclude_set(bot_cfg):
-                if before_enabled and context.data.get(CTX_TG_DETAIL_ACTIVE_TOOL) == name:
-                    context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
-                if phase_changed:
-                    await _refresh_progress_status(context, bot_cfg, require_existing_message=True)
-                return
-            if before_enabled and context.data.get(CTX_TG_DETAIL_ACTIVE_TOOL) == name:
+            if not ds.effective_execute_before_enabled(bot_cfg, context.data):
                 context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
-                if phase_changed:
-                    await _refresh_progress_status(context, bot_cfg, require_existing_message=True)
+                return
+            if name in ds.detail_exclude_set(bot_cfg):
+                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
                 return
             interval = ds.detail_throttle_sec(bot_cfg, level)
             now = time.monotonic()
             last = context.data.get(CTX_TG_DETAIL_LAST_SENT_TS)
             if last is not None and (now - float(last)) < interval:
-                if phase_changed:
-                    await _refresh_progress_status(context, bot_cfg, require_existing_message=True)
+                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
                 return
 
             tool_args = None
@@ -88,7 +78,8 @@ class TelegramDetailStatus(Extension):
             _append_progress_line(context, line, bot_cfg)
             html_text = _render_progress_status_html(context, bot_cfg, done=False)
             context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now
+            context.data[CTX_TG_DETAIL_ACTIVE_TOOL] = name
             if not schedule_telegram_progress_update(context, html_text, text_is_html=True):
                 await send_telegram_progress_update(context, html_text, text_is_html=True)
         except Exception as e:
-            PrintStyle.warning(f"Telegram detail status: {format_error(e)}")
+            PrintStyle.warning(f"Telegram detail status before: {format_error(e)}")

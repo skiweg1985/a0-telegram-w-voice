@@ -10,6 +10,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "tool_execute_after" / "_50_telegram_response.py"
 DETAIL_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "tool_execute_after" / "_45_telegram_detail_status.py"
+DETAIL_BEFORE_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "tool_execute_before" / "_45_telegram_detail_status.py"
 CHAIN_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "process_chain_end" / "_55_telegram_reply.py"
 
 
@@ -111,9 +112,10 @@ def _install_stubs():
 
     detail_status = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.detail_status")
     detail_status.effective_detail_level = lambda bot_cfg, ctx_data: "info"
+    detail_status.effective_execute_before_enabled = lambda bot_cfg, ctx_data: False
     detail_status.detail_exclude_set = lambda bot_cfg: set()
     detail_status.detail_throttle_sec = lambda bot_cfg, level: 5.0
-    detail_status.format_step_html = lambda name, bot_cfg, level="info", tool_args=None: f"step:{name}"
+    detail_status.format_step_html = lambda name, bot_cfg, level="info", tool_args=None, known_secret_values=None: f"step:{name}"
     sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"] = detail_status
 
     handler = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.handler")
@@ -357,6 +359,103 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
             require_existing_message=True,
         )
         handler.send_telegram_progress_update.assert_not_awaited()
+
+    def test_detail_before_hook_sends_progress_line_when_enabled(self):
+        constants, handler = _install_stubs()
+        sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"].effective_execute_before_enabled = (
+            lambda bot_cfg, ctx_data: True
+        )
+        module = _load_module(DETAIL_BEFORE_HOOK_PATH, "telegram_detail_before_hook_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+                constants.CTX_TG_BOT_CFG: {},
+            },
+            log=_Log(),
+        )
+        ext = module.TelegramDetailStatusBefore()
+        ext.agent = types.SimpleNamespace(
+            context=context,
+            number=0,
+            loop_data=types.SimpleNamespace(current_tool=types.SimpleNamespace(args={})),
+        )
+
+        with mock.patch.object(module.time, "monotonic", return_value=10.0):
+            asyncio.run(ext.execute(tool_name="search_engine"))
+
+        handler._append_progress_line.assert_called_once_with(context, "step:search_engine", {})
+        handler.send_telegram_progress_update.assert_awaited_once_with(
+            context,
+            "<b>status</b>",
+            text_is_html=True,
+        )
+        self.assertEqual(context.data[constants.CTX_TG_DETAIL_ACTIVE_TOOL], "search_engine")
+
+    def test_detail_before_hook_throttle_does_not_set_dedupe_marker(self):
+        constants, handler = _install_stubs()
+        sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"].effective_execute_before_enabled = (
+            lambda bot_cfg, ctx_data: True
+        )
+        module = _load_module(DETAIL_BEFORE_HOOK_PATH, "telegram_detail_before_hook_throttle_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+                constants.CTX_TG_BOT_CFG: {},
+                constants.CTX_TG_DETAIL_LAST_SENT_TS: 9.5,
+                constants.CTX_TG_DETAIL_ACTIVE_TOOL: "previous_tool",
+            },
+            log=_Log(),
+        )
+        ext = module.TelegramDetailStatusBefore()
+        ext.agent = types.SimpleNamespace(
+            context=context,
+            number=0,
+            loop_data=types.SimpleNamespace(current_tool=types.SimpleNamespace(args={})),
+        )
+
+        with mock.patch.object(module.time, "monotonic", return_value=10.0):
+            asyncio.run(ext.execute(tool_name="search_engine"))
+
+        handler._append_progress_line.assert_not_called()
+        handler.send_telegram_progress_update.assert_not_awaited()
+        self.assertNotIn(constants.CTX_TG_DETAIL_ACTIVE_TOOL, context.data)
+
+    def test_detail_after_hook_skips_duplicate_line_when_before_hook_already_emitted_it(self):
+        constants, handler = _install_stubs()
+        sys.modules["usr.plugins.telegram_integration_voice.helpers.detail_status"].effective_execute_before_enabled = (
+            lambda bot_cfg, ctx_data: True
+        )
+        module = _load_module(DETAIL_HOOK_PATH, "telegram_detail_hook_dedupe_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+                constants.CTX_TG_BOT_CFG: {},
+                constants.CTX_TG_DETAIL_ACTIVE_TOOL: "search_engine",
+            },
+            log=_Log(),
+        )
+        ext = module.TelegramDetailStatus()
+        ext.agent = types.SimpleNamespace(
+            context=context,
+            number=0,
+            loop_data=types.SimpleNamespace(current_tool=types.SimpleNamespace(args={})),
+        )
+
+        asyncio.run(ext.execute(tool_name="search_engine"))
+
+        handler._append_progress_line.assert_not_called()
+        handler._refresh_progress_status.assert_awaited_once_with(
+            context,
+            {},
+            require_existing_message=True,
+        )
+        self.assertNotIn(constants.CTX_TG_DETAIL_ACTIVE_TOOL, context.data)
 
 
 if __name__ == "__main__":

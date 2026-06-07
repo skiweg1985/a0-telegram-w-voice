@@ -82,13 +82,15 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 ### Tool Status & Detail Level
 
 - `/detail` controls what appears in chat while tools are running: `off` (final answer only), `info` (throttled step lines), `verbose` (full tool detail).
+- `/detail_before` controls whether a tool-status line is already shown when a tool **starts**: `off` (default) or `on` for the current session.
 - Each step shows an **emoji icon and a human-readable label** (e.g. 🧠 for memory tools, 💻 for code execution). Icons and labels are configurable per tool.
 - Detail updates are sent as **in-place progress edits** — a single bubble is updated rather than a new message per step.
+- When `/detail_before on` is active, the same progress bubble can show the step already at tool start; duplicate completion-time lines are suppressed automatically.
 - Long debug payloads are truncated at a safe boundary before sending (`telegram_detail_max_body_chars`).
 
 ### Slash Commands & Inline Buttons
 
-- **Inline keyboards** on all mode-switching commands: `/detail`, `/voice`, `/optimize_output`, `/project`, `/model` — tap to switch without typing.
+- **Inline keyboards** on all mode-switching commands: `/detail`, `/detail_before`, `/voice`, `/optimize_output`, `/project`, `/model` — tap to switch without typing.
 - **Approve / Cancel flows**: the agent can present risky actions as inline keyboard choices; taps are fed back into the agent automatically.
 - **Unauthorized users** receive a clear, throttled reply with their Telegram user ID so they can request access.
 - **`/session` picker**: paginated list of saved sessions with inline navigation, details view, and **button-driven search** — tap Search, send a term, results filter inline.
@@ -114,6 +116,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/newchat` | New session; old chat stays in browser UI |
 | `/session` | Paginated session picker; `/session search <term>` or `/session <id>` to switch directly |
 | `/detail` | `off` / `info` / `verbose`, or no arg shows level + **inline buttons** |
+| `/detail_before` | `on` / `off`, or no arg shows current tool-start mode + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off`, or no arg shows current mode **with inline buttons** |
 | `/retry` | Re-run your last message |
@@ -138,6 +141,7 @@ bots:
     allowed_users: ["123456789"]
 
     telegram_detail_level: info                 # default; throttled step lines — set to off for final answer only
+    telegram_detail_execute_before: false       # default; set true to emit step lines already when tools start
     telegram_detail_info_min_interval_sec: 5
     telegram_detail_debug_min_interval_sec: 1.5
     telegram_detail_icons_enabled: true          # emoji prefix per step

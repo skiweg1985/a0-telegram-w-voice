@@ -82,7 +82,9 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_OUTPUT_OPTIMIZE,
     CTX_TG_VOICE_TEXT,
     CTX_TG_DETAIL_LEVEL_SESSION,
+    CTX_TG_DETAIL_BEFORE_SESSION,
     CTX_TG_DETAIL_LAST_SENT_TS,
+    CTX_TG_DETAIL_ACTIVE_TOOL,
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     CTX_TG_REPLY_ACTIONS_SESSION,
     TG_UI_CALLBACK_PREFIX,
@@ -418,9 +420,35 @@ def _actions_inline_keyboard() -> list[list[dict]]:
     ]
 
 
+def _detail_before_inline_keyboard() -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "On", "callback_data": f"{p}db|on"},
+            {"text": "Off", "callback_data": f"{p}db|off"},
+        ],
+    ]
+
+
 def _detail_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
     eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
     return detail_status.detail_level_display(eff)
+
+
+def _detail_before_status_text(enabled: bool) -> str:
+    return "on" if enabled else "off"
+
+
+def _apply_detail_before_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_DETAIL_BEFORE_SESSION] = "on"
+        return "Tool start updates: on — a detail line is shown when a tool starts in this session."
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_DETAIL_BEFORE_SESSION] = "off"
+        ctx.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
+        return "Tool start updates: off — execute-before detail lines are hidden for this session."
+    return "Usage: /detail_before [on|off]"
 
 
 def _apply_detail_level(ctx: AgentContext, bot_cfg: dict, arg: str) -> str:
@@ -1482,6 +1510,46 @@ async def handle_detail(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+async def handle_detail_before(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /detail_before — toggle execute-before tool status updates for the current session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        enabled = detail_status.effective_execute_before_enabled(bot_cfg, ctx.data)
+        reply = (
+            f"Tool start updates: {_detail_before_status_text(enabled)}.\n"
+            "Tap a button or type /detail_before on|off for this session."
+        )
+        kb = _detail_before_inline_keyboard()
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+            keyboard=kb,
+        )
+        return
+
+    reply = _apply_detail_before_setting(ctx, bot_cfg, arg)
+    save_tmp_chat(ctx)
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
 async def handle_optimize_output(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /optimize_output — session prompt style for voice vs text."""
     user = message.from_user
@@ -1722,10 +1790,12 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         also_eff = speech.effective_also_send_text(bot_cfg, ctx.data)
         det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
         det_eff_disp = detail_status.detail_level_display(det_eff)
+        before_eff = detail_status.effective_execute_before_enabled(bot_cfg, ctx.data)
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(opt_eff)}</code> · "
             f"also text <code>{'on' if also_eff else 'off'}</code> · "
-            f"tool detail <code>{esc(det_eff_disp)}</code>"
+            f"tool detail <code>{esc(det_eff_disp)}</code> · "
+            f"tool start <code>{'on' if before_eff else 'off'}</code>"
         )
 
         proj = projects.get_context_project_name(ctx)
@@ -1749,9 +1819,11 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
         def_det = detail_status.normalize_detail_level(bot_cfg.get("telegram_detail_level"))
         def_det_disp = detail_status.detail_level_display(def_det)
+        def_before = detail_status.normalize_execute_before_enabled(bot_cfg.get("telegram_detail_execute_before"))
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(speech.optimize_output_default(bot_cfg))}</code> · "
-            f"tool detail <code>{esc(def_det_disp)}</code>"
+            f"tool detail <code>{esc(def_det_disp)}</code> · "
+            f"tool start <code>{'on' if def_before else 'off'}</code>"
         )
 
     text = header + "\n\n" + "\n".join(lines)
@@ -2695,6 +2767,18 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 await query.answer("Unknown option.")
                 return
             reply = _apply_reply_actions_setting(context, bot_cfg, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            await _send_with_temp_bot(
+                token, chat_id, reply, parse_mode=None
+            )
+            return
+
+        if kind == "db":
+            if payload not in ("on", "off"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_detail_before_setting(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
             await _send_with_temp_bot(
