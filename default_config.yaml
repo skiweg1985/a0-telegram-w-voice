@@ -20,7 +20,7 @@ bots: []
 #
 #   # Tool-run status in chat (`smart` / `debug` may include redacted tool args)
 #   telegram_detail_level: info                 # off | info | smart | debug (verbose in chat) — default info; /detail can override per session
-#   telegram_detail_execute_before: false       # show the progress line already when a tool starts; /detail_before overrides per session
+#   telegram_detail_execute_before: true        # show the progress line when a tool starts; completion replaces that same line by default
 #   telegram_detail_info_min_interval_sec: 5    # (YAML only)
 #   telegram_detail_debug_min_interval_sec: 1.5 # (YAML only, used for smart/debug)
 #   telegram_detail_exclude_tools: []           # (YAML only)

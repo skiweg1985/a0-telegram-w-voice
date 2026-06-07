@@ -85,6 +85,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_DETAIL_BEFORE_SESSION,
     CTX_TG_DETAIL_LAST_SENT_TS,
     CTX_TG_DETAIL_ACTIVE_TOOL,
+    CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX,
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     CTX_TG_REPLY_ACTIONS_SESSION,
     TG_UI_CALLBACK_PREFIX,
@@ -3374,6 +3375,8 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_STREAM_DRAFT_ID, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_LAST_TS, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_ACTIVE, None)
+    context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
+    context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_USED, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_DISABLED, None)
     context.data.pop(CTX_TG_STREAM_PENDING_FULL, None)
@@ -3852,6 +3855,22 @@ def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
     if len(lines) > cap:
         lines = lines[-cap:]
     context.data[CTX_TG_PROGRESS_LINES] = lines
+    return len(lines) - 1
+
+
+def _replace_progress_line(context: AgentContext, index: int, line_html: str, bot_cfg: dict) -> bool:
+    if not line_html:
+        return False
+    try:
+        idx = int(index)
+    except (TypeError, ValueError):
+        return False
+    lines = list(context.data.get(CTX_TG_PROGRESS_LINES, []) or [])
+    if idx < 0 or idx >= len(lines):
+        return False
+    lines[idx] = str(line_html)
+    context.data[CTX_TG_PROGRESS_LINES] = lines
+    return True
 
 
 async def _send_initial_progress_status(context: AgentContext):

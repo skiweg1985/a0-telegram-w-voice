@@ -52,6 +52,9 @@ class NormalizeDetailLevelTests(unittest.TestCase):
     def test_unknown_value_falls_back_to_off(self):
         self.assertEqual(self.ds.normalize_detail_level("nonsense"), "off")
 
+    def test_missing_execute_before_defaults_to_on(self):
+        self.assertTrue(self.ds.normalize_execute_before_enabled(None))
+
 
 class DetailStatusRedactionTests(unittest.TestCase):
     def setUp(self):
@@ -156,6 +159,41 @@ class DetailStatusRedactionTests(unittest.TestCase):
         self.assertIn("[REDACTED]", seen["message"])
         self.assertIn("api_key=[REDACTED]", seen["message"])
         self.assertIn("token=[REDACTED]", seen["message"])
+
+    def test_smart_result_mode_redacts_secrets_before_utility_model_call(self):
+        seen = {}
+
+        async def call_utility_model(**kwargs):
+            seen.update(kwargs)
+            return "Completed safely"
+
+        agent = types.SimpleNamespace(call_utility_model=call_utility_model)
+        html = asyncio.run(
+            self.ds.format_step_result_html(
+                "code_execution",
+                {},
+                level="smart",
+                tool_args={"command": "curl -H 'Authorization: Bearer VerySecret123'"},
+                response=types.SimpleNamespace(message="token=VerySecret123\nDone"),
+                agent=agent,
+            )
+        )
+
+        self.assertIn("Completed safely", html)
+        self.assertNotIn("VerySecret123", seen["message"])
+        self.assertIn("[REDACTED]", seen["message"])
+
+    def test_debug_result_mode_includes_done_status_and_truncated_result(self):
+        html = self.ds.format_step_result_html(
+            "search_engine",
+            {"telegram_detail_max_body_chars": 200},
+            level="debug",
+            tool_args={"query": "status page"},
+            response=types.SimpleNamespace(message="x" * 400),
+        )
+
+        self.assertIn("<i>done</i>", html)
+        self.assertIn("&lt;&lt;", html)
 
 
 if __name__ == "__main__":

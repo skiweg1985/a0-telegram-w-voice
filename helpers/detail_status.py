@@ -11,7 +11,7 @@ from typing import Any
 
 DETAIL_LEVELS = frozenset({"off", "info", "smart", "debug"})
 _DEFAULT_DETAIL_LEVEL = "info"
-_DEFAULT_EXECUTE_BEFORE = False
+_DEFAULT_EXECUTE_BEFORE = True
 
 _DEFAULT_ICONS: dict[str, str] = {
     "memory_load": "\U0001f9e0",
@@ -382,6 +382,102 @@ async def _format_step_html_smart(
     return f"{icon_prefix}{html.escape(text)}"
 
 
+def _response_message_text(response: Any | None) -> str:
+    if response is None:
+        return ""
+    message = getattr(response, "message", response)
+    return str(message or "").strip()
+
+
+def _response_looks_like_error(response: Any | None, error_text: str = "") -> bool:
+    if error_text.strip():
+        return True
+    text = _response_message_text(response).lower()
+    if not text:
+        return False
+    prefixes = (
+        "error:",
+        "failed:",
+        "failure:",
+        "exception:",
+    )
+    tokens = (
+        " failed",
+        " failure",
+        " exception",
+        " traceback",
+        "timed out",
+        "timeout",
+        "invalid ",
+        "not found",
+        "could not ",
+        "unable to ",
+    )
+    if text.startswith(prefixes):
+        return True
+    return any(token in text for token in tokens)
+
+
+async def _format_step_result_html_smart(
+    tool_name: str,
+    bot_cfg: dict,
+    *,
+    tool_args: dict | None = None,
+    response: Any | None = None,
+    error_text: str = "",
+    known_secret_values: list[str] | None = None,
+    agent: Any | None = None,
+) -> str:
+    labels = detail_tool_labels(bot_cfg)
+    label = labels.get(tool_name, tool_name)
+    icon = step_icon_for_tool(tool_name, bot_cfg)
+    icon_prefix = f"{icon} " if icon else ""
+    safe_label = html.escape(str(label))
+
+    if agent is None or not hasattr(agent, "call_utility_model"):
+        status = "failed" if _response_looks_like_error(response, error_text) else "done"
+        return f"{icon_prefix}{safe_label} {status}"
+
+    safe_tool_args = redact_sensitive(tool_args, known_secret_values) if tool_args is not None else None
+    result_text = error_text.strip() or _response_message_text(response)
+    safe_result = _redact_sensitive_text(result_text, known_secret_values)
+    body_limit = min(_max_body_chars(bot_cfg), 1200)
+    try:
+        args_json = json.dumps(safe_tool_args, ensure_ascii=False, sort_keys=True, indent=2) if safe_tool_args is not None else "{}"
+    except Exception:
+        args_json = _redact_sensitive_text(str(safe_tool_args), known_secret_values)
+    args_json = _truncate_body(args_json, max(200, body_limit // 2))
+    safe_result = _truncate_body(safe_result, max(200, body_limit // 2))
+
+    outcome = "failed" if _response_looks_like_error(response, error_text) else "completed"
+    system = (
+        "You summarize completed tool activity for a Telegram progress bubble. "
+        "Return exactly one short plain-text line, max 160 characters. "
+        "Focus on the user-visible outcome, not implementation details. "
+        "Do not mention JSON, redaction, secrets, or internal formatting."
+    )
+    message = (
+        f"Tool: {tool_name}\n"
+        f"Label: {label}\n"
+        f"Outcome: {outcome}\n"
+        f"Arguments:\n{args_json}\n\n"
+        f"Result:\n{safe_result or '(empty result)'}\n\n"
+        "Write one concise status line for the user."
+    )
+    try:
+        summary = await agent.call_utility_model(system=system, message=message, background=True)
+    except Exception:
+        summary = ""
+
+    text = str(summary or "").strip()
+    if not text:
+        return f"{icon_prefix}{safe_label} {outcome}"
+    text = re.sub(r"\s+", " ", text).strip(" -•\n\t")
+    if len(text) > 160:
+        text = text[:157].rstrip() + "..."
+    return f"{icon_prefix}{html.escape(text)}"
+
+
 def format_step_html(
     tool_name: str,
     bot_cfg: dict,
@@ -427,5 +523,76 @@ def format_step_html(
         max_chars = _max_body_chars(bot_cfg)
         args_json = _truncate_body(args_json, max_chars)
         parts.append(f"<blockquote><code>{html.escape(args_json)}</code></blockquote>")
+
+    return "\n".join(parts)
+
+
+def format_step_result_html(
+    tool_name: str,
+    bot_cfg: dict,
+    *,
+    level: str = "info",
+    tool_args: dict | None = None,
+    response: Any | None = None,
+    error_text: str = "",
+    known_secret_values: list[str] | None = None,
+    agent: Any | None = None,
+) -> str | Any:
+    """Format the completion-time tool status line.
+
+    - info: icon + label + done/failed
+    - smart: utility-model summary using args + result text
+    - debug: icon + tool name + args + truncated result payload
+    """
+    labels = detail_tool_labels(bot_cfg)
+    label = labels.get(tool_name, tool_name)
+    icon = step_icon_for_tool(tool_name, bot_cfg)
+    icon_prefix = f"{icon} " if icon else ""
+    is_error = _response_looks_like_error(response, error_text)
+
+    if level == "smart":
+        return _format_step_result_html_smart(
+            tool_name,
+            bot_cfg,
+            tool_args=tool_args,
+            response=response,
+            error_text=error_text,
+            known_secret_values=known_secret_values,
+            agent=agent,
+        )
+
+    if level != "debug":
+        safe = html.escape(str(label))
+        suffix = "failed" if is_error else "done"
+        return f"{icon_prefix}{safe} {suffix}"
+
+    safe_name = html.escape(str(tool_name))
+    status = "failed" if is_error else "done"
+    parts = [f"{icon_prefix}<b>{safe_name}</b> <i>{status}</i>"]
+
+    result_text = error_text.strip() or _response_message_text(response)
+    max_chars = _max_body_chars(bot_cfg)
+    shared_budget = max_chars
+    args_budget = shared_budget
+    result_budget = shared_budget
+    if tool_args is not None and result_text:
+        args_budget = max(200, shared_budget // 2)
+        result_budget = max(200, shared_budget - args_budget)
+
+    if tool_args is not None:
+        safe_tool_args = redact_sensitive(tool_args, known_secret_values)
+        try:
+            args_json = json.dumps(safe_tool_args, ensure_ascii=False, sort_keys=True, indent=2)
+        except Exception:
+            args_json = _redact_sensitive_text(str(safe_tool_args), known_secret_values)
+        args_json = _truncate_body(args_json, args_budget)
+        parts.append(f"<blockquote><code>{html.escape(args_json)}</code></blockquote>")
+
+    if result_text:
+        result_body = _truncate_body(
+            _redact_sensitive_text(result_text, known_secret_values),
+            result_budget,
+        )
+        parts.append(f"<blockquote>{html.escape(result_body)}</blockquote>")
 
     return "\n".join(parts)

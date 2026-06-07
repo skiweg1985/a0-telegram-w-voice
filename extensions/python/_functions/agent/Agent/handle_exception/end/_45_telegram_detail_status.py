@@ -1,5 +1,5 @@
-import time
 import inspect
+import time
 
 from helpers.extension import Extension
 from helpers.errors import format_error
@@ -16,24 +16,26 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
 )
 
 
-class TelegramDetailStatusBefore(Extension):
-    """Optionally send throttled HTML status lines when a tool starts (except response)."""
+class TelegramDetailStatusException(Extension):
+    """Replace the active tool-start line with a failure line when a tool raises."""
 
-    async def execute(self, tool_name: str = "", **kwargs):
+    async def execute(self, data: dict | None = None, **kwargs):
         if not self.agent or self.agent.number != 0:
-            return
-        name = (tool_name or "").strip()
-        if not name or name == "response":
             return
         context = self.agent.context
         if not context:
             return
         if not context.data.get(CTX_TG_BOT) or not context.data.get(CTX_TG_CHAT_ID):
             return
+        active_tool = str(context.data.get(CTX_TG_DETAIL_ACTIVE_TOOL) or "").strip()
+        if not active_tool:
+            return
         try:
             from usr.plugins.telegram_integration_voice.helpers.handler import (
                 _append_progress_line,
+                _replace_progress_line,
                 _render_progress_status_html,
+                _set_progress_phase,
                 schedule_telegram_progress_update,
                 send_telegram_progress_update,
             )
@@ -44,52 +46,44 @@ class TelegramDetailStatusBefore(Extension):
                 context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
                 context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX, None)
                 return
-            if not ds.effective_execute_before_enabled(bot_cfg, context.data):
-                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
-                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX, None)
-                return
-            if name in ds.detail_exclude_set(bot_cfg):
-                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
-                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX, None)
-                return
-            interval = ds.detail_throttle_sec(bot_cfg, level)
-            now = time.monotonic()
-            last = context.data.get(CTX_TG_DETAIL_LAST_SENT_TS)
-            if last is not None and (now - float(last)) < interval:
-                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
-                context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX, None)
-                return
 
-            tool_args = None
+            exc = (data or {}).get("exception")
+            error_text = format_error(exc) if exc else "Tool execution failed."
             known_secret_values = None
             if level in {"debug", "smart"}:
-                try:
-                    current_tool = self.agent.loop_data.current_tool if self.agent else None
-                    if current_tool is not None:
-                        tool_args = getattr(current_tool, "args", None)
-                except Exception:
-                    tool_args = None
                 try:
                     known_secret_values = ds.collect_known_secret_values(bot_cfg, self.agent)
                 except Exception:
                     known_secret_values = None
 
-            line = ds.format_step_html(
-                name,
+            line = ds.format_step_result_html(
+                active_tool,
                 bot_cfg,
                 level=level,
-                tool_args=tool_args,
+                response=None,
+                error_text=error_text,
                 known_secret_values=known_secret_values,
                 agent=self.agent,
             )
             if inspect.isawaitable(line):
                 line = await line
-            line_index = _append_progress_line(context, line, bot_cfg)
+
+            replaced = _replace_progress_line(
+                context,
+                context.data.get(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX),
+                line,
+                bot_cfg,
+            )
+            if not replaced:
+                _append_progress_line(context, line, bot_cfg)
+
+            _set_progress_phase(context, None)
+            context.data[CTX_TG_DETAIL_LAST_SENT_TS] = time.monotonic()
+            context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL, None)
+            context.data.pop(CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX, None)
+
             html_text = _render_progress_status_html(context, bot_cfg, done=False)
-            context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now
-            context.data[CTX_TG_DETAIL_ACTIVE_TOOL] = name
-            context.data[CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX] = line_index
             if not schedule_telegram_progress_update(context, html_text, text_is_html=True):
                 await send_telegram_progress_update(context, html_text, text_is_html=True)
         except Exception as e:
-            PrintStyle.warning(f"Telegram detail status before: {format_error(e)}")
+            PrintStyle.warning(f"Telegram detail status exception hook failed: {format_error(e)}")

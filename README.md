@@ -82,10 +82,10 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 ### Tool Status & Detail Level
 
 - `/detail` controls what appears in chat while tools are running: `off` (final answer only), `info` (throttled step lines), `smart` (utility-model summary), `verbose` (full tool detail).
-- `/detail_before` controls whether a tool-status line is already shown when a tool **starts**: `off` (default) or `on` for the current session.
+- `/detail_before` controls whether a tool-status line is already shown when a tool **starts**: `on` (default) or `off` for the current session.
 - Each step shows an **emoji icon and a human-readable label** (e.g. 🧠 for memory tools, 💻 for code execution). Icons and labels are configurable per tool.
 - Detail updates are sent as **in-place progress edits** — a single bubble is updated rather than a new message per step.
-- When `/detail_before on` is active, the same progress bubble can show the step already at tool start; duplicate completion-time lines are suppressed automatically.
+- When `/detail_before on` is active, the same progress bubble shows the step at tool start and then replaces that line with the completion-time outcome.
 - Long debug payloads are truncated at a safe boundary before sending (`telegram_detail_max_body_chars`).
 
 ### Slash Commands & Inline Buttons
@@ -148,7 +148,7 @@ bots:
     allowed_users: ["123456789"]
 
     telegram_detail_level: info                 # off | info | smart | debug (verbose alias in chat)
-    telegram_detail_execute_before: false       # default; set true to emit step lines already when tools start
+    telegram_detail_execute_before: true        # default; set false to hide tool-start lines and only show completion-time detail
     telegram_detail_info_min_interval_sec: 5
     telegram_detail_debug_min_interval_sec: 1.5
     telegram_detail_icons_enabled: true          # emoji prefix per step

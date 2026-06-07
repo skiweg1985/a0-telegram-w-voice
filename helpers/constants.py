@@ -85,6 +85,7 @@ CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"
 
 # Transient marker for the last tool whose detail line was already emitted in execute-before.
 CTX_TG_DETAIL_ACTIVE_TOOL = "_telegram_detail_active_tool"
+CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX = "_telegram_detail_active_tool_line_index"
 
 # Last response tool: optional separate string for TTS only (transient, "_" prefix = not persisted).
 CTX_TG_VOICE_TEXT = "_telegram_response_voice_text"
