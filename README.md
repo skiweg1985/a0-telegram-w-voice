@@ -91,6 +91,8 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 ### Slash Commands & Inline Buttons
 
 - **Inline keyboards** on all mode-switching commands: `/detail`, `/detail_before`, `/voice`, `/optimize_output`, `/project`, `/model` — tap to switch without typing.
+- `/title` sets a manual title for the current session, or `/title auto` returns to automatic naming.
+- `/actions` toggles the per-reply **More** menu for the current session.
 - **Approve / Cancel flows**: the agent can present risky actions as inline keyboard choices; taps are fed back into the agent automatically.
 - **Unauthorized users** receive a clear, throttled reply with their Telegram user ID so they can request access.
 - **`/session` picker**: paginated list of saved sessions with inline navigation, details view, and **button-driven search** — tap Search, send a term, results filter inline.
@@ -100,7 +102,10 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 ### WebUI
 
 - Per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`) directly in the plugin settings UI.
+- The WebUI currently exposes **Off**, **Info**, and **Verbose** for the default tool-detail level. `smart` is still available via YAML (`telegram_detail_level: smart`) or per-session with `/detail smart`.
 - **Walkie-talkie preset** button for quick voice-oriented configuration.
+- **Quick action buttons** can be enabled/disabled in the WebUI, including the voice-only **Show text** button.
+- **Update from Git** and **Test Connection** actions are available in the WebUI for Git-based installs and token checks.
 - Operator-only tuning (detail throttling, icon overrides, progress timing, STT/TTS endpoint details) is YAML-only — no visual clutter in the UI.
 
 ---
@@ -115,6 +120,8 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/clear` | Reset conversation history (same context) |
 | `/newchat` | New session; old chat stays in browser UI |
 | `/session` | Paginated session picker; `/session search <term>` or `/session <id>` to switch directly |
+| `/title` | Set a manual session title, or `/title auto` to restore automatic naming |
+| `/actions` | Toggle the per-reply **More** menu for this session |
 | `/detail` | `off` / `info` / `smart` / `verbose`, or no arg shows level + **inline buttons** |
 | `/detail_before` | `on` / `off`, or no arg shows current tool-start mode + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
@@ -179,6 +186,9 @@ bots:
         optimize_output_default: off   # off | voice | text | auto — new sessions; /optimize_output overrides
         voice_mode: auto               # off | auto | voice_only | voice_text | text_only
         max_chars: 700
+        quick_actions:
+          enabled: true                # default for the per-reply More menu; /actions overrides per session
+          show_text: true              # in voice-only replies, allow revealing the text on demand
 ```
 
 ## Session behavior
@@ -186,9 +196,11 @@ bots:
 - `/clear` resets the currently active session history.
 - `/newchat` creates a fresh session and keeps older sessions available in Agent Zero/browser history.
 - `/session` opens a paginated picker for saved sessions from the same Telegram bot + user + chat. Supports inline details navigation and **button-driven search**: tap Search, send a search term, and results filter inline without typing a command.
+- `/title` sets a manual session name on the current chat context; `/title auto` clears the manual lock and returns to automatic naming.
 - `/topic [name]` opens or resumes a named thread within the same chat; without a name it lists existing topics.
 - Session switching is scoped to the same Telegram bot, Telegram user, and Telegram chat for safety.
 - When a reply is delivered as voice without a visible text bubble, the optional `📝 Show text` quick action can reveal the text version on demand, including `auto` after voice input.
+- `/actions on|off` controls whether the per-reply **More** menu is shown in the current session; the bot default comes from `speech.reply.quick_actions.enabled`.
 
 ## Notes
 
@@ -197,6 +209,7 @@ bots:
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
 - **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, and `/model` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
+- The WebUI's **Tool Status Detail** dropdown currently does not expose `smart`; use YAML or `/detail smart` if you want utility-model summaries by default or in the current session.
 - **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
 - Publishing to the Plugin Index: use `name` without a leading underscore; see `packaging/plugin-index/index.yaml.example` for an `a0-plugins` PR template.
 

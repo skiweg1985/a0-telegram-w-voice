@@ -1,5 +1,7 @@
 # Telegram UX Enhancements Implementation Plan
 
+> **Historical planning note:** This implementation plan predates several shipped UX features and no longer describes the exact current command set or configuration surface. Treat it as background context only; verify current behavior in `README.md`, `default_config.yaml`, and the code.
+
 > Focus branch: `feat/telegram-ux-enhancements`
 
 **Goal:** Make the Telegram plugin feel more like a modern mobile agent client with better contextual replies, smoother voice conversations, and visible live progress.
