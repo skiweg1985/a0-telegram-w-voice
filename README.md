@@ -95,7 +95,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 - `/actions` toggles the per-reply **More** menu for the current session.
 - **Approve / Cancel flows**: the agent can present risky actions as inline keyboard choices; taps are fed back into the agent automatically.
 - **Unauthorized users** receive a clear, throttled reply with their Telegram user ID so they can request access.
-- **`/session` picker**: paginated list of saved sessions with inline navigation, details view, **button-driven search** (tap Search, send a term, results filter inline) and a **🗑 Delete** action that removes the on-disk chat file (a fresh new session is started automatically when deleting the active one).
+- **`/session` picker**: paginated list of saved sessions with inline navigation, details view (with a 📝 Summary block of the most recent turns), **button-driven search** (tap Search, send a term, results filter inline) and a **🗑 Delete** action that removes the on-disk chat file (a fresh new session is started automatically when deleting the active one).
 - `/retry` re-runs your last message; `/undo` drops the last exchange (your message and the agent's reply) from session history.
 - `/topic [name]` opens a named conversation thread in the same chat, or lists existing topics without a name.
 
@@ -130,6 +130,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/undo` | Drop the last exchange from session history |
 | `/topic` | Start or list named conversation threads |
 | `/compact` | Compress history (utility LLM) |
+| `/shortcut` | `shorter` / `longer` rewrite the last answer; `summary` delivers a utility-LLM session summary as a separate message |
 | `/stop` | Abort running task |
 | `/project` | Active + available projects + **buttons**; or `/project <name>` |
 | `/model` | Show current model + **preset buttons**; or `/model <preset>` |
@@ -202,6 +203,7 @@ bots:
 - When a reply is delivered as voice without a visible text bubble, the optional `📝 Show text` quick action can reveal the text version on demand, including `auto` after voice input.
 - `/actions on|off` controls whether the per-reply **More** menu is shown in the current session; the bot default comes from `speech.reply.quick_actions.enabled`.
 - From the `/session` picker, open a session's details and tap **🗑 Delete** to remove the chat file. The active session can also be deleted — a fresh new session is started automatically afterwards. Deletion is **button-driven** (no `/session delete` text command) and applies to bound sessions plus any unbound web session whose `CTX_TG_USER_ID` matches the current Telegram user.
+- The picker details view also shows a 📝 **Summary** block (4 short recent-turn lines, deterministic — no LLM) so you can see at a glance what a session was about without opening it. Use `/shortcut summary` on the active session to get a fuller, utility-LLM-generated summary in a separate message.
 
 ## Notes
 

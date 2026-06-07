@@ -215,6 +215,29 @@ def _install_stub_modules():
     errors.format_error = lambda e: str(e)
     sys.modules["helpers.errors"] = errors
 
+    detail_status = types.ModuleType("helpers.detail_status")
+
+    def _redact_secrets_text(value, _known=None):
+        if not isinstance(value, str):
+            return value
+        import re as _re
+        text = value
+        # Substitutes the secret values from the test, mirroring the regex-based
+        # redaction logic in helpers/detail_status.py closely enough for unit tests.
+        patterns = [
+            (r"(?i)(api[_-]?key\s*=\s*)([^\s,'\"`]+)", r"\1[REDACTED]"),
+            (r"(?i)(password\s*=\s*)([^\s,'\"`]+)", r"\1[REDACTED]"),
+            (r"(?i)(token\s*=\s*)([^\s,'\"`]+)", r"\1[REDACTED]"),
+            (r"(?i)(secret\s*=\s*)([^\s,'\"`]+)", r"\1[REDACTED]"),
+        ]
+        for pat, repl in patterns:
+            text = _re.sub(pat, repl, text)
+        return text
+
+    detail_status.redact_sensitive = _redact_secrets_text
+    sys.modules["helpers.detail_status"] = detail_status
+    helpers_pkg.detail_status = detail_status
+
     state_monitor = types.ModuleType("helpers.state_monitor_integration")
     state_monitor.mark_dirty_all = lambda *args, **kwargs: None
     sys.modules["helpers.state_monitor_integration"] = state_monitor
@@ -1483,8 +1506,8 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx = _DummyAgentContext(name="Shipping dashboard")
         ctx.data[handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN] = "resp123"
         query = types.SimpleNamespace(
-            from_user=types.SimpleNamespace(id=42, username="benji"),
-            data=f"{handler.TG_UI_CALLBACK_PREFIX}ra|technical:resp123",
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ra|longer:resp123",
             message=types.SimpleNamespace(
                 message_id=77,
                 chat=types.SimpleNamespace(id=99, type="private"),
@@ -1764,7 +1787,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         rows = keyboard["inline_keyboard"]
         self.assertEqual(rows[0][0]["text"], "📝 Show text")
         self.assertEqual(rows[1][0]["text"], "✂️ Shorter")
-        self.assertEqual(rows[1][1]["text"], "🛠 More technical")
+        self.assertEqual(rows[1][1]["text"], "📏 Longer")
         self.assertEqual(rows[2][0]["text"], "🎙 To voice")
         self.assertEqual(rows[3][0]["text"], "⬅ Back")
 
@@ -2325,6 +2348,303 @@ class TelegramSessionPickerTests(unittest.TestCase):
         kwargs = show_details.await_args.kwargs
         self.assertEqual(kwargs["meta"]["id"], "abc")
         self.assertEqual(removed, [])
+
+    # --- Response transform + /shortcut + picker summary -----------------
+
+    def test_response_transform_specs_only_contain_shorter_and_longer(self):
+        """Hard migration: no more 'technical' or 'step_by_step'."""
+        handler = self.handler
+        actions = set(handler._RESPONSE_TRANSFORM_SPECS.keys())
+        self.assertEqual(actions, {"shorter", "longer"})
+        self.assertEqual(handler._RESPONSE_TRANSFORM_SPECS["shorter"]["button"], "✂️ Shorter")
+        self.assertEqual(handler._RESPONSE_TRANSFORM_SPECS["longer"]["button"], "📏 Longer")
+        self.assertIn("shorter", handler._RESPONSE_TRANSFORM_SPECS["shorter"]["instruction"].lower())
+        self.assertIn("longer", handler._RESPONSE_TRANSFORM_SPECS["longer"]["instruction"].lower())
+        # Spec lookup case-insensitive
+        self.assertIsNotNone(handler._response_transform_spec("LONGER"))
+        self.assertIsNotNone(handler._response_transform_spec("shorter"))
+        # Old actions must not be available anymore
+        self.assertIsNone(handler._response_transform_spec("technical"))
+        self.assertIsNone(handler._response_transform_spec("step_by_step"))
+        self.assertIsNone(handler._response_transform_spec("more_technical"))
+
+    def test_response_more_keyboard_contains_shorter_and_longer_only(self):
+        """More-menu keyboard: Shorter + Longer + To voice + Back, no Step by step / More technical."""
+        handler = self.handler
+        rows = handler._response_more_keyboard("tok123", include_show_text=False)
+        flat = [btn for row in rows for btn in row]
+        texts = [b["text"] for b in flat]
+        # Expected order: Shorter, Longer, To voice, Back
+        self.assertEqual(texts, ["✂️ Shorter", "📏 Longer", "🎙 To voice", "⬅ Back"])
+        # The Shorter + Longer callbacks must point to the new spec names
+        shorter_btn = next(b for b in flat if b["text"] == "✂️ Shorter")
+        longer_btn = next(b for b in flat if b["text"] == "📏 Longer")
+        self.assertIn("shorter:tok123", shorter_btn["callback_data"])
+        self.assertIn("longer:tok123", longer_btn["callback_data"])
+        # Make sure no legacy transform leaked into the keyboard
+        for b in flat:
+            self.assertNotIn("technical", b["callback_data"])
+            self.assertNotIn("step_by_step", b["callback_data"])
+
+    def test_extract_recent_session_summary_returns_short_topic_style_lines(self):
+        """Smart extract for the picker: max 4-5 lines, recent log items, single line per item."""
+        handler = self.handler
+        meta = {
+            "id": "abc",
+            "log": {
+                "logs": [
+                    {"type": "user", "content": "Hi! Can you help me debug the printer setup?"},
+                    {"type": "assistant", "content": "Sure. What model is it?"},
+                    {"type": "user", "content": "PRTG multi-function.\nIt keeps dropping offline."},
+                    {"type": "assistant", "content": "Let's check the network."},
+                    {"type": "tool", "content": "network_diag ok"},
+                    {"type": "user", "content": "How long should this take?"},
+                ]
+            },
+        }
+        text = handler._extract_recent_session_summary(meta, max_lines=4)
+        # 4 lines
+        self.assertEqual(len(text.splitlines()), 4)
+        # Each line starts with an icon
+        for line in text.splitlines():
+            self.assertTrue(line.startswith(("👤", "🤖", "🔧", "·")))
+        # Last line should be the most recent user message
+        self.assertIn("How long should this take?", text.splitlines()[-1])
+        # Multi-line content was collapsed to the first line
+        self.assertNotIn("It keeps dropping offline.", text)
+        # Truncation marker is added for very long lines
+        long_content = "x" * 200
+        long_meta = {
+            "log": {
+                "logs": [{"type": "user", "content": long_content}],
+            }
+        }
+        long_text = handler._extract_recent_session_summary(long_meta, max_chars_per_line=80)
+        self.assertIn("…", long_text)
+
+    def test_extract_recent_session_summary_handles_empty_log(self):
+        handler = self.handler
+        self.assertEqual(handler._extract_recent_session_summary({"log": {}}), "")
+        self.assertEqual(handler._extract_recent_session_summary({"log": {"logs": []}}), "")
+        self.assertEqual(handler._extract_recent_session_summary({}), "")
+
+    def test_session_details_text_includes_summary_replacing_topic(self):
+        """Picker details view: 📝 Summary: line replaces the old Topic: line, drawn from recent log."""
+        handler = self.handler
+        meta = {
+            "id": "abc",
+            "display_name": "Old chat",
+            "telegram_binding": "bound",
+            "created_at": "2026-01-01T00:00:00",
+            "last_message": "2026-01-02T00:00:00",
+            "message_count": 5,
+            "data": {},
+            "log": {
+                "logs": [
+                    {"type": "user", "content": "Help me with X"},
+                    {"type": "assistant", "content": "What about X?"},
+                    {"type": "user", "content": "It's broken"},
+                ]
+            },
+        }
+        text = handler._session_details_text(meta, active_ctx_id=None)
+        self.assertIn("📝 Summary:", text)
+        self.assertIn("Help me with X", text)
+        self.assertNotIn("Topic:", text)
+
+    def test_session_llm_summary_calls_utility_model_and_redacts_secrets(self):
+        """`/shortcut summary` must use the utility LLM and redact secrets before sending."""
+        handler = self.handler
+        agent = types.SimpleNamespace()
+        seen = {}
+
+        async def call_utility_model(**kwargs):
+            seen.update(kwargs)
+            return "TL;DR — user asked about X, agent helped, currently blocked on Y."
+
+        agent.call_utility_model = call_utility_model
+        ctx = types.SimpleNamespace(
+            id="ctx-1",
+            name="PRTG debug",
+            agent0=agent,
+        )
+        logs = [
+            {"type": "user", "content": "My api_key=sk-LIVE-SECRET-1234567 is broken"},
+            {"type": "assistant", "content": "Did you try resetting it?"},
+        ]
+
+        async def _load_logs():
+            return logs
+
+        # Patch the helper to return our fixture logs
+        with mock.patch.object(handler, "_session_log_items", return_value=logs):
+            summary = asyncio.run(handler._session_llm_summary(ctx))
+
+        self.assertIn("TL;DR", summary)
+        self.assertIn("system", seen)
+        self.assertIn("message", seen)
+        self.assertIn("api_key=[REDACTED]", seen["message"])
+        self.assertNotIn("sk-LIVE-SECRET-1234567", seen["message"])
+        self.assertIn("PRTG debug", seen["message"])
+
+    def test_session_llm_summary_returns_empty_when_no_log(self):
+        handler = self.handler
+        agent = types.SimpleNamespace()
+        called = {"n": 0}
+
+        async def call_utility_model(**kwargs):
+            called["n"] += 1
+            return "should not be called"
+
+        agent.call_utility_model = call_utility_model
+        ctx = types.SimpleNamespace(id="ctx-1", name="empty", agent0=agent)
+
+        with mock.patch.object(handler, "_session_log_items", return_value=[]):
+            summary = asyncio.run(handler._session_llm_summary(ctx))
+
+        self.assertEqual(summary, "")
+        self.assertEqual(called["n"], 0)
+
+    def test_handle_shortcut_without_subcommand_shows_usage(self):
+        handler = self.handler
+        message = types.SimpleNamespace(
+            text="/shortcut",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
+        self.assertTrue(any("Usage" in str(a[2]) for a, _ in sent))
+
+    def test_handle_shortcut_shorter_triggers_transform_with_last_answer(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="PRTG debug")
+        ctx.data = {handler.CTX_TG_LAST_TEXT_RESPONSE: "Long answer here."}
+        message = types.SimpleNamespace(
+            text="/shortcut shorter",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+        )
+        dispatched = []
+
+        async def _fake_dispatch(c, **kwargs):
+            dispatched.append((c, kwargs))
+            return None
+
+        sent = []
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_get_existing_context", return_value=ctx), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=mock.AsyncMock(side_effect=_fake_dispatch)) as dispatch:
+            asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
+
+        # A turn was dispatched against the active context
+        dispatch.assert_awaited_once()
+        kwargs = dispatch.await_args.kwargs
+        self.assertIs(kwargs["bot_token"], "tok")
+        self.assertEqual(kwargs["chat_id"], 99)
+        self.assertIn("Long answer here.", kwargs["body"])
+        self.assertIn("Instruction:", kwargs["body"])
+        self.assertIn("shorter", kwargs["source"])
+        # Ack notice was sent
+        self.assertTrue(any("Shortening" in str(a[2]) for a, _ in sent))
+
+    def test_handle_shortcut_longer_triggers_transform(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {handler.CTX_TG_LAST_TEXT_RESPONSE: "Short answer."}
+        message = types.SimpleNamespace(
+            text="/shortcut longer",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+        )
+        sent = []
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_get_existing_context", return_value=ctx), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=mock.AsyncMock()) as dispatch:
+            asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
+        dispatch.assert_awaited_once()
+        self.assertIn("Short answer.", dispatch.await_args.kwargs["body"])
+        self.assertIn("longer", dispatch.await_args.kwargs["source"])
+        self.assertTrue(any("Expanding" in str(a[2]) for a, _ in sent))
+
+    def test_handle_shortcut_shorter_without_last_answer_replies(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/shortcut shorter",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+        )
+        sent = []
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_get_existing_context", return_value=ctx), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=mock.AsyncMock()) as dispatch:
+            asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
+        # No dispatch, friendly notice instead
+        dispatch.assert_not_awaited()
+        self.assertTrue(any("No previous answer" in str(a[2]) for a, _ in sent))
+
+    def test_handle_shortcut_summary_sends_llm_summary_as_separate_message(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="PRTG debug")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/shortcut summary",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+        )
+        sent = []
+
+        async def _fake_summary(_ctx):
+            return "TL;DR: agent helped with PRTG; current state: printer back online."
+
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_get_existing_context", return_value=ctx), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_session_llm_summary", new=mock.AsyncMock(side_effect=_fake_summary)):
+            asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
+
+        # Two messages: "summarizing…" notice + the actual summary
+        texts = [str(a[2]) for a, _ in sent]
+        self.assertEqual(len(texts), 2)
+        self.assertIn("Summarizing", texts[0])
+        self.assertIn("Session summary", texts[1])
+        self.assertIn("TL;DR: agent helped with PRTG", texts[1])
+
+    def test_handle_shortcut_summary_without_context_replies(self):
+        handler = self.handler
+        message = types.SimpleNamespace(
+            text="/shortcut summary",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+        )
+        sent = []
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_get_existing_context", return_value=None), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
+        self.assertTrue(any("No active session" in str(a[2]) for a, _ in sent))
+
+    def test_handle_shortcut_unknown_subcommand_replies_with_usage(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        message = types.SimpleNamespace(
+            text="/shortcut banana",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+        )
+        sent = []
+        with mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "_get_existing_context", return_value=ctx), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            asyncio.run(handler.handle_shortcut(message, "mainbot", {}))
+        self.assertTrue(any("Unknown shortcut" in str(a[2]) for a, _ in sent))
 
 
 if __name__ == "__main__":

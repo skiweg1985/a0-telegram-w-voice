@@ -58,6 +58,7 @@ class TelegramBotManager(Extension):
         handle_detail_before = getattr(_tg_handler, "handle_detail_before", None)
         handle_status = _tg_handler.handle_status
         handle_compact = _tg_handler.handle_compact
+        handle_shortcut = getattr(_tg_handler, "handle_shortcut", None)
         handle_stop = _tg_handler.handle_stop
         handle_pause = _tg_handler.handle_pause
         handle_resume = _tg_handler.handle_resume
@@ -159,6 +160,11 @@ class TelegramBotManager(Extension):
                     else None
                 )
                 _on_compact = partial(_make_handler(handle_compact), bot_name=name, bot_cfg=bot_cfg)
+                _on_shortcut = (
+                    partial(_make_handler(handle_shortcut), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_shortcut
+                    else None
+                )
                 _on_stop = partial(_make_handler(handle_stop), bot_name=name, bot_cfg=bot_cfg)
                 _on_pause = partial(_make_handler(handle_pause), bot_name=name, bot_cfg=bot_cfg)
                 _on_resume = partial(_make_handler(handle_resume), bot_name=name, bot_cfg=bot_cfg)
@@ -189,6 +195,7 @@ class TelegramBotManager(Extension):
                     [
                         ("status", _on_status),
                         ("compact", _on_compact),
+                        *(([("shortcut", _on_shortcut)]) if _on_shortcut else []),
                         ("stop", _on_stop),
                         ("pause", _on_pause),
                         ("resume", _on_resume),

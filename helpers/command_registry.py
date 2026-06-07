@@ -94,6 +94,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/compact — shrink history (utility LLM)",
     ),
     (
+        "shortcut",
+        "Reply shortcuts",
+        "/shortcut shorter|longer|summary — rewrite the last answer (shorter/longer) or get a summary of the active session",
+    ),
+    (
         "stop",
         "Stop task",
         "/stop — abort the running agent task",

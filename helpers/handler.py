@@ -351,20 +351,13 @@ _RESPONSE_TRANSFORM_SPECS: dict[str, dict[str, str]] = {
             "Keep the key facts, decisions, and caveats."
         ),
     },
-    "technical": {
-        "button": "🛠 More technical",
-        "ack": "Reframing",
-        "instruction": (
-            "Rewrite the assistant's last answer for a more technical audience. "
-            "Use precise terminology and deeper implementation detail, but stay on the same task."
-        ),
-    },
-    "step_by_step": {
-        "button": "🪜 Step by step",
+    "longer": {
+        "button": "📏 Longer",
         "ack": "Expanding",
         "instruction": (
-            "Rewrite the assistant's last answer as a step-by-step explanation. "
-            "Make the sequence explicit and easy to follow."
+            "Rewrite the assistant's last answer into a more detailed, longer version. "
+            "Add relevant context, examples, and explanations while staying on the same task. "
+            "Do not invent new facts; expand on what the original answer said."
         ),
     },
 }
@@ -733,6 +726,149 @@ def _extract_user_prompt_summary(meta: dict) -> str:
     return ""
 
 
+def _extract_recent_session_summary(
+    meta: dict,
+    *,
+    max_lines: int = 4,
+    max_chars_per_line: int = 80,
+) -> str:
+    """Compact, topic-style summary drawn from the most recent log items.
+
+    Used by the session picker details view instead of the previous
+    single-line "Topic:" extract. No LLM, no async — just a deterministic
+    format that fits in 4-5 lines.
+    """
+    log = meta.get("log") or {}
+    logs = log.get("logs") if isinstance(log, dict) else []
+    if not isinstance(logs, list) or not logs:
+        return ""
+    window = logs[-max(8, max_lines * 2):]
+    icons = {
+        "user": "👤",
+        "assistant": "🤖",
+        "tool": "🔧",
+        "warning": "⚠️",
+        "error": "❌",
+    }
+    lines: list[str] = []
+    for item in window:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        first_line = content.splitlines()[0].strip()
+        first_line = re.sub(r"\s+", " ", first_line)
+        if not first_line:
+            continue
+        if len(first_line) > max_chars_per_line:
+            first_line = first_line[: max_chars_per_line - 1].rstrip() + "…"
+        icon = icons.get(item_type, "·")
+        lines.append(f"{icon} {first_line}")
+    if not lines:
+        return ""
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    return "\n".join(lines)
+
+
+def _session_log_items(ctx: AgentContext) -> list[dict]:
+    """Best-effort extract of recent chat log items for an in-memory context.
+
+    Returns a list of plain ``dict``s with at least ``type`` and ``content``
+    keys. Defensive against schema changes in Agent Zero's history model.
+    """
+    if ctx is None:
+        return []
+    history = getattr(ctx.agent0, "history", None)
+    if history is None:
+        return []
+    # Prefer the public list of log entries; fall back to ``log.logs`` for older versions.
+    candidates: list | None = None
+    for attr in ("logs", "_logs", "entries", "items"):
+        if hasattr(history, attr):
+            value = getattr(history, attr)
+            if isinstance(value, list):
+                candidates = value
+                break
+    if candidates is None:
+        log_obj = getattr(history, "log", None)
+        if log_obj is not None and hasattr(log_obj, "logs"):
+            value = getattr(log_obj, "logs")
+            if isinstance(value, list):
+                candidates = value
+    if not candidates:
+        return []
+    out: list[dict] = []
+    for entry in candidates[-30:]:
+        if isinstance(entry, dict):
+            out.append({
+                "type": str(entry.get("type") or ""),
+                "content": str(entry.get("content") or ""),
+            })
+        else:
+            t = str(getattr(entry, "type", "") or "")
+            c = str(getattr(entry, "content", "") or "")
+            if c or t:
+                out.append({"type": t, "content": c})
+    return out
+
+
+async def _session_llm_summary(ctx: AgentContext) -> str:
+    """Generate a detailed session summary via the utility LLM (for /shortcut summary).
+
+    Returns an empty string when the session has no log to summarize or the
+    utility model is unavailable. Secrets are redacted before the LLM call.
+    """
+    if ctx is None:
+        return ""
+    items = _session_log_items(ctx)
+    if not items:
+        return ""
+    try:
+        from helpers.detail_status import redact_sensitive
+    except Exception:
+        redact_sensitive = None  # type: ignore[assignment]
+    parts: list[str] = []
+    for entry in items:
+        item_type = str(entry.get("type") or "unknown").strip().lower() or "unknown"
+        content = str(entry.get("content") or "").strip()
+        if not content:
+            continue
+        if redact_sensitive is not None:
+            try:
+                content = redact_sensitive(content)
+            except Exception:
+                pass
+        if len(content) > 500:
+            content = content[:499].rstrip() + "…"
+        parts.append(f"[{item_type}] {content}")
+    transcript = "\n\n".join(parts)
+    if not transcript:
+        return ""
+    system = (
+        "You summarize an Agent Zero chat session for a Telegram reply. "
+        "Return a clear, multi-paragraph summary in plain text (no markdown, no JSON). "
+        "Cover: what the user asked, what the agent did, and the current state. "
+        "Do not reveal internal tooling, JSON, or secrets."
+    )
+    message = (
+        f"Session: {ctx.id}\n"
+        f"Name: {ctx.name or '(unnamed)'}\n\n"
+        f"Recent transcript (last {len(items)} items):\n"
+        f"<transcript>\n{transcript}\n</transcript>\n\n"
+        "Write the summary."
+    )
+    try:
+        summary = await ctx.agent0.call_utility_model(
+            system=system, message=message, background=True
+        )
+    except Exception:
+        return ""
+    return str(summary or "").strip()
+
+
 def _trim_session_title(text: str, limit: int = 42) -> str:
     value = re.sub(r"\s+", " ", str(text or "")).strip()
     if not value:
@@ -961,9 +1097,9 @@ def _session_details_text(meta: dict, active_ctx_id: str | None) -> str:
     ]
     if binding_state == "unbound" and not active:
         lines.extend(["", "Opening this session will bind it to this Telegram chat."])
-    summary = _extract_user_prompt_summary(meta)
-    if summary:
-        lines.extend(["", f"Topic: {_trim_session_title(summary, limit=80)}"])
+    recent_summary = _extract_recent_session_summary(meta)
+    if recent_summary:
+        lines.extend(["", "📝 Summary:", recent_summary])
     return "\n".join(lines)
 
 
@@ -2019,6 +2155,104 @@ async def handle_compact(message: TgMessage, bot_name: str, bot_cfg: dict):
         instance.bot.token,
         message.chat.id,
         reply,
+        parse_mode=None,
+    )
+
+
+async def handle_shortcut(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /shortcut — trigger response transforms or session summary.
+
+    Sub-commands (all work on the active session):
+      - ``shorter`` — rewrite the last answer shorter
+      - ``longer``  — rewrite the last answer with more detail
+      - ``summary`` — utility-LLM summary of the active session
+    """
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    token = instance.bot.token
+
+    arg = _cmd_rest(message).strip()
+    parts = arg.split(maxsplit=1)
+    sub = parts[0].strip().lower() if parts else ""
+    usage = "Usage: /shortcut shorter | longer | summary"
+
+    if not sub:
+        await _send_with_temp_bot(token, message.chat.id, usage, parse_mode=None)
+        return
+
+    if sub in ("shorter", "longer"):
+        spec = _response_transform_spec(sub)
+        if not spec:
+            await _send_with_temp_bot(token, message.chat.id, usage, parse_mode=None)
+            return
+        ctx = _get_existing_context(message, bot_name)
+        if not ctx:
+            await _send_with_temp_bot(
+                token, message.chat.id,
+                "No active session. Use /start first.",
+                parse_mode=None,
+            )
+            return
+        last_answer = str(ctx.data.get(CTX_TG_LAST_TEXT_RESPONSE, "") or "").strip()
+        if not last_answer:
+            await _send_with_temp_bot(
+                token, message.chat.id,
+                "No previous answer to transform — send a message first.",
+                parse_mode=None,
+            )
+            return
+        try:
+            body = _build_response_transform_body(sub, last_answer)
+        except ValueError:
+            await _send_with_temp_bot(token, message.chat.id, usage, parse_mode=None)
+            return
+        await _send_with_temp_bot(
+            token, message.chat.id, f"{spec['ack']}…", parse_mode=None
+        )
+        await _dispatch_telegram_user_turn(
+            ctx,
+            bot_token=token,
+            chat_id=message.chat.id,
+            sender=_format_user(user),
+            body=body,
+            attachments=[],
+            source=f" (telegram /shortcut {sub})",
+            busy_message="Agent is still working — use /stop first, then try again.",
+        )
+        return
+
+    if sub == "summary":
+        ctx = _get_existing_context(message, bot_name)
+        if not ctx:
+            await _send_with_temp_bot(
+                token, message.chat.id,
+                "No active session. Use /start first.",
+                parse_mode=None,
+            )
+            return
+        await _send_with_temp_bot(
+            token, message.chat.id, "📝 Summarizing session…", parse_mode=None
+        )
+        summary = await _session_llm_summary(ctx)
+        if not summary:
+            await _send_with_temp_bot(
+                token, message.chat.id,
+                "Nothing to summarize yet — send a message first.",
+                parse_mode=None,
+            )
+            return
+        text = f"📝 Session summary\n\n{summary}"
+        await _send_with_temp_bot(token, message.chat.id, text, parse_mode=None)
+        return
+
+    await _send_with_temp_bot(
+        token,
+        message.chat.id,
+        f"Unknown shortcut: {sub}\n{usage}",
         parse_mode=None,
     )
 
