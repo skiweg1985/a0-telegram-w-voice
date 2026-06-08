@@ -830,18 +830,24 @@ async def _session_llm_summary(
         system = (
             "You summarize an Agent Zero chat session for a Telegram reply. "
             "Return a clear, multi-paragraph summary in plain text (no markdown, no JSON). "
-            "Cover: what the user asked, what the agent did, and the current state. "
+            "Focus on the subject matter, key findings, decisions, open questions, and current state or conclusion. "
+            "Summarize the substance, not the conversation flow. "
+            "Do not narrate the exchange step-by-step. "
+            "Avoid phrases like 'the user asked' or 'the agent did'. "
             "Do not reveal internal tooling, JSON, or secrets."
         )
-        instruction = "Write the summary."
+        instruction = "Write the topic-focused summary."
     else:
         system = (
-            "You write an ultra-short recap of an Agent Zero chat session for a "
+            "You write an ultra-short topic recap of an Agent Zero chat session for a "
             "Telegram session list. Return 3-4 short plain-text lines (one fact per line, "
-            "no bullets, no markdown, no JSON). Capture the topic and where things stand. "
+            "no bullets, no markdown, no JSON). Capture the topic, key result, current "
+            "status, and any important open point. Each line should add distinct information. "
+            "Do not describe who said or did what. "
+            "Avoid phrases like 'the user asked' or 'the agent did'. "
             "Do not reveal internal tooling, JSON, or secrets."
         )
-        instruction = "Write the 3-4 line recap."
+        instruction = "Write the 3-4 line topic recap."
     message = (
         f"Session: {ctx.id}\n"
         f"Name: {getattr(ctx, 'name', '') or '(unnamed)'}\n\n"
