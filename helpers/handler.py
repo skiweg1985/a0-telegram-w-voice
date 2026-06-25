@@ -73,6 +73,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_STREAM_LAST_FLUSH_RAW_LEN,
     CTX_TG_STREAM_LAST_FLUSH_TS,
     CTX_TG_FINAL_REPLY_SENT,
+    CTX_TG_FINAL_REPLY_DELIVERED,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
     CTX_TG_LAST_RESPONSE_ACTION_TOKEN,
@@ -4116,7 +4117,8 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
 
     tool_name = None
     tool_args = {}
-    if isinstance(parsed, dict):
+    parsed_complete_json = isinstance(parsed, dict)
+    if parsed_complete_json:
         tool_name = parsed.get("tool_name") or parsed.get("name")
         tool_args = parsed.get("tool_args") if isinstance(parsed.get("tool_args"), dict) else {}
         text_closed = True
@@ -4154,6 +4156,7 @@ def _extract_live_response_preview(stream_full: str) -> dict | None:
     return {
         "text": text,
         "break_loop": break_loop,
+        "complete_tool_json": parsed_complete_json,
     }
 
 
@@ -4331,7 +4334,8 @@ async def _flush_telegram_live_preview_once(context: AgentContext, token: str) -
 
     context.data[CTX_TG_STREAM_PREVIEW] = next_preview
     context.data[CTX_TG_STREAM_ACTIVE] = True
-    if await _send_telegram_live_draft_preview(context, next_preview):
+    can_use_native_draft = not bool(preview.get("complete_tool_json"))
+    if can_use_native_draft and await _send_telegram_live_draft_preview(context, next_preview):
         return True
     if context.data.get(CTX_TG_STREAM_WORKER_TOKEN) != token:
         return False
@@ -5110,6 +5114,7 @@ async def send_telegram_reply(
     telegram_items: list[dict] | None = None,
 ) -> str | None:
     """Send reply to Telegram user. Returns error string or None on success."""
+    context.data.pop(CTX_TG_FINAL_REPLY_DELIVERED, None)
     bot_name = context.data.get(CTX_TG_BOT)
     if not bot_name:
         return "No Telegram bot configured on context"
@@ -5331,6 +5336,7 @@ async def send_telegram_reply(
                 or text_body != logical_text_body
             )
             progress_message_became_final = False
+            sent_text = False
             if should_send_text:
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 use_final_edit = bool(
@@ -5353,7 +5359,7 @@ async def send_telegram_reply(
                     progress_message_became_final = bool(edited)
 
                 if not edited:
-                    await _send_telegram_text_message(
+                    msg_id = await _send_telegram_text_message(
                         reply_bot,
                         chat_id,
                         text_body,
@@ -5361,6 +5367,7 @@ async def send_telegram_reply(
                         reply_to,
                         reply_markup=reply_keyboard,
                     )
+                    sent_text = bool(msg_id)
 
             if not progress_message_became_final:
                 await _cleanup_progress_message_after_final(
@@ -5372,6 +5379,12 @@ async def send_telegram_reply(
                     sent_artifact_count=sent_artifact_count,
                 )
 
+            context.data[CTX_TG_FINAL_REPLY_DELIVERED] = bool(
+                progress_message_became_final
+                or sent_text
+                or sent_voice
+                or sent_artifact_count
+            )
             _clear_progress_state(context)
 
         # Persist the reveal-button token/text so "Show text" survives restarts.

@@ -137,7 +137,11 @@ def _install_stubs():
     handler._replace_progress_line = mock.Mock(return_value=True)
     handler.handle_telegram_response_stream_end = mock.Mock()
     handler.send_telegram_inline_response = mock.AsyncMock(return_value=None)
-    handler.send_telegram_reply = mock.AsyncMock(return_value=None)
+    async def _send_telegram_reply(context, *args, **kwargs):
+        context.data[constants.CTX_TG_FINAL_REPLY_DELIVERED] = True
+        return None
+
+    handler.send_telegram_reply = mock.AsyncMock(side_effect=_send_telegram_reply)
     handler.send_telegram_progress_update = mock.AsyncMock(return_value=None)
     handler._refresh_progress_status = mock.AsyncMock(return_value=None)
     handler._render_progress_status_html = mock.Mock(return_value="<b>status</b>")
@@ -322,6 +326,28 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         asyncio.run(ext.execute(tool_name="response", response=_Response()))
 
         handler._set_progress_phase.assert_called_once_with(context, None)
+
+    def test_break_loop_true_keeps_chain_end_fallback_when_delivery_not_confirmed(self):
+        constants, handler = _install_stubs()
+        module = _load_module(TOOL_HOOK_PATH, "telegram_response_hook_no_delivery_under_test")
+        handler.send_telegram_reply.side_effect = None
+        handler.send_telegram_reply.return_value = None
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+            },
+            log=_Log(),
+            agent0=types.SimpleNamespace(read_prompt=lambda *a, **k: "retry"),
+            communicate=mock.Mock(),
+        )
+        ext = module.TelegramResponseIntercept()
+        ext.agent = _fake_agent({"text": "Final answer", "break_loop": True}, context)
+
+        asyncio.run(ext.execute(tool_name="response", response=_Response()))
+
+        self.assertNotIn(constants.CTX_TG_FINAL_REPLY_SENT, context.data)
 
     def test_process_chain_end_skips_when_final_response_already_sent(self):
         constants, handler = _install_stubs()

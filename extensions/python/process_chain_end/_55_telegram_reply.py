@@ -13,6 +13,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_REPLY_CONTEXT,
     CTX_TG_VOICE_TEXT,
     CTX_TG_FINAL_REPLY_SENT,
+    CTX_TG_FINAL_REPLY_DELIVERED,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
@@ -78,6 +79,7 @@ class TelegramAutoReply(Extension):
             context.data.pop(CTX_TG_KEYBOARD, None)
             context.data.pop(CTX_TG_VOICE_TEXT, None)
             context.data.pop(CTX_TG_FINAL_REPLY_SENT, None)
+            context.data.pop(CTX_TG_FINAL_REPLY_DELIVERED, None)
             _clear_telegram_progress_state(context)
 
     async def _send_reply(
@@ -100,9 +102,15 @@ class TelegramAutoReply(Extension):
             voice_text=voice_text,
             telegram_items=telegram_items or None,
         )
-        if not error:
+        if not error and context.data.get(CTX_TG_FINAL_REPLY_DELIVERED):
             context.data[CTX_SEND_FAILURES] = 0
             context.data[CTX_TG_FINAL_REPLY_SENT] = True
+            return
+
+        if not error:
+            PrintStyle.warning(
+                "Telegram auto-reply did not confirm visible delivery."
+            )
             return
 
         failures = context.data.get(CTX_SEND_FAILURES, 0) + 1

@@ -10,6 +10,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_VOICE_REPLY_MODE,
     CTX_TG_VOICE_TEXT,
     CTX_TG_FINAL_REPLY_SENT,
+    CTX_TG_FINAL_REPLY_DELIVERED,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
@@ -125,13 +126,23 @@ class TelegramResponseIntercept(Extension):
             telegram_items=telegram_items or None,
         )
 
-        if not error:
+        delivered = bool(context.data.get(CTX_TG_FINAL_REPLY_DELIVERED))
+        if not error and delivered:
             context.data[CTX_SEND_FAILURES] = 0
             context.data[CTX_TG_FINAL_REPLY_SENT] = True
             context.data.pop(CTX_TG_ATTACHMENTS, None)
             context.data.pop(CTX_TG_ITEMS, None)
             context.data.pop(CTX_TG_KEYBOARD, None)
             context.data.pop(CTX_TG_VOICE_TEXT, None)
+            return
+
+        if not error:
+            if voice_mode is not None:
+                context.data[CTX_TG_VOICE_REPLY_MODE] = voice_mode
+            PrintStyle.warning(
+                "Telegram final response hook did not confirm visible delivery; "
+                "chain-end fallback remains enabled."
+            )
             return
 
         if voice_mode is not None:
