@@ -102,7 +102,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 ### WebUI
 
 - Per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`) directly in the plugin settings UI.
-- The WebUI currently exposes **Off**, **Info**, and **Verbose** for the default tool-detail level. `smart` is still available via YAML (`telegram_detail_level: smart`) or per-session with `/detail smart`.
+- The WebUI exposes **Off**, **Info**, **Smart**, and **Verbose** for the default tool-detail level.
 - **Walkie-talkie preset** button for quick voice-oriented configuration.
 - **Quick action buttons** can be enabled/disabled in the WebUI. This controls the per-reply **More** menu (`Shorter`, `Longer`, `To voice`, `Back`) and the voice-only **Show text** button.
 - **Update from Git** and **Test Connection** actions are available in the WebUI for Git-based installs and token checks.
@@ -212,7 +212,6 @@ bots:
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
 - **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
-- The WebUI's **Tool Status Detail** dropdown currently does not expose `smart`; use YAML or `/detail smart` if you want utility-model summaries by default or in the current session.
 - **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
 - Publishing to the Plugin Index: use `name` without a leading underscore. The exact Plugin Index repository/path is not part of this repo; verify current upstream publishing instructions before opening an index PR.
 
