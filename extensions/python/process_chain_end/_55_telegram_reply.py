@@ -14,6 +14,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_VOICE_TEXT,
     CTX_TG_FINAL_REPLY_SENT,
     CTX_TG_FINAL_REPLY_DELIVERED,
+    CTX_TG_STREAM_RESPONSE_TEXT,
 )
 from usr.plugins.telegram_integration_voice.helpers.dependencies import ensure_dependencies
 
@@ -130,6 +131,9 @@ class TelegramAutoReply(Extension):
 # Helpers
 
 def _extract_last_response(context: AgentContext) -> str:
+    stream_text = str(context.data.get(CTX_TG_STREAM_RESPONSE_TEXT) or "").strip()
+    if stream_text:
+        return stream_text
     with context.log._lock:
         logs = list(context.log.logs)
     if not logs:

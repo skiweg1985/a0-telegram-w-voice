@@ -349,6 +349,68 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
 
         self.assertNotIn(constants.CTX_TG_FINAL_REPLY_SENT, context.data)
 
+    def test_break_loop_true_sends_response_message_when_current_tool_is_missing(self):
+        constants, handler = _install_stubs()
+        module = _load_module(TOOL_HOOK_PATH, "telegram_response_hook_missing_tool_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+            },
+            log=_Log(),
+            agent0=types.SimpleNamespace(read_prompt=lambda *a, **k: "retry"),
+            communicate=mock.Mock(),
+        )
+        response = _Response()
+        response.message = "Final answer from response object"
+        response.break_loop = True
+        ext = module.TelegramResponseIntercept()
+        ext.agent = types.SimpleNamespace(
+            context=context,
+            number=0,
+            loop_data=types.SimpleNamespace(current_tool=None),
+            read_prompt=lambda name, **kwargs: "ok",
+            hist_add_tool_result=mock.Mock(),
+        )
+
+        asyncio.run(ext.execute(tool_name="response", response=response))
+
+        handler.send_telegram_reply.assert_awaited_once_with(
+            context,
+            "Final answer from response object",
+            None,
+            None,
+            voice_text=None,
+            telegram_items=None,
+        )
+        self.assertTrue(context.data[constants.CTX_TG_FINAL_REPLY_SENT])
+
+    def test_break_loop_true_prefers_tool_text_but_falls_back_to_response_message(self):
+        constants, handler = _install_stubs()
+        module = _load_module(TOOL_HOOK_PATH, "telegram_response_hook_response_message_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_CHAT_ID: 123,
+            },
+            log=_Log(),
+            agent0=types.SimpleNamespace(read_prompt=lambda *a, **k: "retry"),
+            communicate=mock.Mock(),
+        )
+        response = _Response()
+        response.message = "Final answer from response object"
+        ext = module.TelegramResponseIntercept()
+        ext.agent = _fake_agent({"break_loop": True}, context)
+
+        asyncio.run(ext.execute(tool_name="response", response=response))
+
+        self.assertEqual(
+            handler.send_telegram_reply.await_args.args[1],
+            "Final answer from response object",
+        )
+
     def test_process_chain_end_skips_when_final_response_already_sent(self):
         constants, handler = _install_stubs()
         module = _load_module(CHAIN_HOOK_PATH, "telegram_chain_end_hook_under_test")
@@ -377,6 +439,31 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         self.assertNotIn(constants.CTX_TG_TYPING_STOP, context.data)
         self.assertNotIn(constants.CTX_TG_RECORD_VOICE_STOP, context.data)
         handler._clear_progress_state.assert_called_once_with(context)
+
+    def test_process_chain_end_uses_stream_response_text_cache(self):
+        constants, handler = _install_stubs()
+        module = _load_module(CHAIN_HOOK_PATH, "telegram_chain_end_stream_cache_under_test")
+
+        context = types.SimpleNamespace(
+            data={
+                constants.CTX_TG_BOT: "mainbot",
+                constants.CTX_TG_STREAM_RESPONSE_TEXT: "Final answer from stream",
+            },
+            log=_Log(),
+        )
+        ext = module.TelegramAutoReply()
+        ext.agent = types.SimpleNamespace(context=context, number=0)
+
+        asyncio.run(ext.execute())
+
+        handler.send_telegram_reply.assert_awaited_once_with(
+            context,
+            "Final answer from stream",
+            None,
+            None,
+            voice_text=None,
+            telegram_items=None,
+        )
 
     def test_detail_status_clears_gen_phase_even_when_tool_line_is_throttled(self):
         constants, handler = _install_stubs()

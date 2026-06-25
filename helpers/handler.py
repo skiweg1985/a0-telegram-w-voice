@@ -67,6 +67,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_STREAM_DRAFT_USED,
     CTX_TG_STREAM_DRAFT_DISABLED,
     CTX_TG_STREAM_PENDING_FULL,
+    CTX_TG_STREAM_RESPONSE_TEXT,
     CTX_TG_STREAM_WORKER_TASK,
     CTX_TG_STREAM_WORKER_EVENT,
     CTX_TG_STREAM_WORKER_TOKEN,
@@ -3918,6 +3919,7 @@ def _clear_progress_state(context: AgentContext):
     context.data.pop(CTX_TG_STREAM_DRAFT_USED, None)
     context.data.pop(CTX_TG_STREAM_DRAFT_DISABLED, None)
     context.data.pop(CTX_TG_STREAM_PENDING_FULL, None)
+    context.data.pop(CTX_TG_STREAM_RESPONSE_TEXT, None)
     context.data.pop(CTX_TG_STREAM_LAST_FLUSH_RAW_LEN, None)
     context.data.pop(CTX_TG_STREAM_LAST_FLUSH_TS, None)
     context.data.pop(CTX_TG_FINAL_REPLY_SENT, None)
@@ -4243,6 +4245,9 @@ async def handle_telegram_response_stream_chunk(context: AgentContext, stream_da
     bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
     context.data[CTX_TG_STREAM_PENDING_FULL] = stream_full
     context.data[CTX_TG_STREAM_ACTIVE] = True
+    preview = _extract_live_response_preview(stream_full)
+    if preview:
+        context.data[CTX_TG_STREAM_RESPONSE_TEXT] = str(preview.get("text") or "")
     phase_changed = _set_progress_phase(context, "gen")
     if phase_changed:
         await _refresh_progress_status(context, bot_cfg)

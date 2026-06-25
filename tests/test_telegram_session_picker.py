@@ -795,6 +795,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
                 refresh_progress.assert_awaited_once_with(ctx, ctx.data[handler.CTX_TG_BOT_CFG])
                 self.assertIn(handler.CTX_TG_STREAM_WORKER_TASK, ctx.data)
                 self.assertEqual(ctx.data[handler.CTX_TG_STREAM_PENDING_FULL], stream_data["full"])
+                self.assertEqual(ctx.data[handler.CTX_TG_STREAM_RESPONSE_TEXT], "Partial answer")
                 self.assertEqual(ctx.data[handler.CTX_TG_PROGRESS_PHASE], "gen")
                 handler._cancel_stream_preview_worker(ctx)
 
