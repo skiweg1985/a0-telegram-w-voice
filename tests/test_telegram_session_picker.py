@@ -283,6 +283,20 @@ def _install_stub_modules():
     tc.send_message_draft = lambda *args, **kwargs: None
     tc.build_inline_keyboard = lambda buttons, *args, **kwargs: {"inline_keyboard": buttons}
     tc.md_to_telegram_html = lambda text: text
+    tc.rich_messages_settings = lambda bot_cfg: {"enabled": False, "drafts_enabled": False}
+    tc.rich_message_eligible = lambda text: False
+    tc.rich_content_fits_limits = lambda text: True
+
+    async def _tc_send_rich_text(*args, **kwargs):
+        return types.SimpleNamespace(
+            success=False,
+            message_id=None,
+            fallback_allowed=True,
+            capability_error=False,
+            error=None,
+        )
+
+    tc.send_rich_text = _tc_send_rich_text
 
     async def _tc_send_typing(*args, **kwargs):
         return None
@@ -1039,6 +1053,16 @@ class TelegramSessionPickerTests(unittest.TestCase):
             mock.patch.object(handler.tc, "md_to_telegram_html", side_effect=lambda text: text, create=True),
             mock.patch.object(handler.tc, "MAX_MESSAGE_LENGTH", 4096, create=True),
             mock.patch.object(handler.tc, "build_inline_keyboard", return_value={"inline_keyboard": True}, create=True),
+            mock.patch.object(handler.tc, "rich_messages_settings", return_value={"enabled": False, "drafts_enabled": False}, create=True),
+            mock.patch.object(handler.tc, "rich_message_eligible", return_value=False, create=True),
+            mock.patch.object(handler.tc, "rich_content_fits_limits", return_value=True, create=True),
+            mock.patch.object(handler.tc, "send_rich_text", new=mock.AsyncMock(return_value=types.SimpleNamespace(
+                success=False,
+                message_id=None,
+                fallback_allowed=True,
+                capability_error=False,
+                error=None,
+            )), create=True),
             mock.patch.object(handler.tc, "edit_text", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=mock.AsyncMock(return_value=edit_ok), create=True),
             mock.patch.object(handler.tc, "send_text", new=mock.AsyncMock(return_value=888), create=True),
@@ -1107,6 +1131,33 @@ class TelegramSessionPickerTests(unittest.TestCase):
                     for call in handler.tc.edit_text.await_args_list
                 )
             )
+
+    def test_send_telegram_reply_rich_final_bypasses_progress_edit_and_cleans_up(self):
+        handler = self.handler
+        ctx = self._reply_context({"completed_mode": "delete"})
+        ctx.data[handler.CTX_TG_BOT_CFG]["rich_messages"] = {"enabled": True}
+        rich_result = types.SimpleNamespace(
+            success=True,
+            message_id=321,
+            fallback_allowed=False,
+            capability_error=False,
+            error=None,
+        )
+
+        with self._patch_reply_dependencies(handler, edit_ok=True), \
+             mock.patch.object(handler.tc, "rich_messages_settings", return_value={"enabled": True, "drafts_enabled": False}, create=True), \
+             mock.patch.object(handler.tc, "rich_message_eligible", return_value=True, create=True), \
+             mock.patch.object(handler.tc, "send_rich_text", new=mock.AsyncMock(return_value=rich_result), create=True):
+            result = asyncio.run(handler.send_telegram_reply(ctx, "A | B\n--- | ---\n1 | 2"))
+
+            self.assertIsNone(result)
+            handler.tc.edit_text.assert_not_awaited()
+            handler.tc.edit_text_with_keyboard.assert_not_awaited()
+            handler.tc.send_rich_text.assert_awaited_once()
+            handler.tc.send_text.assert_not_awaited()
+            handler.tc.send_text_with_keyboard.assert_not_awaited()
+            handler.tc.delete_message.assert_awaited_once()
+            self.assertTrue(ctx.data[handler.CTX_TG_FINAL_REPLY_DELIVERED])
 
     def test_send_telegram_reply_auto_voice_without_visible_text_adds_show_text_button(self):
         handler = self.handler

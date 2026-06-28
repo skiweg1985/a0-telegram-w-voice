@@ -90,7 +90,7 @@
               </button>
             </div>
 
-            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureProgress(bot); $store.telegramConfig.ensureSpeech(bot); $store.telegramConfig.ensureReplyKeyboard(bot)">
+            <div class="bot-card-body" x-show="$store.telegramConfig.expandedIdx === idx" x-transition.opacity x-init="$store.telegramConfig.ensureProgress(bot); $store.telegramConfig.ensureRichMessages(bot); $store.telegramConfig.ensureSpeech(bot); $store.telegramConfig.ensureReplyKeyboard(bot)">
 
               <div class="field">
                 <div class="field-label">
@@ -477,6 +477,32 @@
                     <option value="smart">Smart</option>
                     <option value="debug">Verbose</option>
                   </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Rich Messages</div>
+                  <div class="field-description">Opt-in native Telegram rendering for final replies with tables, task lists, headings, details, or math</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.rich_messages.enabled" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field" x-show="bot.rich_messages && bot.rich_messages.enabled">
+                <div class="field-label">
+                  <div class="field-title">Rich Draft Previews</div>
+                  <div class="field-description">Separate opt-in switch reserved for native rich live previews; final replies work without this</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.rich_messages.drafts_enabled" />
+                    <span class="toggler"></span>
+                  </label>
                 </div>
               </div>
 

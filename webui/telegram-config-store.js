@@ -56,6 +56,10 @@ export const store = createStore("telegramConfig", {
       agent_instructions: "",
       attachment_max_age_hours: 0,
       telegram_detail_level: "info",
+      rich_messages: {
+        enabled: false,
+        drafts_enabled: false,
+      },
       progress: {
         edit_throttle_ms: 200,
         completed_mode: "delete",
@@ -113,6 +117,11 @@ export const store = createStore("telegramConfig", {
   ensureProgress(bot) {
     const d = this.defaultBot().progress;
     bot.progress = { ...d, ...(bot.progress || {}) };
+  },
+
+  ensureRichMessages(bot) {
+    const d = this.defaultBot().rich_messages;
+    bot.rich_messages = { ...d, ...(bot.rich_messages || {}) };
   },
 
 

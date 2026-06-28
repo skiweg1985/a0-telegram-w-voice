@@ -28,6 +28,10 @@ bots: []
 #   telegram_detail_icons_enabled: true         # (YAML only) Prefix each step with an emoji icon
 #   telegram_detail_tool_icons: {}              # (YAML only) Override icons, e.g. { "memory_load": "📌" }
 #   telegram_detail_max_body_chars: 3200        # (YAML only) Max chars for smart/debug detail body (truncated if longer)
+#
+#   rich_messages:
+#     enabled: false        # Bot API rich final replies for tables/task lists/headings/details/math (opt-in)
+#     drafts_enabled: false # reserved separate opt-in for rich live draft previews
 
 #
 #   # Voice/STT/TTS

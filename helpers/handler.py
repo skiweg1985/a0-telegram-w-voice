@@ -75,6 +75,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_STREAM_LAST_FLUSH_TS,
     CTX_TG_FINAL_REPLY_SENT,
     CTX_TG_FINAL_REPLY_DELIVERED,
+    CTX_TG_RICH_SEND_DISABLED,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
     CTX_TG_LAST_RESPONSE_ACTION_TOKEN,
@@ -4665,7 +4666,28 @@ async def _send_telegram_text_message(
     keyboard: list[list[dict]] | None,
     reply_to: int | None,
     reply_markup=None,
+    bot_cfg: dict | None = None,
+    ctx_data: dict | None = None,
 ) -> int | None:
+    rich_markup = tc.build_inline_keyboard(keyboard) if keyboard else reply_markup
+    if _should_attempt_final_rich_text(bot_cfg or {}, ctx_data or {}, text_body):
+        result = await tc.send_rich_text(
+            reply_bot,
+            chat_id,
+            text_body,
+            reply_to_message_id=reply_to,
+            reply_markup=rich_markup,
+        )
+        if result.success:
+            return result.message_id
+        if result.capability_error and ctx_data is not None:
+            ctx_data[CTX_TG_RICH_SEND_DISABLED] = True
+        if not result.fallback_allowed:
+            raise RuntimeError(
+                "Telegram rich message failed without safe legacy fallback"
+                + (f": {result.error}" if result.error else "")
+            )
+
     html_text = tc.md_to_telegram_html(text_body)
     if keyboard:
         return await tc.send_text_with_keyboard(
@@ -4681,6 +4703,20 @@ async def _send_telegram_text_message(
         html_text,
         reply_to_message_id=reply_to,
         reply_markup=reply_markup,
+    )
+
+
+def _should_attempt_final_rich_text(
+    bot_cfg: dict,
+    ctx_data: dict,
+    text_body: str,
+) -> bool:
+    settings = tc.rich_messages_settings(bot_cfg)
+    return bool(
+        settings.get("enabled")
+        and not ctx_data.get(CTX_TG_RICH_SEND_DISABLED)
+        and tc.rich_message_eligible(text_body)
+        and tc.rich_content_fits_limits(text_body)
     )
 
 
@@ -5344,10 +5380,16 @@ async def send_telegram_reply(
             sent_text = False
             if should_send_text:
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+                rich_final_candidate = _should_attempt_final_rich_text(
+                    bot_cfg,
+                    context.data,
+                    text_body,
+                )
                 use_final_edit = bool(
                     progress_message_id
                     and not planned_items
                     and not used_native_draft
+                    and not rich_final_candidate
                 )
 
                 edited = False
@@ -5371,6 +5413,8 @@ async def send_telegram_reply(
                         final_keyboard,
                         reply_to,
                         reply_markup=reply_keyboard,
+                        bot_cfg=bot_cfg,
+                        ctx_data=context.data,
                     )
                     sent_text = bool(msg_id)
 

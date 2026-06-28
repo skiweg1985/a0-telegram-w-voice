@@ -22,6 +22,7 @@ Older entries are chronological release history and may mention commands/feature
 - New `/shortcut` slash command works on the active session. With no argument it shows inline buttons; sub-commands/buttons: `shorter` / `longer` (re-trigger the transforms) and `summary` (utility-LLM summary delivered as a separate Telegram message).
 - `/session` picker details view now shows a fresh utility-LLM-generated 📝 Summary block instead of the old single-line "Topic" extract.
 - `/session` picker gained a **🗑 Delete** action: open a session's details and tap Delete to permanently remove the on-disk chat file. Deleting the active session automatically starts a fresh new chat. Deletion is **button-driven** (no text command) and applies to bound sessions plus unbound web sessions whose `CTX_TG_USER_ID` matches the current Telegram user; one confirmation step before the file is removed.
+- WebUI + YAML opt-in for Telegram Bot API rich final replies (`rich_messages.enabled`) with a separate reserved switch for rich draft previews (`rich_messages.drafts_enabled`). Defaults stay off for client compatibility and copyability.
 
 ### Removed
 
