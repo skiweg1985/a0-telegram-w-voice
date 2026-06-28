@@ -679,6 +679,20 @@ class TelegramSessionPickerTests(unittest.TestCase):
         sleep.assert_awaited_once_with(handler._RELOAD_DELAY_SEC)
         process.reload.assert_called_once_with()
 
+    def test_delayed_process_reload_forces_process_exit_after_system_exit(self):
+        handler = self.handler
+        process = types.SimpleNamespace(reload=mock.Mock(side_effect=SystemExit(0)))
+        sys.modules["helpers"].process = process
+        sys.modules["helpers.process"] = process
+
+        with mock.patch.object(handler.asyncio, "sleep", new=mock.AsyncMock()) as sleep, \
+             mock.patch.object(handler.os, "_exit") as hard_exit:
+            asyncio.run(handler._delayed_process_reload())
+
+        sleep.assert_awaited_once_with(handler._RELOAD_DELAY_SEC)
+        process.reload.assert_called_once_with()
+        hard_exit.assert_called_once_with(0)
+
     def test_notify_pending_reload_restart_sends_and_clears_marker(self):
         handler = self.handler
         state = {

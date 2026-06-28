@@ -445,7 +445,11 @@ async def _delayed_process_reload(delay: float = _RELOAD_DELAY_SEC):
     await asyncio.sleep(delay)
     from helpers import process
 
-    process.reload()
+    try:
+        process.reload()
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 0
+        os._exit(code)
 
 
 def _schedule_agent_zero_reload():
