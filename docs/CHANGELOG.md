@@ -23,6 +23,7 @@ Older entries are chronological release history and may mention commands/feature
 - `/session` picker details view now shows a fresh utility-LLM-generated 📝 Summary block instead of the old single-line "Topic" extract.
 - `/session` picker gained a **🗑 Delete** action: open a session's details and tap Delete to permanently remove the on-disk chat file. Deleting the active session automatically starts a fresh new chat. Deletion is **button-driven** (no text command) and applies to bound sessions plus unbound web sessions whose `CTX_TG_USER_ID` matches the current Telegram user; one confirmation step before the file is removed.
 - WebUI + YAML opt-in for Telegram Bot API rich final replies (`rich_messages.enabled`) with a separate reserved switch for rich draft previews (`rich_messages.drafts_enabled`). Defaults stay off for client compatibility and copyability.
+- When rich final replies are enabled, Telegram system prompts now let the agent use tables, task lists, short headings, details, and math when they improve readability.
 
 ### Removed
 
