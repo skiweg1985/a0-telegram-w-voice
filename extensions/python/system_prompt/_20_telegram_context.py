@@ -5,6 +5,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_BOT_CFG,
 )
 from usr.plugins.telegram_integration_voice.helpers import speech
+from usr.plugins.telegram_integration_voice.helpers import telegram_client as tc
 
 
 class TelegramContextPrompt(Extension):
@@ -24,6 +25,11 @@ class TelegramContextPrompt(Extension):
             )
 
             bot_cfg = self.agent.context.data.get(CTX_TG_BOT_CFG, {}) or {}
+            if tc.rich_messages_settings(bot_cfg).get("enabled"):
+                system_prompt.append(
+                    self.agent.read_prompt("fw.telegram.rich_messages.md")
+                )
+
             mode = speech.resolve_auto_optimize_mode(
                 bot_cfg, self.agent.context.data,
             )

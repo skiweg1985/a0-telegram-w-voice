@@ -1,5 +1,7 @@
 import os
 import re
+from dataclasses import dataclass
+from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import (
@@ -34,6 +36,16 @@ def _notify_rate_limited(callback) -> None:
 # Text messages
 
 MAX_MESSAGE_LENGTH: int = 4096  # Telegram message length limit
+RICH_MESSAGE_MAX_BYTES: int = 32768
+
+
+@dataclass
+class RichSendResult:
+    success: bool
+    message_id: int | None = None
+    fallback_allowed: bool = False
+    capability_error: bool = False
+    error: str | None = None
 
 
 async def send_text(
@@ -82,6 +94,143 @@ async def send_text(
     except Exception as e:
         PrintStyle.error(f"Telegram send_text failed: {format_error(e)}")
         return None
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ("true", "1", "yes", "on", "enabled"):
+        return True
+    if s in ("false", "0", "no", "off", "disabled", ""):
+        return False
+    return default
+
+
+def rich_messages_settings(bot_cfg: dict | None) -> dict:
+    cfg = ((bot_cfg or {}).get("rich_messages") or {})
+    return {
+        "enabled": _coerce_bool(cfg.get("enabled"), False),
+        "drafts_enabled": _coerce_bool(cfg.get("drafts_enabled"), False),
+    }
+
+
+def rich_content_fits_limits(text: str) -> bool:
+    return len(str(text or "").encode("utf-8")) <= RICH_MESSAGE_MAX_BYTES
+
+
+def rich_message_eligible(text: str) -> bool:
+    raw = str(text or "")
+    if not raw.strip():
+        return False
+    lines = raw.splitlines()
+    for idx, line in enumerate(lines[:-1]):
+        if "|" in line and re.search(r"(^|\|)\s*:?-{3,}:?\s*(\||$)", lines[idx + 1]):
+            return True
+    patterns = [
+        r"(?m)^\s*#{1,6}\s+\S",
+        r"(?m)^\s*[-*+]\s+\[[ xX]\]\s+\S",
+        r"(?is)<details\b|<summary\b|</details>",
+        r"(?m)^\s*>\s*>\s+\S",
+        r"(?s)\$\$.+?\$\$",
+        r"\\\(.+?\\\)|\\\[.+?\\\]",
+        r"(?m)^\[\^[^\]]+\]:",
+    ]
+    return any(re.search(pattern, raw) for pattern in patterns)
+
+
+def supports_rich_message(bot: Bot) -> bool:
+    return hasattr(bot, "send_rich_message")
+
+
+def _is_rich_capability_error(exc: Exception) -> bool:
+    if isinstance(exc, (AttributeError, TypeError, NotImplementedError)):
+        return True
+    text = str(exc).lower()
+    needles = (
+        "method not found",
+        "unknown method",
+        "unsupported method",
+        "not implemented",
+        "sendrichmessage",
+    )
+    return any(n in text for n in needles) and any(
+        n in text for n in ("not found", "unknown", "unsupported", "not implemented")
+    )
+
+
+def _is_rich_fallback_error(exc: Exception) -> bool:
+    return isinstance(exc, TelegramBadRequest) or _is_rich_capability_error(exc)
+
+
+async def send_rich_text(
+    bot: Bot,
+    chat_id: int,
+    markdown: str,
+    reply_to_message_id: int | None = None,
+    reply_markup=None,
+) -> RichSendResult:
+    """Try Telegram Bot API rich messages; caller owns legacy fallback.
+
+    Permanent parser/capability errors are safe to fall back from. Transient
+    errors are not silently legacy-sent because the rich request may have
+    reached Telegram and a fallback could duplicate the final answer.
+    """
+    content = str(markdown or "")
+    if not content.strip() or not rich_content_fits_limits(content):
+        return RichSendResult(success=False, fallback_allowed=True)
+    if not supports_rich_message(bot):
+        return RichSendResult(
+            success=False,
+            fallback_allowed=True,
+            capability_error=True,
+            error="send_rich_message is not available on this aiogram Bot",
+        )
+
+    kwargs = {
+        "chat_id": chat_id,
+        "rich_message": {"markdown": content},
+    }
+    if reply_to_message_id is not None:
+        kwargs["reply_parameters"] = {"message_id": int(reply_to_message_id)}
+    if reply_markup is not None:
+        kwargs["reply_markup"] = reply_markup
+
+    try:
+        msg = await bot.send_rich_message(**kwargs)
+        return RichSendResult(
+            success=True,
+            message_id=getattr(msg, "message_id", None),
+        )
+    except Exception as e:
+        if _is_rich_fallback_error(e):
+            capability = _is_rich_capability_error(e)
+            if capability:
+                PrintStyle.warning(
+                    f"Telegram rich messages disabled after capability error: {format_error(e)}"
+                )
+            else:
+                PrintStyle.warning(
+                    f"Telegram rich message rejected, falling back to legacy text: {format_error(e)}"
+                )
+            return RichSendResult(
+                success=False,
+                fallback_allowed=True,
+                capability_error=capability,
+                error=format_error(e),
+            )
+        PrintStyle.error(
+            f"Telegram rich message transient failure, not legacy-resending: {format_error(e)}"
+        )
+        return RichSendResult(
+            success=False,
+            fallback_allowed=False,
+            error=format_error(e),
+        )
 
 # Files and images / audio
 

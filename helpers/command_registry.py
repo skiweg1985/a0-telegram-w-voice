@@ -104,6 +104,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/stop — abort the running agent task",
     ),
     (
+        "reload",
+        "Reload Agent Zero",
+        "/reload — reload Agent Zero after admin confirmation",
+    ),
+    (
         "project",
         "Show or switch project",
         "/project [name] — list + buttons or switch by name",

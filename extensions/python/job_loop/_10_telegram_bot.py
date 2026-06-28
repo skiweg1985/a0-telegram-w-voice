@@ -60,6 +60,7 @@ class TelegramBotManager(Extension):
         handle_compact = _tg_handler.handle_compact
         handle_shortcut = getattr(_tg_handler, "handle_shortcut", None)
         handle_stop = _tg_handler.handle_stop
+        handle_reload = getattr(_tg_handler, "handle_reload", None)
         handle_pause = _tg_handler.handle_pause
         handle_resume = _tg_handler.handle_resume
         handle_project = _tg_handler.handle_project
@@ -67,6 +68,7 @@ class TelegramBotManager(Extension):
         handle_message = _tg_handler.handle_message
         handle_callback_query = _tg_handler.handle_callback_query
         handle_new_members = _tg_handler.handle_new_members
+        notify_pending_reload_restart = getattr(_tg_handler, "notify_pending_reload_restart", None)
         cleanup_old_attachments = _tg_handler.cleanup_old_attachments
         handle_retry = getattr(_tg_handler, "handle_retry", None)
         handle_undo = getattr(_tg_handler, "handle_undo", None)
@@ -166,6 +168,11 @@ class TelegramBotManager(Extension):
                     else None
                 )
                 _on_stop = partial(_make_handler(handle_stop), bot_name=name, bot_cfg=bot_cfg)
+                _on_reload = (
+                    partial(_make_handler(handle_reload), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_reload
+                    else None
+                )
                 _on_pause = partial(_make_handler(handle_pause), bot_name=name, bot_cfg=bot_cfg)
                 _on_resume = partial(_make_handler(handle_resume), bot_name=name, bot_cfg=bot_cfg)
                 _on_project = partial(_make_handler(handle_project), bot_name=name, bot_cfg=bot_cfg)
@@ -197,6 +204,7 @@ class TelegramBotManager(Extension):
                         ("compact", _on_compact),
                         *(([("shortcut", _on_shortcut)]) if _on_shortcut else []),
                         ("stop", _on_stop),
+                        *(([("reload", _on_reload)]) if _on_reload else []),
                         ("pause", _on_pause),
                         ("resume", _on_resume),
                         ("project", _on_project),
@@ -233,6 +241,9 @@ class TelegramBotManager(Extension):
                         continue
                 else:
                     await start_polling(instance)
+
+                if notify_pending_reload_restart:
+                    await notify_pending_reload_restart(instance.bot.token, name, bot_cfg)
 
                 PrintStyle.success(f"Telegram ({name}): bot started in {mode} mode")
 

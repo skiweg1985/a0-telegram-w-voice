@@ -75,6 +75,7 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_STREAM_LAST_FLUSH_TS,
     CTX_TG_FINAL_REPLY_SENT,
     CTX_TG_FINAL_REPLY_DELIVERED,
+    CTX_TG_RICH_SEND_DISABLED,
     CTX_TG_LAST_TEXT_RESPONSE,
     CTX_TG_LAST_TEXT_RESPONSE_TOKEN,
     CTX_TG_LAST_RESPONSE_ACTION_TOKEN,
@@ -251,6 +252,204 @@ def _parse_plugin_ui_callback(data: str) -> tuple[str, str] | None:
     if not kind or not payload:
         return None
     return kind, payload
+
+
+_RELOAD_PENDING_TTL_SEC = 300
+_RELOAD_DELAY_SEC = 0.75
+_RELOAD_RESTART_MARKER_TTL_SEC = 600
+_RELOAD_RESTART_NOTICE_MARKDOWN = """## ♻️ Agent Zero restarted
+
+- **Telegram bot:** connected
+- **Reload:** completed
+
+Ready again."""
+
+
+def _reload_confirmation_keyboard(token: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "✅ Yes", "callback_data": f"{p}rl|approve:{token}"},
+            {"text": "✖️ No", "callback_data": f"{p}rl|cancel:{token}"},
+        ],
+    ]
+
+
+def _coerce_config_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled", ""}:
+            return False
+        return default
+    return bool(value)
+
+
+def _reload_command_enabled(bot_cfg: dict) -> bool:
+    return _coerce_config_bool((bot_cfg or {}).get("allow_restart_command"), False)
+
+
+def _reload_state_key(bot_name: str, user_id: int, chat_id: int) -> str:
+    return _map_key(bot_name, user_id, chat_id)
+
+
+def _store_pending_reload(bot_name: str, user_id: int, chat_id: int) -> str:
+    token = uuid.uuid4().hex
+    key = _reload_state_key(bot_name, user_id, chat_id)
+    now = int(time.time())
+    with _chat_map_lock:
+        state = _load_state()
+        pending = state.setdefault("pending_reload", {})
+        if not isinstance(pending, dict):
+            pending = {}
+            state["pending_reload"] = pending
+        pending[key] = {
+            "token": token,
+            "expires": now + _RELOAD_PENDING_TTL_SEC,
+        }
+        _save_state(state)
+    return token
+
+
+def _pop_pending_reload(bot_name: str, user_id: int, chat_id: int, token: str) -> bool:
+    key = _reload_state_key(bot_name, user_id, chat_id)
+    now = int(time.time())
+    ok = False
+    with _chat_map_lock:
+        state = _load_state()
+        pending = state.get("pending_reload")
+        if not isinstance(pending, dict):
+            pending = {}
+            state["pending_reload"] = pending
+        entry = pending.get(key)
+        if isinstance(entry, dict):
+            stored_token = str(entry.get("token") or "")
+            try:
+                expires = int(entry.get("expires") or 0)
+            except Exception:
+                expires = 0
+            ok = bool(token and stored_token == token and expires >= now)
+        if key in pending:
+            pending.pop(key, None)
+            _save_state(state)
+    return ok
+
+
+def _clear_pending_reload(bot_name: str, user_id: int, chat_id: int, token: str | None = None) -> bool:
+    key = _reload_state_key(bot_name, user_id, chat_id)
+    cleared = False
+    with _chat_map_lock:
+        state = _load_state()
+        pending = state.get("pending_reload")
+        if not isinstance(pending, dict):
+            return False
+        entry = pending.get(key)
+        if isinstance(entry, dict) and (token is None or str(entry.get("token") or "") == token):
+            pending.pop(key, None)
+            cleared = True
+            _save_state(state)
+    return cleared
+
+
+def _store_reload_restart_marker(bot_name: str, user_id: int, username: str | None, chat_id: int) -> None:
+    now = int(time.time())
+    with _chat_map_lock:
+        state = _load_state()
+        markers = state.setdefault("reload_restart_notifications", {})
+        if not isinstance(markers, dict):
+            markers = {}
+            state["reload_restart_notifications"] = markers
+        markers[str(bot_name)] = {
+            "bot_name": bot_name,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "username": username or "",
+            "requested_at": now,
+            "expires": now + _RELOAD_RESTART_MARKER_TTL_SEC,
+            "status": "pending",
+        }
+        _save_state(state)
+
+
+def _load_reload_restart_marker(bot_name: str) -> dict | None:
+    now = int(time.time())
+    with _chat_map_lock:
+        state = _load_state()
+        markers = state.get("reload_restart_notifications")
+        if not isinstance(markers, dict):
+            return None
+        marker = markers.get(str(bot_name))
+        if not isinstance(marker, dict):
+            return None
+        try:
+            expires = int(marker.get("expires") or 0)
+        except Exception:
+            expires = 0
+        if expires < now:
+            markers.pop(str(bot_name), None)
+            _save_state(state)
+            return None
+        return dict(marker)
+
+
+def _clear_reload_restart_marker(bot_name: str) -> bool:
+    cleared = False
+    with _chat_map_lock:
+        state = _load_state()
+        markers = state.get("reload_restart_notifications")
+        if not isinstance(markers, dict):
+            return False
+        if str(bot_name) in markers:
+            markers.pop(str(bot_name), None)
+            cleared = True
+            _save_state(state)
+    return cleared
+
+
+async def notify_pending_reload_restart(token: str, bot_name: str, bot_cfg: dict | None = None) -> bool:
+    marker = _load_reload_restart_marker(bot_name)
+    if not marker:
+        return False
+    try:
+        chat_id = int(marker.get("chat_id"))
+    except Exception:
+        _clear_reload_restart_marker(bot_name)
+        PrintStyle.warning(f"Telegram ({bot_name}): reload restart marker has no valid chat_id")
+        return False
+    try:
+        async with _temp_bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+            await _send_telegram_text_message(
+                bot,
+                chat_id,
+                _RELOAD_RESTART_NOTICE_MARKDOWN,
+                keyboard=None,
+                reply_to=None,
+                bot_cfg=bot_cfg or {},
+                ctx_data={},
+            )
+    except Exception as e:
+        PrintStyle.warning(
+            f"Telegram ({bot_name}): failed to send reload restart notification: {format_error(e)}"
+        )
+        return False
+    _clear_reload_restart_marker(bot_name)
+    return True
+
+
+async def _delayed_process_reload(delay: float = _RELOAD_DELAY_SEC):
+    await asyncio.sleep(delay)
+    from helpers import process
+
+    process.reload()
+
+
+def _schedule_agent_zero_reload():
+    asyncio.create_task(_delayed_process_reload())
 
 
 def _optimize_output_inline_keyboard() -> list[list[dict]]:
@@ -1599,6 +1798,25 @@ def _is_allowed(bot_cfg: dict, user_id: int, username: str | None) -> bool:
     return False
 
 
+def _is_admin_user(bot_cfg: dict, user_id: int, username: str | None) -> bool:
+    admin_users = bot_cfg.get("admin_users") or []
+    if not admin_users:
+        return False
+    for entry in admin_users:
+        entry_str = str(entry).strip()
+        if entry_str.startswith("@"):
+            if username and f"@{username}".lower() == entry_str.lower():
+                return True
+        else:
+            try:
+                if int(entry_str) == user_id:
+                    return True
+            except ValueError:
+                if username and entry_str.lower() == username.lower():
+                    return True
+    return False
+
+
 # Throttle window for the "not authorized" notice so a blocked user is told once
 # per window instead of on every message (seconds).
 _UNAUTHORIZED_NOTICE_TTL = 3600
@@ -2474,6 +2692,44 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+async def handle_reload(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /reload - confirm and reload the Agent Zero process."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    token = instance.bot.token
+    chat_id = message.chat.id
+
+    if not _reload_command_enabled(bot_cfg):
+        await _send_with_temp_bot(
+            token,
+            chat_id,
+            "Reload command is disabled for this bot.",
+            parse_mode=None,
+        )
+        return
+    if not _is_admin_user(bot_cfg, user.id, user.username):
+        await _send_with_temp_bot(
+            token,
+            chat_id,
+            "Reload is restricted to bot admins.",
+            parse_mode=None,
+        )
+        return
+
+    reload_token = _store_pending_reload(bot_name, user.id, chat_id)
+    await _send_with_temp_bot(
+        token,
+        chat_id,
+        "Reload Agent Zero?\n\nThis restarts the Agent Zero process and briefly disconnects Telegram/WebUI.",
+        parse_mode=None,
+        keyboard=_reload_confirmation_keyboard(reload_token),
+    )
+
+
 async def handle_pause(message: TgMessage, bot_name: str, bot_cfg: dict):
     user = message.from_user
     if not user or not _is_allowed(bot_cfg, user.id, user.username):
@@ -2942,6 +3198,50 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
         token = instance.bot.token
         chat_id = query.message.chat.id
+
+        if kind == "rl":
+            if not _reload_command_enabled(bot_cfg):
+                await query.answer("Reload disabled.")
+                return
+            if not _is_admin_user(bot_cfg, user.id, user.username):
+                await query.answer("Admins only.")
+                return
+            if ":" not in payload:
+                await query.answer("Invalid reload request.")
+                return
+            action, reload_token = payload.split(":", 1)
+            if action == "cancel":
+                _clear_pending_reload(bot_name, user.id, chat_id, reload_token)
+                await query.answer("Cancelled")
+                await _send_with_temp_bot(
+                    token,
+                    chat_id,
+                    "Reload cancelled.",
+                    parse_mode=None,
+                )
+                return
+            if action == "approve":
+                if not _pop_pending_reload(bot_name, user.id, chat_id, reload_token):
+                    await query.answer("Reload request expired.")
+                    await _send_with_temp_bot(
+                        token,
+                        chat_id,
+                        "Reload request expired. Send /reload again.",
+                        parse_mode=None,
+                    )
+                    return
+                await query.answer("Reloading")
+                await _send_with_temp_bot(
+                    token,
+                    chat_id,
+                    "Reloading Agent Zero...",
+                    parse_mode=None,
+                )
+                _store_reload_restart_marker(bot_name, user.id, user.username, chat_id)
+                _schedule_agent_zero_reload()
+                return
+            await query.answer("Invalid reload request.")
+            return
 
         if kind in {"s", "ss"}:
             ok, reply, target_ctx = _activate_existing_session(
@@ -4665,7 +4965,28 @@ async def _send_telegram_text_message(
     keyboard: list[list[dict]] | None,
     reply_to: int | None,
     reply_markup=None,
+    bot_cfg: dict | None = None,
+    ctx_data: dict | None = None,
 ) -> int | None:
+    rich_markup = tc.build_inline_keyboard(keyboard) if keyboard else reply_markup
+    if _should_attempt_final_rich_text(bot_cfg or {}, ctx_data or {}, text_body):
+        result = await tc.send_rich_text(
+            reply_bot,
+            chat_id,
+            text_body,
+            reply_to_message_id=reply_to,
+            reply_markup=rich_markup,
+        )
+        if result.success:
+            return result.message_id
+        if result.capability_error and ctx_data is not None:
+            ctx_data[CTX_TG_RICH_SEND_DISABLED] = True
+        if not result.fallback_allowed:
+            raise RuntimeError(
+                "Telegram rich message failed without safe legacy fallback"
+                + (f": {result.error}" if result.error else "")
+            )
+
     html_text = tc.md_to_telegram_html(text_body)
     if keyboard:
         return await tc.send_text_with_keyboard(
@@ -4681,6 +5002,20 @@ async def _send_telegram_text_message(
         html_text,
         reply_to_message_id=reply_to,
         reply_markup=reply_markup,
+    )
+
+
+def _should_attempt_final_rich_text(
+    bot_cfg: dict,
+    ctx_data: dict,
+    text_body: str,
+) -> bool:
+    settings = tc.rich_messages_settings(bot_cfg)
+    return bool(
+        settings.get("enabled")
+        and not ctx_data.get(CTX_TG_RICH_SEND_DISABLED)
+        and tc.rich_message_eligible(text_body)
+        and tc.rich_content_fits_limits(text_body)
     )
 
 
@@ -5344,10 +5679,16 @@ async def send_telegram_reply(
             sent_text = False
             if should_send_text:
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+                rich_final_candidate = _should_attempt_final_rich_text(
+                    bot_cfg,
+                    context.data,
+                    text_body,
+                )
                 use_final_edit = bool(
                     progress_message_id
                     and not planned_items
                     and not used_native_draft
+                    and not rich_final_candidate
                 )
 
                 edited = False
@@ -5371,6 +5712,8 @@ async def send_telegram_reply(
                         final_keyboard,
                         reply_to,
                         reply_markup=reply_keyboard,
+                        bot_cfg=bot_cfg,
+                        ctx_data=context.data,
                     )
                     sent_text = bool(msg_id)
 

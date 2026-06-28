@@ -132,6 +132,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/compact` | Compress history (utility LLM) |
 | `/shortcut` | No arg shows inline buttons; `shorter` / `longer` rewrite the last answer; `summary` delivers a utility-LLM session summary as a separate message |
 | `/stop` | Abort running task |
+| `/reload` | Reload Agent Zero after admin confirmation |
 | `/project` | Active + available projects + **buttons**; or `/project <name>` |
 | `/model` | Show current model + **preset buttons**; or `/model <preset>` |
 | `/pause` / `/resume` | Pause or resume agent loop |
@@ -147,6 +148,8 @@ bots:
     token: "<telegram-bot-token>"
     mode: polling
     allowed_users: ["123456789"]
+    allow_restart_command: false
+    admin_users: ["123456789"]
 
     telegram_detail_level: info                 # off | info | smart | debug (verbose alias in chat)
     telegram_detail_execute_before: true        # default; set false to hide tool-start lines and only show completion-time detail
@@ -155,6 +158,10 @@ bots:
     telegram_detail_icons_enabled: true          # emoji prefix per step
     # telegram_detail_tool_icons: {}             # override icons, e.g. { "memory_load": "\U0001f4cc" }
     # telegram_detail_max_body_chars: 3200       # verbose JSON truncation limit
+
+    rich_messages:
+      enabled: false        # opt-in native final replies for tables/task lists/headings/details/math
+      drafts_enabled: false # separate opt-in switch reserved for rich live previews
 
     progress:
       edit_throttle_ms: 200
@@ -211,6 +218,8 @@ bots:
 - For OpenAI-compatible Gemini PCM (`format: "pcm"`), the plugin assumes raw PCM `s16le`, `24000 Hz`, mono and converts it automatically before sending to Telegram.
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
+- **Reload command**: `/reload` is opt-in via `allow_restart_command: true`, requires the Telegram user to match `admin_users`, and always asks for inline Approve/Cancel confirmation before calling Agent Zero's internal reload mechanism. After the Telegram bot reconnects, it sends a one-time restart confirmation to the chat that approved the reload.
+- **Rich Messages**: final assistant replies can opt into Telegram Bot API native rich rendering for tables, task lists, headings, details, and math via `rich_messages.enabled` or the WebUI toggle. When enabled, the Telegram system prompt lets the agent use those structures when useful. The default stays off for copyability and client compatibility; live draft previews remain on the existing path unless `rich_messages.drafts_enabled` is enabled by a future implementation.
 - **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
 - **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
 - Publishing to the Plugin Index: use `name` without a leading underscore. The exact Plugin Index repository/path is not part of this repo; verify current upstream publishing instructions before opening an index PR.

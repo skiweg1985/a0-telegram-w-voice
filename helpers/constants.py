@@ -49,6 +49,7 @@ CTX_TG_STREAM_LAST_FLUSH_RAW_LEN = "_telegram_stream_last_flush_raw_len"
 CTX_TG_STREAM_LAST_FLUSH_TS = "_telegram_stream_last_flush_ts"
 CTX_TG_FINAL_REPLY_SENT = "_telegram_final_reply_sent"
 CTX_TG_FINAL_REPLY_DELIVERED = "_telegram_final_reply_delivered"
+CTX_TG_RICH_SEND_DISABLED = "_telegram_rich_send_disabled"
 
 # Last text reply + reveal-button token for voice replies whose text stays hidden.
 # Persisted (no leading underscore) so the button survives bot restarts / context reloads.

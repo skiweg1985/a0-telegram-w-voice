@@ -48,6 +48,8 @@ export const store = createStore("telegramConfig", {
       webhook_url: "",
       webhook_secret: "",
       allowed_users: [],
+      allow_restart_command: false,
+      admin_users: [],
       group_mode: "mention",
       welcome_enabled: false,
       welcome_message: "",
@@ -56,6 +58,10 @@ export const store = createStore("telegramConfig", {
       agent_instructions: "",
       attachment_max_age_hours: 0,
       telegram_detail_level: "info",
+      rich_messages: {
+        enabled: false,
+        drafts_enabled: false,
+      },
       progress: {
         edit_throttle_ms: 200,
         completed_mode: "delete",
@@ -115,6 +121,11 @@ export const store = createStore("telegramConfig", {
     bot.progress = { ...d, ...(bot.progress || {}) };
   },
 
+  ensureRichMessages(bot) {
+    const d = this.defaultBot().rich_messages;
+    bot.rich_messages = { ...d, ...(bot.rich_messages || {}) };
+  },
+
 
   addBot(config) {
     if (!config.bots) config.bots = [];
@@ -154,6 +165,17 @@ export const store = createStore("telegramConfig", {
 
   setWhitelist(bot, val) {
     bot.allowed_users = val
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s);
+  },
+
+  adminUsersText(bot) {
+    return (bot.admin_users || []).join(", ");
+  },
+
+  setAdminUsers(bot, val) {
+    bot.admin_users = val
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s);
