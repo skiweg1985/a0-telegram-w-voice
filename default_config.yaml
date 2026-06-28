@@ -8,6 +8,8 @@ bots: []
 #   webhook_url: ""              # required if mode=webhook, your A0 base URL e.g. https://yourdomain.com (webhook path appended automatically)
 #   webhook_secret: ""           # optional shared secret for webhook verification
 #   allowed_users: []            # Telegram user IDs or @usernames. Empty = allow all.
+#   allow_restart_command: false # Enable /reload for admin_users only.
+#   admin_users: []              # Telegram user IDs or @usernames allowed to reload Agent Zero. Empty = nobody can reload.
 #   group_mode: mention          # mention (respond when @mentioned or replied to) | all (respond to every message) | off (ignore groups)
 #   welcome_enabled: false       # Send a greeting when someone joins the group
 #   welcome_message: ""          # Welcome template. Use {name} for the new member's name. Default: "Welcome, {name}!"

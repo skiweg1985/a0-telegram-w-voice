@@ -48,6 +48,8 @@ export const store = createStore("telegramConfig", {
       webhook_url: "",
       webhook_secret: "",
       allowed_users: [],
+      allow_restart_command: false,
+      admin_users: [],
       group_mode: "mention",
       welcome_enabled: false,
       welcome_message: "",
@@ -163,6 +165,17 @@ export const store = createStore("telegramConfig", {
 
   setWhitelist(bot, val) {
     bot.allowed_users = val
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s);
+  },
+
+  adminUsersText(bot) {
+    return (bot.admin_users || []).join(", ");
+  },
+
+  setAdminUsers(bot, val) {
+    bot.admin_users = val
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s);

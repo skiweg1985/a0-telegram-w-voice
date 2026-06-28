@@ -25,6 +25,7 @@ Older entries are chronological release history and may mention commands/feature
 - WebUI + YAML opt-in for Telegram Bot API rich final replies (`rich_messages.enabled`) with a separate reserved switch for rich draft previews (`rich_messages.drafts_enabled`). Defaults stay off for client compatibility and copyability.
 - When rich final replies are enabled, Telegram system prompts now let the agent use tables, task lists, short headings, details, and math when they improve readability.
 - Rich-message prompt guidance now documents the confirmed Telegram syntax for headings, text formatting, links, blockquotes, ordered/unordered/task lists, aligned tables, fenced code blocks, math, and collapsible `<details>` sections.
+- Opt-in `/reload` command for Telegram bot admins. It requires `allow_restart_command: true`, a matching `admin_users` entry, and an inline Approve/Cancel confirmation before Agent Zero reloads.
 
 ### Removed
 

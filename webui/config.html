@@ -186,6 +186,32 @@
 
               <div class="field">
                 <div class="field-label">
+                  <div class="field-title">Reload Command</div>
+                  <div class="field-description">Enable /reload for admin users after Telegram confirmation</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.allow_restart_command" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field" x-show="bot.allow_restart_command">
+                <div class="field-label">
+                  <div class="field-title">Reload Admins</div>
+                  <div class="field-description">Comma-separated user IDs or @usernames allowed to use /reload. Empty = nobody can reload</div>
+                </div>
+                <div class="field-control">
+                  <input type="text"
+                         x-effect="if (document.activeElement !== $el) $el.value = $store.telegramConfig.adminUsersText(bot)"
+                         @change="$store.telegramConfig.setAdminUsers(bot, $event.target.value)"
+                         placeholder="123456789, @username" />
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
                   <div class="field-title">Group Mode</div>
                   <div class="field-description">How the bot responds in group chats</div>
                 </div>

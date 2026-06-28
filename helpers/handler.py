@@ -254,6 +254,112 @@ def _parse_plugin_ui_callback(data: str) -> tuple[str, str] | None:
     return kind, payload
 
 
+_RELOAD_PENDING_TTL_SEC = 300
+_RELOAD_DELAY_SEC = 0.75
+
+
+def _reload_confirmation_keyboard(token: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": "Reload Agent Zero", "callback_data": f"{p}rl|approve:{token}"},
+            {"text": "Cancel", "callback_data": f"{p}rl|cancel:{token}"},
+        ],
+    ]
+
+
+def _coerce_config_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled", ""}:
+            return False
+        return default
+    return bool(value)
+
+
+def _reload_command_enabled(bot_cfg: dict) -> bool:
+    return _coerce_config_bool((bot_cfg or {}).get("allow_restart_command"), False)
+
+
+def _reload_state_key(bot_name: str, user_id: int, chat_id: int) -> str:
+    return _map_key(bot_name, user_id, chat_id)
+
+
+def _store_pending_reload(bot_name: str, user_id: int, chat_id: int) -> str:
+    token = uuid.uuid4().hex
+    key = _reload_state_key(bot_name, user_id, chat_id)
+    now = int(time.time())
+    with _chat_map_lock:
+        state = _load_state()
+        pending = state.setdefault("pending_reload", {})
+        if not isinstance(pending, dict):
+            pending = {}
+            state["pending_reload"] = pending
+        pending[key] = {
+            "token": token,
+            "expires": now + _RELOAD_PENDING_TTL_SEC,
+        }
+        _save_state(state)
+    return token
+
+
+def _pop_pending_reload(bot_name: str, user_id: int, chat_id: int, token: str) -> bool:
+    key = _reload_state_key(bot_name, user_id, chat_id)
+    now = int(time.time())
+    ok = False
+    with _chat_map_lock:
+        state = _load_state()
+        pending = state.get("pending_reload")
+        if not isinstance(pending, dict):
+            pending = {}
+            state["pending_reload"] = pending
+        entry = pending.get(key)
+        if isinstance(entry, dict):
+            stored_token = str(entry.get("token") or "")
+            try:
+                expires = int(entry.get("expires") or 0)
+            except Exception:
+                expires = 0
+            ok = bool(token and stored_token == token and expires >= now)
+        if key in pending:
+            pending.pop(key, None)
+            _save_state(state)
+    return ok
+
+
+def _clear_pending_reload(bot_name: str, user_id: int, chat_id: int, token: str | None = None) -> bool:
+    key = _reload_state_key(bot_name, user_id, chat_id)
+    cleared = False
+    with _chat_map_lock:
+        state = _load_state()
+        pending = state.get("pending_reload")
+        if not isinstance(pending, dict):
+            return False
+        entry = pending.get(key)
+        if isinstance(entry, dict) and (token is None or str(entry.get("token") or "") == token):
+            pending.pop(key, None)
+            cleared = True
+            _save_state(state)
+    return cleared
+
+
+async def _delayed_process_reload(delay: float = _RELOAD_DELAY_SEC):
+    await asyncio.sleep(delay)
+    from helpers import process
+
+    process.reload()
+
+
+def _schedule_agent_zero_reload():
+    asyncio.create_task(_delayed_process_reload())
+
+
 def _optimize_output_inline_keyboard() -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     return [
@@ -1600,6 +1706,25 @@ def _is_allowed(bot_cfg: dict, user_id: int, username: str | None) -> bool:
     return False
 
 
+def _is_admin_user(bot_cfg: dict, user_id: int, username: str | None) -> bool:
+    admin_users = bot_cfg.get("admin_users") or []
+    if not admin_users:
+        return False
+    for entry in admin_users:
+        entry_str = str(entry).strip()
+        if entry_str.startswith("@"):
+            if username and f"@{username}".lower() == entry_str.lower():
+                return True
+        else:
+            try:
+                if int(entry_str) == user_id:
+                    return True
+            except ValueError:
+                if username and entry_str.lower() == username.lower():
+                    return True
+    return False
+
+
 # Throttle window for the "not authorized" notice so a blocked user is told once
 # per window instead of on every message (seconds).
 _UNAUTHORIZED_NOTICE_TTL = 3600
@@ -2475,6 +2600,44 @@ async def handle_stop(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+async def handle_reload(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /reload - confirm and reload the Agent Zero process."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    token = instance.bot.token
+    chat_id = message.chat.id
+
+    if not _reload_command_enabled(bot_cfg):
+        await _send_with_temp_bot(
+            token,
+            chat_id,
+            "Reload command is disabled for this bot.",
+            parse_mode=None,
+        )
+        return
+    if not _is_admin_user(bot_cfg, user.id, user.username):
+        await _send_with_temp_bot(
+            token,
+            chat_id,
+            "Reload is restricted to bot admins.",
+            parse_mode=None,
+        )
+        return
+
+    reload_token = _store_pending_reload(bot_name, user.id, chat_id)
+    await _send_with_temp_bot(
+        token,
+        chat_id,
+        "Reload Agent Zero?\n\nThis restarts the Agent Zero process and briefly disconnects Telegram/WebUI.",
+        parse_mode=None,
+        keyboard=_reload_confirmation_keyboard(reload_token),
+    )
+
+
 async def handle_pause(message: TgMessage, bot_name: str, bot_cfg: dict):
     user = message.from_user
     if not user or not _is_allowed(bot_cfg, user.id, user.username):
@@ -2943,6 +3106,49 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             return
         token = instance.bot.token
         chat_id = query.message.chat.id
+
+        if kind == "rl":
+            if not _reload_command_enabled(bot_cfg):
+                await query.answer("Reload disabled.")
+                return
+            if not _is_admin_user(bot_cfg, user.id, user.username):
+                await query.answer("Admins only.")
+                return
+            if ":" not in payload:
+                await query.answer("Invalid reload request.")
+                return
+            action, reload_token = payload.split(":", 1)
+            if action == "cancel":
+                _clear_pending_reload(bot_name, user.id, chat_id, reload_token)
+                await query.answer("Cancelled")
+                await _send_with_temp_bot(
+                    token,
+                    chat_id,
+                    "Reload cancelled.",
+                    parse_mode=None,
+                )
+                return
+            if action == "approve":
+                if not _pop_pending_reload(bot_name, user.id, chat_id, reload_token):
+                    await query.answer("Reload request expired.")
+                    await _send_with_temp_bot(
+                        token,
+                        chat_id,
+                        "Reload request expired. Send /reload again.",
+                        parse_mode=None,
+                    )
+                    return
+                await query.answer("Reloading")
+                await _send_with_temp_bot(
+                    token,
+                    chat_id,
+                    "Reloading Agent Zero...",
+                    parse_mode=None,
+                )
+                _schedule_agent_zero_reload()
+                return
+            await query.answer("Invalid reload request.")
+            return
 
         if kind in {"s", "ss"}:
             ok, reply, target_ctx = _activate_existing_session(
