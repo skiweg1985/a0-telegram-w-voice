@@ -1886,7 +1886,6 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         "\u2699\ufe0f /status shows the current modes.\n"
         "\U0001f5d1 /clear resets this conversation. /help lists all commands.",
         parse_mode=None,
-        reply_markup=reply_markup,
     )
 
     # Ensure a chat context exists
@@ -1928,11 +1927,10 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     instance = get_bot(bot_name)
     if instance:
-            await _send_with_temp_bot(
+        await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Chat cleared. Send a new message to start fresh.",
             parse_mode=None,
-            reply_markup=reply_markup,
         )
 
     # Send notification
@@ -3082,6 +3080,17 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                 )
             return
 
+        is_running = getattr(context, "is_running", None)
+        if callable(is_running) and is_running():
+            _stop_typing_handle(typing_stop)
+            await _send_with_temp_bot(
+                instance.bot.token,
+                message.chat.id,
+                "Agent is still working — use /stop first, then send your next message again.",
+                parse_mode=None,
+            )
+            return
+
         # New user turn: clear stale progress message state
         _clear_progress_state(context)
 
@@ -3523,6 +3532,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     return
                 voice_file = None
                 voice_stop = None
+                await query.answer("Converting to voice...")
                 try:
                     async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
                         reply_cfg = speech.voice_reply_settings(bot_cfg)
@@ -3533,16 +3543,23 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                             bot_cfg,
                             source_answer[:max_chars],
                         )
-                        await tc.send_voice(
+                        msg_id = await tc.send_voice(
                             bot,
                             chat_id,
                             voice_file,
                             reply_to_message_id=(query.message.message_id if query.message else None),
                         )
-                    await query.answer("Sent as voice")
+                        if not msg_id:
+                            raise RuntimeError("Telegram voice message was not delivered.")
                 except Exception as e:
                     PrintStyle.error(f"Telegram response to_voice failed: {format_error(e)}")
-                    await query.answer("Voice conversion failed.")
+                    with suppress(Exception):
+                        await _send_with_temp_bot(
+                            token,
+                            chat_id,
+                            "Voice conversion failed.",
+                            parse_mode=None,
+                        )
                 finally:
                     if context.data.get(CTX_TG_RECORD_VOICE_STOP) is voice_stop:
                         _stop_context_record_voice(context)
@@ -5413,6 +5430,8 @@ async def send_telegram_inline_response(
         response_text,
         keyboard,
     )
+    intended_payload = bool(planned_items or text_body)
+    delivered_payload = False
 
     try:
         async with _temp_bot(
@@ -5423,24 +5442,26 @@ async def send_telegram_inline_response(
                 outbound_reply_markup = media_reply_markup
                 if outbound_reply_markup is None and not text_body:
                     outbound_reply_markup = reply_keyboard
-                await _send_outbound_items(
+                delivered_payload = bool(await _send_outbound_items(
                     reply_bot,
                     chat_id,
                     planned_items,
                     reply_to,
                     reply_markup=outbound_reply_markup,
-                )
+                )) or delivered_payload
 
             if text_body:
-                await _send_telegram_text_message(
+                delivered_payload = bool(await _send_telegram_text_message(
                     reply_bot,
                     chat_id,
                     text_body,
                     keyboard,
                     reply_to,
                     reply_markup=reply_keyboard,
-                )
+                )) or delivered_payload
 
+        if intended_payload and not delivered_payload:
+            return "Telegram inline reply was not delivered."
         return None
 
     except Exception as e:
@@ -5737,11 +5758,14 @@ async def send_telegram_reply(
                 or sent_voice
                 or sent_artifact_count
             )
+            delivery_error = None
+            if has_answer_payload and not context.data[CTX_TG_FINAL_REPLY_DELIVERED]:
+                delivery_error = "Telegram final reply was not delivered."
             _clear_progress_state(context)
 
         # Persist the reveal-button token/text so "Show text" survives restarts.
         save_tmp_chat(context)
-        return None
+        return delivery_error
 
     except Exception as e:
         error = format_error(e)
