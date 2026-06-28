@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_HOOK_PATH = REPO_ROOT / "extensions" / "python" / "system_prompt" / "_20_telegram_context.py"
+RICH_PROMPT_PATH = REPO_ROOT / "prompts" / "fw.telegram.rich_messages.md"
 
 
 class _Extension:
@@ -152,6 +153,20 @@ class TelegramSystemPromptTests(unittest.TestCase):
             agent.prompts[-1],
             ("fw.telegram.optimize_output_text.md", {"also_send_text": True}),
         )
+
+    def test_rich_prompt_documents_confirmed_markdown_elements(self):
+        prompt = RICH_PROMPT_PATH.read_text(encoding="utf-8")
+
+        for expected in (
+            "task lists",
+            "Markdown tables",
+            "| Name | Status |",
+            "<details>",
+            "<summary>",
+            "$...$",
+            "fenced code blocks",
+        ):
+            self.assertIn(expected, prompt)
 
 
 if __name__ == "__main__":
