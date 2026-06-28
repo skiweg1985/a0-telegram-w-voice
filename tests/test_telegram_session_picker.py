@@ -558,8 +558,8 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         self.assertIn("Reload Agent Zero?", sent[-1][0][2])
         keyboard = sent[-1][1]["keyboard"]
-        self.assertEqual(keyboard[0][0]["text"], "Reload Agent Zero")
-        self.assertEqual(keyboard[0][1]["text"], "Cancel")
+        self.assertEqual(keyboard[0][0]["text"], "✅ Reload Agent Zero")
+        self.assertEqual(keyboard[0][1]["text"], "✖️ Cancel")
         self.assertTrue(keyboard[0][0]["callback_data"].startswith(f"{handler.TG_UI_CALLBACK_PREFIX}rl|approve:"))
         self.assertTrue(keyboard[0][1]["callback_data"].startswith(f"{handler.TG_UI_CALLBACK_PREFIX}rl|cancel:"))
         key = handler._reload_state_key("mainbot", 42, 99)

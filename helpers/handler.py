@@ -269,8 +269,8 @@ def _reload_confirmation_keyboard(token: str) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     return [
         [
-            {"text": "Reload Agent Zero", "callback_data": f"{p}rl|approve:{token}"},
-            {"text": "Cancel", "callback_data": f"{p}rl|cancel:{token}"},
+            {"text": "✅ Reload Agent Zero", "callback_data": f"{p}rl|approve:{token}"},
+            {"text": "✖️ Cancel", "callback_data": f"{p}rl|cancel:{token}"},
         ],
     ]
 
