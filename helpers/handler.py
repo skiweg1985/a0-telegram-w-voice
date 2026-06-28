@@ -256,6 +256,8 @@ def _parse_plugin_ui_callback(data: str) -> tuple[str, str] | None:
 
 _RELOAD_PENDING_TTL_SEC = 300
 _RELOAD_DELAY_SEC = 0.75
+_RELOAD_RESTART_MARKER_TTL_SEC = 600
+_RELOAD_RESTART_NOTICE_TEXT = "Agent Zero restarted and Telegram bot is connected."
 
 
 def _reload_confirmation_keyboard(token: str) -> list[list[dict]]:
@@ -347,6 +349,87 @@ def _clear_pending_reload(bot_name: str, user_id: int, chat_id: int, token: str 
             cleared = True
             _save_state(state)
     return cleared
+
+
+def _store_reload_restart_marker(bot_name: str, user_id: int, username: str | None, chat_id: int) -> None:
+    now = int(time.time())
+    with _chat_map_lock:
+        state = _load_state()
+        markers = state.setdefault("reload_restart_notifications", {})
+        if not isinstance(markers, dict):
+            markers = {}
+            state["reload_restart_notifications"] = markers
+        markers[str(bot_name)] = {
+            "bot_name": bot_name,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "username": username or "",
+            "requested_at": now,
+            "expires": now + _RELOAD_RESTART_MARKER_TTL_SEC,
+            "status": "pending",
+        }
+        _save_state(state)
+
+
+def _load_reload_restart_marker(bot_name: str) -> dict | None:
+    now = int(time.time())
+    with _chat_map_lock:
+        state = _load_state()
+        markers = state.get("reload_restart_notifications")
+        if not isinstance(markers, dict):
+            return None
+        marker = markers.get(str(bot_name))
+        if not isinstance(marker, dict):
+            return None
+        try:
+            expires = int(marker.get("expires") or 0)
+        except Exception:
+            expires = 0
+        if expires < now:
+            markers.pop(str(bot_name), None)
+            _save_state(state)
+            return None
+        return dict(marker)
+
+
+def _clear_reload_restart_marker(bot_name: str) -> bool:
+    cleared = False
+    with _chat_map_lock:
+        state = _load_state()
+        markers = state.get("reload_restart_notifications")
+        if not isinstance(markers, dict):
+            return False
+        if str(bot_name) in markers:
+            markers.pop(str(bot_name), None)
+            cleared = True
+            _save_state(state)
+    return cleared
+
+
+async def notify_pending_reload_restart(token: str, bot_name: str, bot_cfg: dict | None = None) -> bool:
+    marker = _load_reload_restart_marker(bot_name)
+    if not marker:
+        return False
+    try:
+        chat_id = int(marker.get("chat_id"))
+    except Exception:
+        _clear_reload_restart_marker(bot_name)
+        PrintStyle.warning(f"Telegram ({bot_name}): reload restart marker has no valid chat_id")
+        return False
+    try:
+        await _send_with_temp_bot(
+            token,
+            chat_id,
+            _RELOAD_RESTART_NOTICE_TEXT,
+            parse_mode=None,
+        )
+    except Exception as e:
+        PrintStyle.warning(
+            f"Telegram ({bot_name}): failed to send reload restart notification: {format_error(e)}"
+        )
+        return False
+    _clear_reload_restart_marker(bot_name)
+    return True
 
 
 async def _delayed_process_reload(delay: float = _RELOAD_DELAY_SEC):
@@ -3145,6 +3228,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     "Reloading Agent Zero...",
                     parse_mode=None,
                 )
+                _store_reload_restart_marker(bot_name, user.id, user.username, chat_id)
                 _schedule_agent_zero_reload()
                 return
             await query.answer("Invalid reload request.")

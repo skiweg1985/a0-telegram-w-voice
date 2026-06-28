@@ -26,6 +26,7 @@ Older entries are chronological release history and may mention commands/feature
 - When rich final replies are enabled, Telegram system prompts now let the agent use tables, task lists, short headings, details, and math when they improve readability.
 - Rich-message prompt guidance now documents the confirmed Telegram syntax for headings, text formatting, links, blockquotes, ordered/unordered/task lists, aligned tables, fenced code blocks, math, and collapsible `<details>` sections.
 - Opt-in `/reload` command for Telegram bot admins. It requires `allow_restart_command: true`, a matching `admin_users` entry, and an inline Approve/Cancel confirmation before Agent Zero reloads.
+- `/reload` now leaves a short-lived restart marker and sends a one-time Telegram confirmation to the approving chat after the bot reconnects.
 
 ### Removed
 

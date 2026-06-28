@@ -633,6 +633,11 @@ class TelegramSessionPickerTests(unittest.TestCase):
         query.answer.assert_awaited_once_with("Reloading")
         self.assertIn("Reloading Agent Zero", sent[-1][0][2])
         self.assertEqual(saved[-1]["pending_reload"], {})
+        marker = saved[-1]["reload_restart_notifications"]["mainbot"]
+        self.assertEqual(marker["bot_name"], "mainbot")
+        self.assertEqual(marker["chat_id"], 99)
+        self.assertEqual(marker["user_id"], 42)
+        self.assertEqual(marker["username"], "benji")
         schedule.assert_called_once_with()
 
     def test_reload_approve_rejects_stale_token(self):
@@ -673,6 +678,99 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         sleep.assert_awaited_once_with(handler._RELOAD_DELAY_SEC)
         process.reload.assert_called_once_with()
+
+    def test_notify_pending_reload_restart_sends_and_clears_marker(self):
+        handler = self.handler
+        state = {
+            "reload_restart_notifications": {
+                "mainbot": {
+                    "bot_name": "mainbot",
+                    "chat_id": 99,
+                    "user_id": 42,
+                    "username": "benji",
+                    "requested_at": int(handler.time.time()),
+                    "expires": int(handler.time.time()) + 60,
+                    "status": "pending",
+                }
+            }
+        }
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_load_state", return_value=state), \
+             mock.patch.object(handler, "_save_state", side_effect=lambda current: saved.append(json.loads(json.dumps(current)))), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
+
+        self.assertTrue(result)
+        self.assertEqual(sent[-1][0][0], "tok")
+        self.assertEqual(sent[-1][0][1], 99)
+        self.assertIn("Telegram bot is connected", sent[-1][0][2])
+        self.assertEqual(saved[-1]["reload_restart_notifications"], {})
+
+    def test_notify_pending_reload_restart_drops_expired_marker_without_sending(self):
+        handler = self.handler
+        state = {
+            "reload_restart_notifications": {
+                "mainbot": {
+                    "bot_name": "mainbot",
+                    "chat_id": 99,
+                    "expires": int(handler.time.time()) - 1,
+                }
+            }
+        }
+        saved = []
+
+        with mock.patch.object(handler, "_load_state", return_value=state), \
+             mock.patch.object(handler, "_save_state", side_effect=lambda current: saved.append(json.loads(json.dumps(current)))), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()) as send_temp:
+            result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
+
+        self.assertFalse(result)
+        send_temp.assert_not_awaited()
+        self.assertEqual(saved[-1]["reload_restart_notifications"], {})
+
+    def test_notify_pending_reload_restart_ignores_other_bot_marker(self):
+        handler = self.handler
+        state = {
+            "reload_restart_notifications": {
+                "otherbot": {
+                    "bot_name": "otherbot",
+                    "chat_id": 99,
+                    "expires": int(handler.time.time()) + 60,
+                }
+            }
+        }
+
+        with mock.patch.object(handler, "_load_state", return_value=state), \
+             mock.patch.object(handler, "_save_state") as save_state, \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()) as send_temp:
+            result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
+
+        self.assertFalse(result)
+        send_temp.assert_not_awaited()
+        save_state.assert_not_called()
+
+    def test_notify_pending_reload_restart_keeps_marker_on_send_failure(self):
+        handler = self.handler
+        state = {
+            "reload_restart_notifications": {
+                "mainbot": {
+                    "bot_name": "mainbot",
+                    "chat_id": 99,
+                    "expires": int(handler.time.time()) + 60,
+                }
+            }
+        }
+
+        with mock.patch.object(handler, "_load_state", return_value=state), \
+             mock.patch.object(handler, "_save_state") as save_state, \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=RuntimeError("boom"))):
+            result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
+
+        self.assertFalse(result)
+        save_state.assert_not_called()
+        self.assertIn("mainbot", state["reload_restart_notifications"])
 
     def test_start_new_session_stops_old_typing_before_kill(self):
         handler = self.handler

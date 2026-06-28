@@ -68,6 +68,7 @@ class TelegramBotManager(Extension):
         handle_message = _tg_handler.handle_message
         handle_callback_query = _tg_handler.handle_callback_query
         handle_new_members = _tg_handler.handle_new_members
+        notify_pending_reload_restart = getattr(_tg_handler, "notify_pending_reload_restart", None)
         cleanup_old_attachments = _tg_handler.cleanup_old_attachments
         handle_retry = getattr(_tg_handler, "handle_retry", None)
         handle_undo = getattr(_tg_handler, "handle_undo", None)
@@ -240,6 +241,9 @@ class TelegramBotManager(Extension):
                         continue
                 else:
                     await start_polling(instance)
+
+                if notify_pending_reload_restart:
+                    await notify_pending_reload_restart(instance.bot.token, name, bot_cfg)
 
                 PrintStyle.success(f"Telegram ({name}): bot started in {mode} mode")
 
