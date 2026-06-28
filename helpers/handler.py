@@ -257,7 +257,12 @@ def _parse_plugin_ui_callback(data: str) -> tuple[str, str] | None:
 _RELOAD_PENDING_TTL_SEC = 300
 _RELOAD_DELAY_SEC = 0.75
 _RELOAD_RESTART_MARKER_TTL_SEC = 600
-_RELOAD_RESTART_NOTICE_TEXT = "Agent Zero restarted and Telegram bot is connected."
+_RELOAD_RESTART_NOTICE_MARKDOWN = """## ♻️ Agent Zero restarted
+
+- **Telegram bot:** connected
+- **Reload:** completed
+
+Ready again."""
 
 
 def _reload_confirmation_keyboard(token: str) -> list[list[dict]]:
@@ -417,12 +422,16 @@ async def notify_pending_reload_restart(token: str, bot_name: str, bot_cfg: dict
         PrintStyle.warning(f"Telegram ({bot_name}): reload restart marker has no valid chat_id")
         return False
     try:
-        await _send_with_temp_bot(
-            token,
-            chat_id,
-            _RELOAD_RESTART_NOTICE_TEXT,
-            parse_mode=None,
-        )
+        async with _temp_bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+            await _send_telegram_text_message(
+                bot,
+                chat_id,
+                _RELOAD_RESTART_NOTICE_MARKDOWN,
+                keyboard=None,
+                reply_to=None,
+                bot_cfg=bot_cfg or {},
+                ctx_data={},
+            )
     except Exception as e:
         PrintStyle.warning(
             f"Telegram ({bot_name}): failed to send reload restart notification: {format_error(e)}"

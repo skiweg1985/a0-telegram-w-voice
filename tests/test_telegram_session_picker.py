@@ -699,14 +699,38 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         with mock.patch.object(handler, "_load_state", return_value=state), \
              mock.patch.object(handler, "_save_state", side_effect=lambda current: saved.append(json.loads(json.dumps(current)))), \
-             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+             mock.patch.object(handler, "_send_telegram_text_message", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
             result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
 
         self.assertTrue(result)
-        self.assertEqual(sent[-1][0][0], "tok")
         self.assertEqual(sent[-1][0][1], 99)
-        self.assertIn("Telegram bot is connected", sent[-1][0][2])
+        self.assertIn("## ♻️ Agent Zero restarted", sent[-1][0][2])
+        self.assertIn("**Telegram bot:** connected", sent[-1][0][2])
+        self.assertEqual(sent[-1][1]["bot_cfg"], {})
         self.assertEqual(saved[-1]["reload_restart_notifications"], {})
+
+    def test_notify_pending_reload_restart_passes_rich_message_config(self):
+        handler = self.handler
+        state = {
+            "reload_restart_notifications": {
+                "mainbot": {
+                    "bot_name": "mainbot",
+                    "chat_id": 99,
+                    "expires": int(handler.time.time()) + 60,
+                }
+            }
+        }
+        sent = []
+        bot_cfg = {"rich_messages": {"enabled": True}}
+
+        with mock.patch.object(handler, "_load_state", return_value=state), \
+             mock.patch.object(handler, "_save_state"), \
+             mock.patch.object(handler, "_send_telegram_text_message", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", bot_cfg))
+
+        self.assertTrue(result)
+        self.assertEqual(sent[-1][1]["bot_cfg"], bot_cfg)
+        self.assertEqual(sent[-1][1]["ctx_data"], {})
 
     def test_notify_pending_reload_restart_drops_expired_marker_without_sending(self):
         handler = self.handler
@@ -723,11 +747,11 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         with mock.patch.object(handler, "_load_state", return_value=state), \
              mock.patch.object(handler, "_save_state", side_effect=lambda current: saved.append(json.loads(json.dumps(current)))), \
-             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()) as send_temp:
+             mock.patch.object(handler, "_send_telegram_text_message", new=mock.AsyncMock()) as send_text:
             result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
 
         self.assertFalse(result)
-        send_temp.assert_not_awaited()
+        send_text.assert_not_awaited()
         self.assertEqual(saved[-1]["reload_restart_notifications"], {})
 
     def test_notify_pending_reload_restart_ignores_other_bot_marker(self):
@@ -744,11 +768,11 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         with mock.patch.object(handler, "_load_state", return_value=state), \
              mock.patch.object(handler, "_save_state") as save_state, \
-             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()) as send_temp:
+             mock.patch.object(handler, "_send_telegram_text_message", new=mock.AsyncMock()) as send_text:
             result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
 
         self.assertFalse(result)
-        send_temp.assert_not_awaited()
+        send_text.assert_not_awaited()
         save_state.assert_not_called()
 
     def test_notify_pending_reload_restart_keeps_marker_on_send_failure(self):
@@ -765,7 +789,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         with mock.patch.object(handler, "_load_state", return_value=state), \
              mock.patch.object(handler, "_save_state") as save_state, \
-             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=RuntimeError("boom"))):
+             mock.patch.object(handler, "_send_telegram_text_message", new=mock.AsyncMock(side_effect=RuntimeError("boom"))):
             result = asyncio.run(handler.notify_pending_reload_restart("tok", "mainbot", {}))
 
         self.assertFalse(result)
