@@ -445,7 +445,11 @@ async def _delayed_process_reload(delay: float = _RELOAD_DELAY_SEC):
     await asyncio.sleep(delay)
     from helpers import process
 
-    process.reload()
+    try:
+        process.reload()
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 0
+        os._exit(code)
 
 
 def _schedule_agent_zero_reload():
@@ -3234,7 +3238,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 await _send_with_temp_bot(
                     token,
                     chat_id,
-                    "Reloading Agent Zero...",
+                    "ℹ️ Reloading Agent Zero...",
                     parse_mode=None,
                 )
                 _store_reload_restart_marker(bot_name, user.id, user.username, chat_id)
