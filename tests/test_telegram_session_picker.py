@@ -628,10 +628,10 @@ class TelegramSessionPickerTests(unittest.TestCase):
             asyncio.run(handler.handle_callback_query(query, "mainbot", {
                 "allow_restart_command": True,
                 "admin_users": ["@benji"],
-            }))
+        }))
 
         query.answer.assert_awaited_once_with("Reloading")
-        self.assertIn("Reloading Agent Zero", sent[-1][0][2])
+        self.assertIn("ℹ️ Reloading Agent Zero", sent[-1][0][2])
         self.assertEqual(saved[-1]["pending_reload"], {})
         marker = saved[-1]["reload_restart_notifications"]["mainbot"]
         self.assertEqual(marker["bot_name"], "mainbot")

@@ -3238,7 +3238,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 await _send_with_temp_bot(
                     token,
                     chat_id,
-                    "Reloading Agent Zero...",
+                    "ℹ️ Reloading Agent Zero...",
                     parse_mode=None,
                 )
                 _store_reload_restart_marker(bot_name, user.id, user.username, chat_id)
