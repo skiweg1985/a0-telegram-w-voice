@@ -127,6 +127,13 @@ class TelegramAutoReply(Extension):
                 heading="Telegram send failed (max retries reached)",
                 content=error,
             )
+            # Chain end is the last resort: resolve the frozen progress bubble
+            # and tell the user instead of going silent.
+            from usr.plugins.telegram_integration_voice.helpers.handler import (
+                notify_telegram_delivery_failure,
+            )
+
+            await notify_telegram_delivery_failure(context)
 
 # Helpers
 

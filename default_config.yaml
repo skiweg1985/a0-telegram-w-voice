@@ -72,7 +72,7 @@ bots: []
 #       optimize_output_default: off    # (YAML only) off | voice | text | auto — answer style for new sessions; /optimize_output overrides per session
 #       voice_mode: auto               # off | auto | voice_only | voice_text | text_only
 #                                      # (legacy "force" + also_send_text still accepted)
-#       max_chars: 700                 # cap text length for TTS
+#       max_chars: 1400                # cap text length for TTS (cut at a sentence boundary; a caption + Show text reveal the full reply)
 #       quick_actions:
 #         enabled: true                # show optional inline UX buttons under Telegram replies; /actions can disable per session
 #         show_text: true              # for voice replies without a visible text bubble, offer a button that reveals the text reply on demand

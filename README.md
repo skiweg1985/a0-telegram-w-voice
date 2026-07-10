@@ -193,7 +193,7 @@ bots:
       reply:
         optimize_output_default: off   # off | voice | text | auto — new sessions; /optimize_output overrides
         voice_mode: auto               # off | auto | voice_only | voice_text | text_only
-        max_chars: 700
+        max_chars: 1400
         quick_actions:
           enabled: true                # default for the per-reply More menu; /actions overrides per session
           show_text: true              # in voice-only replies, allow revealing the text on demand

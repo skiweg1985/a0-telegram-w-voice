@@ -1888,7 +1888,6 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         "\u2699\ufe0f /status shows the current modes.\n"
         "\U0001f5d1 /clear resets this conversation. /help lists all commands.",
         parse_mode=None,
-        reply_markup=reply_markup,
     )
 
     # Ensure a chat context exists
@@ -1930,11 +1929,10 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     instance = get_bot(bot_name)
     if instance:
-            await _send_with_temp_bot(
+        await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
             "Chat cleared. Send a new message to start fresh.",
             parse_mode=None,
-            reply_markup=reply_markup,
         )
 
     # Send notification
@@ -3110,6 +3108,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             attachments = await _download_attachments(dl_bot, message, bot_name=bot_name)
 
         # Optional STT for voice/audio inputs
+        stt_failure_notice: str | None = None
         if is_voice_input and speech.stt_enabled(bot_cfg):
             audio_ref = _pick_audio_attachment(attachments)
             if audio_ref:
@@ -3121,10 +3120,17 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                     if transcript:
                         text = _merge_voice_transcript(text, transcript)
                     else:
-                        text = text + "\n[Voice transcript unavailable: empty result]"
+                        stt_failure_notice = (
+                            "\U0001f399 I couldn't understand that voice message "
+                            "(the transcription came back empty). Please try again "
+                            "or send it as text."
+                        )
                 except Exception as e:
                     PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
-                    text = text + f"\n[Voice transcript failed: {format_error(e)}]"
+                    stt_failure_notice = (
+                        "\U0001f399 I couldn't process that voice message right now. "
+                        "Please try again or send it as text."
+                    )
                 finally:
                     await _set_progress_phase_and_refresh(
                         context,
@@ -3132,6 +3138,32 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                         None,
                         require_existing_message=True,
                     )
+
+        if stt_failure_notice:
+            # Tell the user directly instead of feeding a broken transcript
+            # marker (or a raw provider error) to the agent as their message.
+            await _finalize_progress_updates(context)
+            progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+            async with _temp_bot(instance.bot.token) as notice_bot:
+                edited = False
+                if progress_message_id:
+                    edited = await tc.edit_text(
+                        notice_bot,
+                        message.chat.id,
+                        int(progress_message_id),
+                        stt_failure_notice,
+                        parse_mode=None,
+                    )
+                if not edited:
+                    await tc.send_text(
+                        notice_bot,
+                        message.chat.id,
+                        stt_failure_notice,
+                        parse_mode=None,
+                    )
+            _clear_progress_state(context)
+            _stop_context_chat_actions(context)
+            return
 
         if reply_context:
             context.data[CTX_TG_REPLY_CONTEXT] = reply_context
@@ -3529,19 +3561,25 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                     async with _temp_bot(instance.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
                         reply_cfg = speech.voice_reply_settings(bot_cfg)
                         max_chars = max(100, int(reply_cfg["max_chars"]))
+                        tts_payload, tts_truncated = speech.truncate_for_tts(source_answer, max_chars)
                         voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                         voice_file, _meta = await asyncio.to_thread(
                             speech.synthesize_to_voice_file,
                             bot_cfg,
-                            source_answer[:max_chars],
+                            tts_payload,
                         )
                         await tc.send_voice(
                             bot,
                             chat_id,
                             voice_file,
+                            caption=(
+                                "🔊 Shortened for voice — the full reply is in the text above."
+                                if tts_truncated
+                                else ""
+                            ),
                             reply_to_message_id=(query.message.message_id if query.message else None),
                         )
-                    await query.answer("Sent as voice")
+                    await query.answer("Sent as voice (shortened)" if tts_truncated else "Sent as voice")
                 except Exception as e:
                     PrintStyle.error(f"Telegram response to_voice failed: {format_error(e)}")
                     await query.answer("Voice conversion failed.")
@@ -4370,10 +4408,17 @@ async def _set_progress_phase_and_refresh(
         )
 
 
+# Internal marker for progress lines whose tool is still running (never sent
+# to Telegram — stripped and replaced with a spinner prefix at render time).
+_PROGRESS_LINE_RUNNING = "\x00R"
+
+
 def _progress_line_prefix(line_html: str) -> str:
     text = str(line_html or "")
     if not text:
         return text
+    if text.startswith(_PROGRESS_LINE_RUNNING):
+        return f"⏳ {text[len(_PROGRESS_LINE_RUNNING):]}"
     return f"✓ {text}"
 
 
@@ -4766,11 +4811,11 @@ async def _cleanup_progress_message_after_final(
         await tc.edit_text(reply_bot, int(chat_id), int(progress_message_id), completion_text)
 
 
-def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict):
+def _append_progress_line(context: AgentContext, line_html: str, bot_cfg: dict, *, running: bool = False):
     if not line_html:
         return
     lines = list(context.data.get(CTX_TG_PROGRESS_LINES, []) or [])
-    lines.append(str(line_html))
+    lines.append((_PROGRESS_LINE_RUNNING if running else "") + str(line_html))
     cap = max(4, _progress_history_limit(bot_cfg, "debug") * 2)
     if len(lines) > cap:
         lines = lines[-cap:]
@@ -4914,6 +4959,45 @@ async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int)
             await tc.send_typing(bot, chat_id)
     except Exception as e:
         PrintStyle.warning(f"Telegram updates-paused notice failed: {format_error(e)}")
+
+
+async def notify_telegram_delivery_failure(context: AgentContext) -> None:
+    """Last-resort user notice when the final reply could not be delivered.
+
+    Called when all send retries are exhausted. Edits the leftover progress
+    bubble into the notice when possible — so no frozen "In progress…" bubble
+    stays behind — and falls back to a fresh message otherwise. Without this
+    the user waits forever in front of a stalled status message while the
+    failure is only visible in server logs.
+    """
+    bot_name = context.data.get(CTX_TG_BOT)
+    chat_id = context.data.get(CTX_TG_CHAT_ID)
+    instance = get_bot(bot_name) if bot_name else None
+    if not instance or not chat_id:
+        return
+    notice = (
+        "⚠️ I finished, but the reply could not be delivered to Telegram. "
+        "Send /retry to run your last message again."
+    )
+    try:
+        await _finalize_progress_updates(context)
+        progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+        async with _temp_bot(instance.bot.token) as notice_bot:
+            edited = False
+            if progress_message_id:
+                edited = await tc.edit_text(
+                    notice_bot,
+                    int(chat_id),
+                    int(progress_message_id),
+                    notice,
+                    parse_mode=None,
+                )
+            if not edited:
+                await tc.send_text(notice_bot, int(chat_id), notice, parse_mode=None)
+    except Exception as e:
+        PrintStyle.warning(f"Telegram delivery-failure notice failed: {format_error(e)}")
+    finally:
+        _clear_progress_state(context)
 
 
 async def send_telegram_progress_update(
@@ -5592,6 +5676,11 @@ async def send_telegram_reply(
     tts_raw = ((voice_text or "").strip() or (response_text or "").strip())
 
     tts_on = speech.tts_enabled(bot_cfg)
+    tts_max_chars = max(100, int(reply_cfg["max_chars"]))
+    tts_payload, tts_truncated = (
+        speech.truncate_for_tts(tts_raw, tts_max_chars) if tts_raw else ("", False)
+    )
+    tts_will_truncate = bool(tts_truncated and want_voice and tts_on)
     if want_voice and tts_raw and not tts_on:
         PrintStyle.info(
             "Telegram TTS skipped: speech.tts.enabled is false for this bot (check plugin config / project scope)."
@@ -5650,11 +5739,14 @@ async def send_telegram_reply(
                 and base_should_send_text_with_voice
             )
             reply_actions_enabled = speech.effective_reply_actions_enabled(bot_cfg, context.data)
+            # When the voice note had to be shortened, the reveal button is the
+            # only way to reach the full reply — offer it even if the operator
+            # disabled the optional show-text quick action.
             want_show_text_button = bool(
                 logical_text_body
                 and want_voice
                 and not base_response_text_visible
-                and quick_actions.get("show_text", True)
+                and (quick_actions.get("show_text", True) or tts_will_truncate)
             )
             hidden_voice_action_host = bool(
                 response_token
@@ -5727,14 +5819,18 @@ async def send_telegram_reply(
                 )
                 voice_stop = None
                 try:
-                    max_chars = max(100, int(reply_cfg["max_chars"]))
-                    tts_payload = tts_raw[:max_chars]
+                    voice_caption = (
+                        "🔊 Shortened for voice — the full reply is available as text."
+                        if tts_truncated
+                        else ""
+                    )
                     voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                     voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
                     msg_id = await tc.send_voice(
                         reply_bot,
                         chat_id,
                         voice_file,
+                        caption=voice_caption,
                         reply_to_message_id=reply_to,
                         buttons=voice_buttons,
                         reply_markup=(

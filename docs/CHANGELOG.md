@@ -6,6 +6,10 @@ Older entries are chronological release history and may mention commands/feature
 
 ### Added
 
+- Voice replies that exceed the TTS character cap are now cut at a sentence boundary instead of mid-word, carry a "🔊 Shortened for voice" caption, and force the **Show text** reveal button so the full reply stays reachable (also applies to the **To voice** quick action). The default `speech.reply.max_chars` was raised from 700 to 1400.
+- STT failures now answer the user directly ("I couldn't understand that voice message…", reusing the progress bubble when possible) instead of injecting a raw `[Voice transcript failed: …]` marker into the agent prompt.
+- When the final reply cannot be delivered after all retries, the chat now shows "⚠️ … Send /retry" (the leftover progress bubble is edited into the notice) instead of freezing on "In progress…" while the failure was only logged server-side.
+
 - `/retry` re-runs your last message, and `/undo` drops the last exchange (your message and the agent's reply) from the session history.
 - `/topic [name]` opens a named conversation thread in the same chat, or starts a new one; without a name it lists existing topics.
 - Session search is now button-driven: tapping **Search** in the session picker prompts for a term via Telegram's reply box and uses your next message to filter, instead of only showing help text.
@@ -37,6 +41,9 @@ Older entries are chronological release history and may mention commands/feature
 
 ### Fixed
 
+- **`/start` and `/clear` crashed with a `NameError`** (`reply_markup` was referenced but never defined), so new users got no welcome message and `/clear` never confirmed the reset.
+- Long messages are now split HTML-tag-aware at the 4096-char limit: tags left open at a chunk boundary are closed and re-opened in the next chunk, so a `<pre>` code block or `<b>` span crossing the limit no longer loses its formatting via the plain-text parse-error fallback. That fallback also decodes HTML entities now, so users see `<` instead of a literal `&lt;`.
+- Tool-status lines no longer show a `✓` checkmark the moment a tool **starts**; running steps render with `⏳` and switch to `✓` when the completion detail replaces the line.
 - **Chat stuck on "🤔 Drafting reply…"**: Background progress edits (live preview, phase changes, tool detail lines) raced the final reply. A queued or in-flight status edit could land after the final edit and overwrite the delivered answer with "Drafting reply…", or re-create a status bubble after cleanup that nothing ever removed — the answer was visible in the web UI but the Telegram chat looked frozen. Progress updates are now fenced by an epoch counter and drained (`_finalize_progress_updates`) before the final send/edit, so the final message is always the last write.
 - **Voice-only "Show text" after restart**: The reveal button's text and token are now persisted with the chat (keys without leading underscore) and the context is saved after each reply, so tapping "Text anzeigen" still works after a bot restart or context reload instead of returning "Text is no longer available". `/clear` drops the stored reveal text/token.
 - **Voice-only replies**: In `voice_only` mode the "Show text" quick action no longer triggers a visible text bubble. The reveal button is now attached directly to the voice message (`sendVoice` inline keyboard), and the text is only sent after the user taps it. Text is still sent as a fallback when voice delivery fails.

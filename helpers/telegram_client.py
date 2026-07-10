@@ -1,3 +1,4 @@
+import html as html_lib
 import os
 import re
 from dataclasses import dataclass
@@ -80,7 +81,7 @@ async def send_text(
                 reply_markup = None
             except TelegramBadRequest:
                 # Retry as plain text, stripping HTML tags
-                plain = re.sub(r"<[^>]+>", "", chunk)
+                plain = strip_html_to_plain(chunk)
                 msg = await bot.send_message(
                     chat_id=chat_id,
                     text=plain,
@@ -510,7 +511,7 @@ async def edit_text(
         if "message is not modified" in err:
             return True
         try:
-            plain = re.sub(r"<[^>]+>", "", text)
+            plain = strip_html_to_plain(text)
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -585,7 +586,7 @@ async def edit_text_with_keyboard(
         if "message is not modified" in err:
             return True
         try:
-            plain = re.sub(r"<[^>]+>", "", text)
+            plain = strip_html_to_plain(text)
             keyboard = build_inline_keyboard(buttons)
             await bot.edit_message_text(
                 chat_id=chat_id,
@@ -643,7 +644,7 @@ async def send_message_draft(
         return bool(ok)
     except TelegramBadRequest:
         try:
-            plain = re.sub(r"<[^>]+>", "", text)
+            plain = strip_html_to_plain(text)
             ok = await bot.send_message_draft(
                 chat_id=chat_id,
                 draft_id=draft_id,
@@ -821,20 +822,74 @@ async def download_file(
 
 # Helpers
 
+def strip_html_to_plain(text: str) -> str:
+    """Best-effort plain text for the parse-error fallback path.
+
+    Removes tags AND decodes entities, so users see `<` instead of a literal
+    `&lt;` when a message has to be re-sent without formatting.
+    """
+    return html_lib.unescape(re.sub(r"<[^>]+>", "", text))
+
+
+# Room reserved per chunk for re-opening/closing tags injected by the splitter
+# (worst case around `<pre><code class="language-...">` plus its close tags).
+_SPLIT_TAG_RESERVE = 160
+
+_HTML_TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*)?>")
+
+
+def _safe_cut_point(text: str, cut: int) -> int:
+    """Move a cut position left so it never lands inside a tag or entity."""
+    open_angle = text.rfind("<", 0, cut)
+    if open_angle != -1 and text.find(">", open_angle, cut) == -1:
+        cut = open_angle
+    amp = text.rfind("&", max(0, cut - 10), cut)
+    if amp != -1 and text.find(";", amp, cut) == -1:
+        cut = amp
+    return cut
+
+
 def _split_text(text: str, max_len: int) -> list[str]:
+    """Split into Telegram-sized chunks without leaving unbalanced HTML tags.
+
+    Formatting tags left open at a chunk boundary are closed at the end of the
+    chunk and re-opened at the start of the next one, so a `<pre>` code block
+    or `<b>` span crossing the 4096 limit no longer triggers the plain-text
+    parse-error fallback for that chunk.
+    """
     if len(text) <= max_len:
         return [text]
-    chunks = []
-    while text:
-        if len(text) <= max_len:
-            chunks.append(text)
+
+    budget = max(1, max_len - _SPLIT_TAG_RESERVE)
+    raw_chunks: list[str] = []
+    rest = text
+    while rest:
+        if len(rest) <= budget:
+            raw_chunks.append(rest)
             break
-        # Try to split at newline
-        split_at = text.rfind("\n", 0, max_len)
-        if split_at == -1 or split_at < max_len // 2:
-            split_at = max_len
-        chunks.append(text[:split_at])
-        text = text[split_at:].lstrip("\n")
+        split_at = rest.rfind("\n", 0, budget)
+        if split_at == -1 or split_at < budget // 2:
+            split_at = _safe_cut_point(rest, budget)
+            if split_at <= 0:
+                split_at = budget
+        raw_chunks.append(rest[:split_at])
+        rest = rest[split_at:].lstrip("\n")
+
+    chunks: list[str] = []
+    open_stack: list[tuple[str, str]] = []  # (tag name, original opening tag)
+    for raw in raw_chunks:
+        prefix = "".join(tag for _, tag in open_stack)
+        for m in _HTML_TAG_RE.finditer(raw):
+            if m.group(1):
+                name = m.group(2).lower()
+                for i in range(len(open_stack) - 1, -1, -1):
+                    if open_stack[i][0] == name:
+                        del open_stack[i]
+                        break
+            else:
+                open_stack.append((m.group(2).lower(), m.group(0)))
+        suffix = "".join(f"</{name}>" for name, _ in reversed(open_stack))
+        chunks.append(prefix + raw + suffix)
     return chunks
 
 
