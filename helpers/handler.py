@@ -59,6 +59,8 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_PROGRESS_PHASE,
     CTX_TG_PROGRESS_RL_SKIPS,
     CTX_TG_PROGRESS_RL_NOTIFIED,
+    CTX_TG_PROGRESS_EPOCH,
+    CTX_TG_PROGRESS_TASKS,
     CTX_TG_STREAM_PREVIEW,
     CTX_TG_STREAM_ACTIVE,
     CTX_TG_STREAM_DRAFT_ID,
@@ -4205,7 +4207,74 @@ def _progress_settings(bot_cfg: dict) -> dict:
     }
 
 
+def _progress_epoch(context: AgentContext) -> int:
+    try:
+        return int(context.data.get(CTX_TG_PROGRESS_EPOCH, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bump_progress_epoch(context: AgentContext) -> int:
+    epoch = _progress_epoch(context) + 1
+    context.data[CTX_TG_PROGRESS_EPOCH] = epoch
+    return epoch
+
+
+def _tracked_progress_tasks(context: AgentContext) -> set:
+    tasks = context.data.get(CTX_TG_PROGRESS_TASKS)
+    if not isinstance(tasks, set):
+        tasks = set()
+        context.data[CTX_TG_PROGRESS_TASKS] = tasks
+    return tasks
+
+
+def _cancel_pending_progress_tasks(context: AgentContext) -> list:
+    pending = [t for t in list(_tracked_progress_tasks(context)) if not t.done()]
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    for task in pending:
+        with suppress(Exception):
+            loop = task.get_loop()
+            if loop is running:
+                task.cancel()
+            else:
+                loop.call_soon_threadsafe(task.cancel)
+    return pending
+
+
+async def _finalize_progress_updates(context: AgentContext):
+    """Fence the progress message before a final send/edit touches it.
+
+    Background tasks created by ``schedule_telegram_progress_update`` (live
+    stream previews, phase changes, tool detail lines) race the final reply:
+    a queued "Drafting reply…" edit that lands after the final edit overwrites
+    the delivered answer, and one that runs after ``_clear_progress_state``
+    re-creates a status bubble nobody ever cleans up. Bumping the epoch makes
+    every update scheduled before this point abort, and awaiting the in-flight
+    tasks guarantees none of their Telegram calls can land after the final one.
+    """
+    _bump_progress_epoch(context)
+    pending = _cancel_pending_progress_tasks(context)
+    worker = _cancel_stream_preview_worker(context)
+    if worker is not None and not worker.done():
+        pending.append(worker)
+    if not pending:
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    awaitable = [t for t in pending if running is not None and t.get_loop() is running]
+    if awaitable:
+        with suppress(Exception):
+            await asyncio.gather(*awaitable, return_exceptions=True)
+
+
 def _clear_progress_state(context: AgentContext):
+    _bump_progress_epoch(context)
+    _cancel_pending_progress_tasks(context)
     _cancel_stream_preview_worker(context)
     context.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
     context.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
@@ -4241,6 +4310,7 @@ def _cancel_stream_preview_worker(context: AgentContext):
     if task and not task.done():
         with suppress(Exception):
             task.cancel()
+    return task
 
 
 def _forget_stream_preview_worker(context: AgentContext, token: str, task):
@@ -4781,14 +4851,20 @@ def schedule_telegram_progress_update(
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return False
+    # Freeze the epoch at schedule time: if the final reply lands before this
+    # task runs, the epoch has moved on and the stale update aborts.
     task = loop.create_task(
         send_telegram_progress_update(
             context,
             response_text,
             keyboard,
             text_is_html=text_is_html,
+            epoch=_progress_epoch(context),
         )
     )
+    tasks = _tracked_progress_tasks(context)
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
     task.add_done_callback(_log_background_progress_result)
     return True
 
@@ -4846,13 +4922,23 @@ async def send_telegram_progress_update(
     keyboard: list[list[dict]] | None = None,
     *,
     text_is_html: bool = False,
+    epoch: int | None = None,
 ) -> str | None:
     """Send or edit an in-progress Telegram status message. Returns error string or None.
 
     When ``text_is_html`` is True, ``response_text`` is already Telegram HTML (e.g. from
     ``detail_status.format_step_html``) and must not be passed through ``md_to_telegram_html``,
     which would escape ``<b>``, ``<code>``, etc. and show raw tags/entities in the client.
+
+    ``epoch`` is the progress epoch this update belongs to (captured at schedule
+    time for background tasks). If the epoch has moved on — a final reply was
+    sent or a new turn started — the update is stale and silently dropped so it
+    can neither overwrite the final message nor spawn a fresh status bubble.
     """
+    if epoch is None:
+        epoch = _progress_epoch(context)
+    if epoch != _progress_epoch(context):
+        return None
     bot_name = context.data.get(CTX_TG_BOT)
     if not bot_name:
         return "No Telegram bot configured on context"
@@ -4896,6 +4982,8 @@ async def send_telegram_progress_update(
             instance.bot.token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         ) as reply_bot:
+            if epoch != _progress_epoch(context):
+                return None
             message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
             sent_or_edited = False
             rate_limited = {"hit": False}
@@ -4926,6 +5014,8 @@ async def send_telegram_progress_update(
                 context.data.pop(CTX_TG_PROGRESS_RL_NOTIFIED, None)
 
             if not sent_or_edited:
+                if epoch != _progress_epoch(context):
+                    return None
                 if keyboard:
                     new_id = await tc.send_text_with_keyboard(
                         reply_bot,
@@ -5459,6 +5549,10 @@ async def send_telegram_reply(
 ) -> str | None:
     """Send reply to Telegram user. Returns error string or None on success."""
     context.data.pop(CTX_TG_FINAL_REPLY_DELIVERED, None)
+    # Fence off queued background progress edits (live preview, phase changes)
+    # before any final network call: a stale "Drafting reply…" edit landing
+    # after the final send would overwrite or outlive the delivered answer.
+    await _finalize_progress_updates(context)
     bot_name = context.data.get(CTX_TG_BOT)
     if not bot_name:
         return "No Telegram bot configured on context"
@@ -5670,6 +5764,11 @@ async def send_telegram_reply(
                     if voice_file:
                         with suppress(Exception):
                             os.remove(voice_file)
+
+            # The TTS branch schedules its own status edit; fence again so it
+            # cannot land after the final edit below turns the progress
+            # message into the answer.
+            await _finalize_progress_updates(context)
 
             used_native_draft = bool(context.data.get(CTX_TG_STREAM_DRAFT_USED))
 
