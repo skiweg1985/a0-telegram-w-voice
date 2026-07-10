@@ -1091,7 +1091,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
                 self.assertTrue(ok)
                 send_progress.assert_not_awaited()
                 await asyncio.sleep(0.01)
-                send_progress.assert_awaited_once_with(ctx, "status", None, text_is_html=True)
+                send_progress.assert_awaited_once_with(ctx, "status", None, text_is_html=True, epoch=0)
 
         asyncio.run(scenario())
 

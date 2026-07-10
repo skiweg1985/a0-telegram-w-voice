@@ -33,6 +33,13 @@ CTX_TG_PROGRESS_PHASE = "_telegram_progress_phase"
 # already been told that live updates are paused (transient per run).
 CTX_TG_PROGRESS_RL_SKIPS = "_telegram_progress_rate_limit_skips"
 CTX_TG_PROGRESS_RL_NOTIFIED = "_telegram_progress_rate_limit_notified"
+# Monotonic counter fencing background progress edits: bumped whenever the
+# progress message is finalized/reset so stale queued updates abort instead of
+# overwriting the final reply (transient, never cleared).
+CTX_TG_PROGRESS_EPOCH = "_telegram_progress_epoch"
+# In-flight background progress-update tasks (transient), so finalization can
+# cancel/await them before editing the progress message into the final answer.
+CTX_TG_PROGRESS_TASKS = "_telegram_progress_tasks"
 CTX_TG_STREAM_PREVIEW = "_telegram_stream_preview"
 CTX_TG_STREAM_ACTIVE = "_telegram_stream_active"
 CTX_TG_STREAM_DRAFT_ID = "_telegram_stream_draft_id"

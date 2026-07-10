@@ -675,3 +675,32 @@
   - yes ([Unreleased] Added)
 - Follow-ups:
   - none
+
+## 2026-07-10 – Claude – Race-Fix: Progress-Edit überschreibt finale Antwort ("Drafting reply…" hängt)
+
+- Done:
+  - Ursache: `schedule_telegram_progress_update` startet Fire-and-forget-Tasks (Live-Preview, Phase-Wechsel "gen", Detail-Status), die dieselbe Progress-Bubble editieren wie der finale Reply-Pfad. Ein verspäteter Edit konnte nach dem finalen `edit_text` landen und die Antwort mit "🤔 Drafting reply…" überschreiben, oder nach `_clear_progress_state` eine neue Status-Bubble erzeugen, die nie wieder aufgeräumt wird (Fingerprint/Throttle-Guards sind da bereits gelöscht).
+  - Fix: Monotoner Progress-Epoch (`CTX_TG_PROGRESS_EPOCH`) fenced Hintergrund-Updates — Epoch wird beim Scheduling eingefroren und in `send_telegram_progress_update` vor jedem Edit/Send geprüft; veraltete Updates brechen still ab. Zusätzlich trackt `CTX_TG_PROGRESS_TASKS` alle Hintergrund-Tasks, und `_finalize_progress_updates` (am Anfang von `send_telegram_reply` sowie nach dem TTS-Block vor dem finalen Edit) bumpt den Epoch, cancelt und awaitet alle laufenden Tasks inkl. Stream-Preview-Worker — der finale Edit ist damit garantiert der letzte Write.
+  - `_clear_progress_state` bumpt jetzt ebenfalls den Epoch und cancelt offene Tasks (neuer User-Turn / Chain-End-Cleanup).
+  - Regressionstests `tests/test_telegram_progress_race.py` (4 Tests, inkl. Negativ-Verifikation: Test schlägt ohne Fence fehl).
+- Next:
+  - Telegram-Smoke-Test: kurze Antwort mit aktiver Live-Preview provozieren und prüfen, dass die finale Bubble stehen bleibt.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: claude/hermes-race-condition-reply-hsv4fg
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - helpers/constants.py
+  - tests/test_telegram_progress_race.py
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest discover -s tests` (185 passed)
+  - UI path: Telegram-Chat → Antwort generieren lassen → Progress-Bubble wird zur finalen Antwort und bleibt es
+- Changelog updated:
+  - yes ([Unreleased] Fixed)
+- Follow-ups:
+  - none
