@@ -321,6 +321,15 @@ def _install_stub_modules():
     speech.quick_actions_settings = lambda *args, **kwargs: {"enabled": True, "show_text": True}
     speech.effective_reply_actions_enabled = lambda bot_cfg, ctx_data: str(ctx_data.get("telegram_reply_actions_session", "") or "").strip().lower() not in ("off", "false", "0", "no")
     speech.synthesize_to_voice_file = lambda *args, **kwargs: ("/tmp/fake.ogg", {})
+
+    def _truncate_for_tts(text, max_chars):
+        raw = str(text or "")
+        limit = max(100, int(max_chars or 0) or 100)
+        if len(raw) <= limit:
+            return raw, False
+        return raw[:limit], True
+
+    speech.truncate_for_tts = _truncate_for_tts
     sys.modules["usr.plugins.telegram_integration_voice.helpers.speech"] = speech
 
     bot_manager = types.ModuleType("usr.plugins.telegram_integration_voice.helpers.bot_manager")
@@ -3100,6 +3109,52 @@ class TelegramSessionPickerTests(unittest.TestCase):
         dispatch.assert_awaited_once()
         self.assertIn("A long answer to shorten.", dispatch.await_args.kwargs["body"])
         self.assertIn("shorter", dispatch.await_args.kwargs["source"])
+
+    def test_handle_start_sends_welcome_without_reply_markup_crash(self):
+        """Regression: /start raised NameError (undefined reply_markup) and new users got no welcome."""
+        handler = self.handler
+        sent = []
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            reply=mock.AsyncMock(),
+        )
+        with mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=_DummyAgentContext(name="S"))):
+            asyncio.run(handler.handle_start(message, "mainbot", {}))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Hello Benji", str(sent[0][0][2]))
+
+    def test_handle_clear_confirms_without_reply_markup_crash(self):
+        """Regression: /clear raised NameError (undefined reply_markup) and never confirmed the reset."""
+        handler = self.handler
+        sent = []
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            reply=mock.AsyncMock(),
+        )
+        with mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_load_state", return_value={}):
+            asyncio.run(handler.handle_clear(message, "mainbot", {}))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Chat cleared", str(sent[0][0][2]))
+
+    def test_progress_lines_show_spinner_while_running_and_check_when_done(self):
+        """Tool-start lines render with a spinner; the completion replace switches to a checkmark."""
+        handler = self.handler
+        ctx = _DummyAgentContext(name="P")
+        ctx.data = {}
+        bot_cfg = {}
+        idx = handler._append_progress_line(ctx, "Searching the web", bot_cfg, running=True)
+        html_text = handler._render_progress_status_html(ctx, bot_cfg, done=False)
+        self.assertIn("⏳ Searching the web", html_text)
+        self.assertNotIn("✓ Searching the web", html_text)
+        self.assertNotIn("\x00", html_text)  # internal marker never leaks to Telegram
+        handler._replace_progress_line(ctx, idx, "Searching the web — 3 results", bot_cfg)
+        html_text = handler._render_progress_status_html(ctx, bot_cfg, done=False)
+        self.assertIn("✓ Searching the web — 3 results", html_text)
+        self.assertNotIn("⏳ Searching", html_text)
 
 
 if __name__ == "__main__":

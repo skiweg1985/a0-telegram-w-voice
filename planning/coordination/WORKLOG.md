@@ -704,3 +704,39 @@
   - yes ([Unreleased] Fixed)
 - Follow-ups:
   - none
+
+## 2026-07-10 – Claude – Top-5 UI/UX-Fixes (Onboarding-Crash, TTS-Kürzung, HTML-Split, Zustellfehler-Feedback, Progress-Marker)
+
+- Done:
+  - **/start & /clear NameError gefixt**: `reply_markup=reply_markup` referenzierte eine nie definierte Variable — neue Nutzer bekamen keine Begrüßung, `/clear` keine Bestätigung. Parameter entfernt, Einrückung in `handle_clear` korrigiert.
+  - **TTS-Kürzung sichtbar & sauber**: neuer Helper `speech.truncate_for_tts` schneidet an Satzgrenzen (Fallback Whitespace) statt mitten im Wort; gekürzte Voice-Antworten tragen die Caption "🔊 Shortened for voice…" und erzwingen den Show-text-Button auch bei deaktivierter Quick-Action. Default `speech.reply.max_chars` 700 → 1400 (speech.py, default_config.yaml, README). Gleiche Behandlung für die "To voice"-Quick-Action inkl. Callback-Antwort "Sent as voice (shortened)".
+  - **HTML-bewusstes 4096-Splitting**: `_split_text` schließt an Chunk-Grenzen offene Tags und öffnet sie im Folge-Chunk wieder (inkl. Attribute wie `language-python`); Schnittpunkte landen nie in Tags/Entities. Plain-Fallback nutzt neu `strip_html_to_plain` (Tags strippen + `html.unescape`) an allen vier Fallback-Stellen.
+  - **Zustellfehler erreichen den Nutzer**: STT-Fehler antworten direkt im Chat (Progress-Bubble wird zur Meldung editiert) statt `[Voice transcript failed: …]` in den Agenten-Prompt zu injizieren; der Turn wird nicht dispatcht. Neuer Handler-Helper `notify_telegram_delivery_failure` löst nach ausgeschöpften Send-Retries (chain-end) die eingefrorene "In progress…"-Bubble auf und postet "⚠️ … Send /retry".
+  - **Progress-Marker ehrlich**: Tool-Start-Zeilen rendern mit ⏳ (interner `\x00R`-Marker, nie an Telegram gesendet); erst das Completion-Replace zeigt ✓.
+- Next:
+  - Telegram-Smoke-Test: lange codelastige Antwort (>4096) und voice_only-Antwort >1400 Zeichen manuell prüfen.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: claude/plugin-ui-ux-improvements-cyrtvo
+  - PR: none
+- Files touched:
+  - helpers/handler.py
+  - helpers/speech.py
+  - helpers/telegram_client.py
+  - extensions/python/process_chain_end/_55_telegram_reply.py
+  - extensions/python/tool_execute_before/_45_telegram_detail_status.py
+  - default_config.yaml
+  - README.md
+  - tests/test_telegram_ux_fixes.py (neu)
+  - tests/test_telegram_session_picker.py
+  - tests/test_telegram_final_reply_hooks.py
+  - docs/CHANGELOG.md
+  - planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest discover -s tests` (198 passed)
+  - UI path: /start-Begrüßung, /clear-Bestätigung, Voice-Antwort mit Kürzungs-Caption + Show text, lange Code-Antwort über 4096 Zeichen, Tool-Status ⏳→✓
+- Changelog updated:
+  - yes ([Unreleased] Added + Fixed)
+- Follow-ups:
+  - none

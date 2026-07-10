@@ -4,6 +4,7 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import tempfile
 import uuid
@@ -83,9 +84,36 @@ def voice_reply_settings(bot_cfg: dict) -> dict:
     return {
         "voice_mode": base_mode,  # off|auto|force
         "also_send_text": also_send_text,
-        "max_chars": int(reply.get("max_chars", 700) or 700),
+        "max_chars": int(reply.get("max_chars", 1400) or 1400),
         "quick_actions": quick_actions_settings(bot_cfg),
     }
+
+
+# Sentence boundary: terminal punctuation, optional closing quotes/brackets,
+# followed by whitespace (or end handled separately).
+_SENTENCE_END_RE = re.compile(r"[.!?…](?:[\"'”’)\]]*)(?:\s|$)")
+
+
+def truncate_for_tts(text: str, max_chars: int) -> tuple[str, bool]:
+    """Cap text for TTS at a sentence boundary instead of mid-word.
+
+    Returns ``(payload, truncated)``. When the text fits within ``max_chars``
+    it is returned unchanged with ``truncated=False``. Otherwise the cut is
+    made at the last sentence end inside the limit (falling back to the last
+    whitespace, then to a hard cut) so the spoken reply does not stop mid-word.
+    """
+    raw = str(text or "")
+    limit = max(100, int(max_chars or 0) or 100)
+    if len(raw) <= limit:
+        return raw, False
+    window = raw[:limit]
+    cut = None
+    for m in _SENTENCE_END_RE.finditer(window):
+        cut = m.end()
+    if cut is None or cut < limit // 2:
+        ws = window.rfind(" ")
+        cut = ws if ws > limit // 2 else limit
+    return window[:cut].rstrip(), True
 
 
 def quick_actions_settings(bot_cfg: dict) -> dict:

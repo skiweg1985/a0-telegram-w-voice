@@ -84,7 +84,9 @@ class TelegramDetailStatusBefore(Extension):
             )
             if inspect.isawaitable(line):
                 line = await line
-            line_index = _append_progress_line(context, line, bot_cfg)
+            # The tool has only just started — render with a spinner, not a
+            # checkmark; execute-after replaces this line with the outcome.
+            line_index = _append_progress_line(context, line, bot_cfg, running=True)
             html_text = _render_progress_status_html(context, bot_cfg, done=False)
             context.data[CTX_TG_DETAIL_LAST_SENT_TS] = now
             context.data[CTX_TG_DETAIL_ACTIVE_TOOL] = name

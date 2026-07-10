@@ -521,7 +521,7 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         with mock.patch.object(module.time, "monotonic", return_value=10.0):
             asyncio.run(ext.execute(tool_name="search_engine"))
 
-        handler._append_progress_line.assert_called_once_with(context, "step:search_engine", {})
+        handler._append_progress_line.assert_called_once_with(context, "step:search_engine", {}, running=True)
         handler.send_telegram_progress_update.assert_awaited_once_with(
             context,
             "<b>status</b>",
@@ -583,7 +583,7 @@ class TelegramFinalReplyHookTests(unittest.TestCase):
         call = detail_status.format_step_html.await_args
         self.assertEqual(call.kwargs["level"], "smart")
         self.assertEqual(call.kwargs["tool_args"], {"query": "status page"})
-        handler._append_progress_line.assert_called_once_with(context, "step:smart-before", {})
+        handler._append_progress_line.assert_called_once_with(context, "step:smart-before", {}, running=True)
 
     def test_detail_before_hook_throttle_does_not_set_dedupe_marker(self):
         constants, handler = _install_stubs()
