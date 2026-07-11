@@ -928,6 +928,107 @@ class TelegramSessionPickerTests(unittest.TestCase):
         typing_stop.assert_called_once_with()
         self.assertNotIn(handler.CTX_TG_TYPING_STOP, ctx.data)
 
+    def test_extract_message_content_labels_animation_without_document_duplicate(self):
+        handler = self.handler
+        animation = types.SimpleNamespace(file_name="funny.gif", file_unique_id="u1")
+        message = types.SimpleNamespace(
+            text=None, caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=types.SimpleNamespace(file_name="funny.gif", file_unique_id="u1"),
+            audio=None, voice=None, video=None, video_note=None,
+            animation=animation,
+        )
+        content = handler._extract_message_content(message)
+        self.assertIn("[Animation/GIF: funny.gif]", content)
+        self.assertNotIn("[Document:", content)
+
+    def test_download_attachments_fetches_animation_once(self):
+        handler = self.handler
+        animation = types.SimpleNamespace(file_name=None, file_unique_id="u1", file_id="fid1")
+        message = types.SimpleNamespace(
+            photo=None,
+            animation=animation,
+            document=types.SimpleNamespace(file_name=None, file_unique_id="u1", file_id="fid1"),
+            audio=None, voice=None, video=None, video_note=None,
+        )
+        downloads = []
+
+        async def _fake_download(bot, file_id, dest):
+            downloads.append(file_id)
+            return dest
+
+        with mock.patch.object(handler.tc, "download_file", new=_fake_download, create=True), \
+             mock.patch.object(handler.files, "get_abs_path", return_value="/tmp/dl"), \
+             mock.patch.object(handler.files, "get_abs_path_dockerized", return_value="/a0/dl", create=True), \
+             mock.patch.object(handler.os, "makedirs"):
+            paths = asyncio.run(handler._download_attachments(object(), message, bot_name="mainbot"))
+
+        self.assertEqual(downloads, ["fid1"])  # mirrored document is skipped
+        self.assertEqual(len(paths), 1)
+        self.assertIn("animation_u1.mp4", paths[0])
+
+    def test_handle_message_unsupported_type_notifies_in_private(self):
+        handler = self.handler
+        ctx = types.SimpleNamespace(
+            data={},
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=None),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            text=None, caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=None, audio=None, voice=None, video=None,
+            video_note=None, reply_to_message=None, message_id=123,
+        )
+        abort = mock.AsyncMock()
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=types.SimpleNamespace(set=mock.Mock())), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=[])), \
+             mock.patch.object(handler, "_abort_turn_with_notice", new=abort), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()):
+            asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        abort.assert_awaited_once()
+        self.assertIn("can't process this type of message", abort.await_args.args[3])
+        ctx.communicate.assert_not_called()
+
+    def test_handle_message_unsupported_type_stays_silent_in_groups(self):
+        handler = self.handler
+        ctx = types.SimpleNamespace(
+            data={},
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=None),
+            chat=types.SimpleNamespace(id=-100, type="supergroup"),
+            text=None, caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=None, audio=None, voice=None, video=None,
+            video_note=None, reply_to_message=None, message_id=123,
+        )
+        abort = mock.AsyncMock()
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=types.SimpleNamespace(set=mock.Mock())), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=[])), \
+             mock.patch.object(handler, "_abort_turn_with_notice", new=abort), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()):
+            asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        abort.assert_not_awaited()
+        ctx.communicate.assert_not_called()
+
     def test_extract_live_response_preview_from_complete_response_tool_json(self):
         handler = self.handler
         payload = json.dumps({

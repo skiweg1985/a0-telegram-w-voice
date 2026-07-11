@@ -3228,6 +3228,23 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         async with _temp_bot(instance.bot.token) as dl_bot:
             attachments = await _download_attachments(dl_bot, message, bot_name=bot_name)
 
+        # Nothing extractable (unsupported type like poll, dice or story):
+        # tell the user in private chats instead of forwarding an empty turn.
+        # In groups drop it silently so service messages don't trigger noise.
+        if text == "[No text content]" and not attachments:
+            if str(getattr(message.chat, "type", "") or "") == "private":
+                await _abort_turn_with_notice(
+                    context,
+                    instance.bot.token,
+                    message.chat.id,
+                    "🤷 I can't process this type of message yet. "
+                    "Please send text, voice, photos, videos, or files.",
+                )
+            else:
+                _clear_progress_state(context)
+                _stop_context_chat_actions(context)
+            return
+
         # Optional STT for voice/audio inputs
         stt_failure_notice: str | None = None
         if is_voice_input and speech.stt_enabled(bot_cfg):
@@ -3263,27 +3280,9 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         if stt_failure_notice:
             # Tell the user directly instead of feeding a broken transcript
             # marker (or a raw provider error) to the agent as their message.
-            await _finalize_progress_updates(context)
-            progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
-            async with _temp_bot(instance.bot.token) as notice_bot:
-                edited = False
-                if progress_message_id:
-                    edited = await tc.edit_text(
-                        notice_bot,
-                        message.chat.id,
-                        int(progress_message_id),
-                        stt_failure_notice,
-                        parse_mode=None,
-                    )
-                if not edited:
-                    await tc.send_text(
-                        notice_bot,
-                        message.chat.id,
-                        stt_failure_notice,
-                        parse_mode=None,
-                    )
-            _clear_progress_state(context)
-            _stop_context_chat_actions(context)
+            await _abort_turn_with_notice(
+                context, instance.bot.token, message.chat.id, stt_failure_notice,
+            )
             return
 
         if reply_context:
@@ -4200,6 +4199,36 @@ async def _dispatch_telegram_user_turn(
         raise
 
 
+async def _abort_turn_with_notice(
+    context: AgentContext,
+    bot_token: str,
+    chat_id: int,
+    notice: str,
+) -> None:
+    """End the current user turn with a short user-facing notice.
+
+    Reuses the live progress bubble for the notice when one exists, then
+    clears progress state and stops the typing indicator so the chat does not
+    look stuck after the turn was dropped.
+    """
+    await _finalize_progress_updates(context)
+    progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+    async with _temp_bot(bot_token) as notice_bot:
+        edited = False
+        if progress_message_id:
+            edited = await tc.edit_text(
+                notice_bot,
+                int(chat_id),
+                int(progress_message_id),
+                notice,
+                parse_mode=None,
+            )
+        if not edited:
+            await tc.send_text(notice_bot, int(chat_id), notice, parse_mode=None)
+    _clear_progress_state(context)
+    _stop_context_chat_actions(context)
+
+
 def _truncate_preview(text: str, limit: int = 280) -> str:
     value = re.sub(r"\s+", " ", str(text or "")).strip()
     if not value:
@@ -4231,7 +4260,13 @@ def _extract_message_content(message: TgMessage) -> str:
     if message.photo:
         parts.append("[Photo attachment]")
 
-    if message.document:
+    if getattr(message, "animation", None):
+        name = getattr(message.animation, "file_name", None) or "animation"
+        parts.append(f"[Animation/GIF: {name}]")
+
+    # Telegram mirrors animations into `document` for backward compatibility —
+    # skip the duplicate label in that case.
+    if message.document and not getattr(message, "animation", None):
         name = getattr(message.document, "file_name", None) or "document"
         parts.append(f"[Document: {name}]")
 
@@ -4333,15 +4368,24 @@ async def _download_attachments(bot, message: TgMessage, bot_name: str = "") -> 
 
     # Other attachment types: (attr, default_prefix, default_ext)
     _types = [
+        ("animation",  "animation", ".mp4"),
         ("document",   "file",      None),
         ("audio",      "audio",     ".mp3"),
         ("voice",      "voice",     ".ogg"),
         ("video",      "video",     ".mp4"),
         ("video_note", "videonote", ".mp4"),
     ]
+    animation = getattr(message, "animation", None)
     for attr, prefix, ext in _types:
         obj = getattr(message, attr, None)
         if not obj:
+            continue
+        # Animations are mirrored into `document` — don't download them twice.
+        if (
+            attr == "document"
+            and animation is not None
+            and getattr(obj, "file_unique_id", None) == getattr(animation, "file_unique_id", None)
+        ):
             continue
         fname = getattr(obj, "file_name", None) or f"{prefix}_{obj.file_unique_id}{ext or ''}"
         path = await _dl(obj.file_id, fname)
