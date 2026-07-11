@@ -1035,6 +1035,168 @@ class TelegramSessionPickerTests(unittest.TestCase):
         abort.assert_not_awaited()
         ctx.communicate.assert_not_called()
 
+    def test_pinned_sessions_sort_first_and_show_preview_in_picker(self):
+        handler = self.handler
+        meta = {
+            "old_pinned": {
+                "id": "old_pinned",
+                "display_name": "Old pinned",
+                "created_at": "2026-01-01T00:00:00",
+                "last_message": "2026-01-02T00:00:00",
+                "data": {
+                    handler.CTX_TG_BOT: "mainbot",
+                    handler.CTX_TG_USER_ID: 42,
+                    handler.CTX_TG_CHAT_ID: 99,
+                    handler.CTX_TG_SESSION_PINNED: "on",
+                    handler.CTX_TG_SESSION_PREVIEW: "deploy the staging bot",
+                },
+            },
+            "fresh": {
+                "id": "fresh",
+                "display_name": "Fresh session",
+                "created_at": "2026-01-05T00:00:00",
+                "last_message": "2026-01-06T00:00:00",
+                "data": {
+                    handler.CTX_TG_BOT: "mainbot",
+                    handler.CTX_TG_USER_ID: 42,
+                    handler.CTX_TG_CHAT_ID: 99,
+                },
+            },
+        }
+
+        def _fake_meta(ctx_id):
+            raw = meta[ctx_id]
+            m = dict(raw)
+            m["preview"] = handler._truncate_preview(
+                raw["data"].get(handler.CTX_TG_SESSION_PREVIEW) or "", 96
+            )
+            m["pinned"] = raw["data"].get(handler.CTX_TG_SESSION_PINNED) == "on"
+            m["message_count"] = 1
+            return m
+
+        with mock.patch.object(handler.files, "get_abs_path", return_value="/tmp/chats"), \
+             mock.patch.object(handler.os.path, "isdir", return_value=True), \
+             mock.patch.object(handler.os, "listdir", return_value=["fresh", "old_pinned"]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", side_effect=_fake_meta):
+            sessions = handler._list_switchable_sessions("mainbot", 42, 99)
+
+        self.assertEqual([s["id"] for s in sessions], ["old_pinned", "fresh"])
+
+        rows = handler._session_selector_keyboard(
+            sessions, active_ctx_id=None, page=0, total_pages=1, has_query=False,
+        )
+        first_label = rows[0][0]["text"]
+        self.assertTrue(first_label.startswith("📌 "))
+        self.assertIn("deploy the staging bot", first_label)
+
+    def test_session_details_show_pin_toggle_and_status(self):
+        handler = self.handler
+        meta = {
+            "id": "web",
+            "display_name": "Web session",
+            "created_at": "2026-01-01T00:00:00",
+            "last_message": "2026-01-02T00:00:00",
+            "message_count": 3,
+            "telegram_binding": "bound",
+            "pinned": True,
+            "data": {},
+        }
+        text = handler._session_details_text(meta, active_ctx_id=None)
+        self.assertIn("📌 pinned", text)
+        keyboard = handler._session_details_keyboard(meta, active_ctx_id=None)
+        flat = [b for row in keyboard for b in row]
+        pin_btn = next(b for b in flat if b["callback_data"].startswith(f"{handler.TG_UI_CALLBACK_PREFIX}spn|"))
+        self.assertEqual(pin_btn["text"], "📌 Unpin")
+
+    def test_set_session_pinned_updates_loaded_context(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {}
+        _DummyAgentContext.registry["ctx1"] = ctx
+        saved = []
+        with mock.patch.object(handler, "save_tmp_chat", side_effect=lambda c: saved.append(c)):
+            self.assertTrue(handler._set_session_pinned("ctx1", True))
+        self.assertEqual(ctx.data[handler.CTX_TG_SESSION_PINNED], "on")
+        with mock.patch.object(handler, "save_tmp_chat"):
+            self.assertTrue(handler._set_session_pinned("ctx1", False))
+        self.assertNotIn(handler.CTX_TG_SESSION_PINNED, ctx.data)
+
+    def test_set_session_pinned_rewrites_on_disk_session(self):
+        handler = self.handler
+        stored = {"value": json.dumps({"id": "cold", "data": {}})}
+
+        def _read(path):
+            return stored["value"]
+
+        def _write(path, content):
+            stored["value"] = content
+
+        with mock.patch.object(handler.files, "read_file", side_effect=_read), \
+             mock.patch.object(handler.files, "write_file", side_effect=_write), \
+             mock.patch.object(handler.os.path, "isfile", return_value=True):
+            self.assertTrue(handler._set_session_pinned("cold", True))
+
+        data = json.loads(stored["value"])
+        self.assertEqual(data["data"][handler.CTX_TG_SESSION_PINNED], "on")
+
+    def test_handle_message_stores_session_preview(self):
+        handler = self.handler
+        ctx = types.SimpleNamespace(
+            data={},
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=None),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            text="Please deploy the staging bot today",
+            caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=None, audio=None, voice=None, video=None,
+            video_note=None, reply_to_message=None, message_id=123,
+        )
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=types.SimpleNamespace(set=mock.Mock())), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=[])), \
+             mock.patch.object(handler.mq, "log_user_message"), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()):
+            asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        self.assertEqual(
+            ctx.data[handler.CTX_TG_SESSION_PREVIEW],
+            "Please deploy the staging bot today",
+        )
+
+    def test_handle_start_offers_continue_last_button(self):
+        handler = self.handler
+        sent = []
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            reply=mock.AsyncMock(),
+        )
+        recent = {
+            "id": "prev",
+            "display_name": "Yesterday's task",
+            "telegram_binding": "bound",
+            "data": {},
+        }
+        with mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=_DummyAgentContext(name="S"))), \
+             mock.patch.object(handler, "_mapped_context_id", return_value=None), \
+             mock.patch.object(handler, "_list_switchable_sessions", return_value=[recent]):
+            asyncio.run(handler.handle_start(message, "mainbot", {}))
+
+        keyboard = sent[-1][1].get("keyboard")
+        self.assertIsNotNone(keyboard)
+        self.assertIn("Continue: Yesterday's task", keyboard[0][0]["text"])
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}s|prev")
+
     def test_handle_edited_message_offers_rerun_with_token(self):
         handler = self.handler
         ctx = _DummyAgentContext(name="Shipping dashboard")

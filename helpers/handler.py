@@ -95,6 +95,8 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     CTX_TG_REPLY_ACTIONS_SESSION,
     CTX_TG_RICH_SESSION,
+    CTX_TG_SESSION_PREVIEW,
+    CTX_TG_SESSION_PINNED,
     CTX_TG_LAST_USER_MESSAGE_ID,
     CTX_TG_EDITED_PENDING_TEXT,
     CTX_TG_EDITED_PENDING_TOKEN,
@@ -1205,6 +1207,10 @@ def _read_persisted_chat_meta(ctx_id: str) -> dict | None:
         meta["log"] = {}
     meta["display_name"] = _session_display_name(meta)
     meta["message_count"] = _session_message_count(meta)
+    meta["preview"] = _truncate_preview(meta["data"].get(CTX_TG_SESSION_PREVIEW) or "", 96)
+    meta["pinned"] = str(meta["data"].get(CTX_TG_SESSION_PINNED) or "").strip().lower() in (
+        "on", "true", "1", "yes",
+    )
     return meta
 
 
@@ -1261,8 +1267,10 @@ def _list_switchable_sessions(
         meta["telegram_binding"] = binding_state
         sessions.append(meta)
 
+    # Pinned sessions stay on top; within each group most-recent first.
     sessions.sort(
         key=lambda item: (
+            bool(item.get("pinned")),
             _parse_session_datetime(item.get("last_message") or item.get("created_at")),
             str(item.get("id") or ""),
         ),
@@ -1334,9 +1342,15 @@ def _session_selector_keyboard(
             marker = "🌐 "
         else:
             marker = "💬 "
+        if meta.get("pinned"):
+            marker = f"📌 {marker}"
+        label = f"{marker}{meta.get('display_name') or ctx_id}"
+        preview = str(meta.get("preview") or "").strip()
+        if preview:
+            label = f"{label} — {preview}"
         rows.append([
             {
-                "text": _model_preset_button_label(f"{marker}{meta.get('display_name') or ctx_id}"),
+                "text": _model_preset_button_label(label),
                 "callback_data": f"{p}sv|{ctx_id}",
             }
         ])
@@ -1366,6 +1380,8 @@ def _session_details_text(meta: dict, active_ctx_id: str | None, *, summary: str
         status = "🔓 unbound web session"
     else:
         status = "⚪ inactive"
+    if meta.get("pinned"):
+        status = f"{status} · 📌 pinned"
     lines = [
         f"📂 {meta.get('display_name') or ctx_id}",
         "",
@@ -1394,11 +1410,47 @@ def _session_details_keyboard(meta: dict, active_ctx_id: str | None) -> list[lis
         switch_label = "✅ Open and bind to this chat"
     else:
         switch_label = "✅ Open this session"
+    pin_label = "📌 Unpin" if meta.get("pinned") else "📌 Pin"
     return [
         [{"text": switch_label, "callback_data": f"{p}ss|{ctx_id}"}],
-        [{"text": "🗑 Delete", "callback_data": f"{p}sd|{ctx_id}"}],
+        [
+            {"text": pin_label, "callback_data": f"{p}spn|{ctx_id}"},
+            {"text": "🗑 Delete", "callback_data": f"{p}sd|{ctx_id}"},
+        ],
         [{"text": "⬅️ Back", "callback_data": f"{p}sb|back"}],
     ]
+
+
+def _set_session_pinned(ctx_id: str, pinned: bool) -> bool:
+    """Persist the pin flag for a loaded or on-disk session."""
+    ctx = AgentContext.get(ctx_id)
+    if ctx:
+        if pinned:
+            ctx.data[CTX_TG_SESSION_PINNED] = "on"
+        else:
+            ctx.data.pop(CTX_TG_SESSION_PINNED, None)
+        save_tmp_chat(ctx)
+        return True
+    path = _persisted_chat_file_path(ctx_id)
+    if not os.path.isfile(path):
+        return False
+    try:
+        data = json.loads(files.read_file(path))
+        if not isinstance(data, dict):
+            return False
+        payload = data.get("data")
+        if not isinstance(payload, dict):
+            payload = {}
+            data["data"] = payload
+        if pinned:
+            payload[CTX_TG_SESSION_PINNED] = "on"
+        else:
+            payload.pop(CTX_TG_SESSION_PINNED, None)
+        files.write_file(path, json.dumps(data))
+        return True
+    except Exception as e:
+        PrintStyle.warning(f"Telegram session pin update failed: {format_error(e)}")
+        return False
 
 
 def _session_delete_confirm_text(meta: dict, *, active_ctx_id: str | None = None) -> str:
@@ -1959,6 +2011,29 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
     if not instance:
         return
 
+    # One-tap entry back into the most recent other session.
+    keyboard = None
+    try:
+        active_id = _mapped_context_id(bot_name, user.id, message.chat.id)
+        recent = next(
+            (
+                s
+                for s in _list_switchable_sessions(bot_name, user.id, message.chat.id, limit=5)
+                if str(s.get("id") or "") != str(active_id or "")
+            ),
+            None,
+        )
+        if recent:
+            label = _model_preset_button_label(
+                f"▶️ Continue: {recent.get('display_name') or recent.get('id')}"
+            )
+            keyboard = [[{
+                "text": label,
+                "callback_data": f"{TG_UI_CALLBACK_PREFIX}s|{recent.get('id')}",
+            }]]
+    except Exception as e:
+        PrintStyle.warning(f"Telegram continue-last lookup failed: {format_error(e)}")
+
     await _send_with_temp_bot(
         instance.bot.token, message.chat.id,
         f"\U0001f44b Hello {user.first_name}! I'm connected to Agent Zero.\n\n"
@@ -1967,6 +2042,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         "\u2699\ufe0f /status shows the current modes.\n"
         "\U0001f5d1 /clear resets this conversation. /help lists all commands.",
         parse_mode=None,
+        keyboard=keyboard,
     )
 
     # Ensure a chat context exists
@@ -3361,6 +3437,8 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         context.data[CTX_TG_LAST_USER_BODY] = text
         context.data[CTX_TG_LAST_USER_SENDER] = sender
         context.data[CTX_TG_LAST_USER_ATTACHMENTS] = list(attachments or [])
+        # One-line preview for the /session picker.
+        context.data[CTX_TG_SESSION_PREVIEW] = _truncate_preview(text, 96)
 
         msg_id = str(uuid.uuid4())
         mq.log_user_message(context, user_msg, attachments, message_id=msg_id, source=" (telegram)")
@@ -3569,6 +3647,30 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 message_id=query.message.message_id,
             )
             await query.answer()
+            return
+
+        if kind == "spn":
+            sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
+            target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
+            if not target:
+                await query.answer("Session not found")
+                return
+            new_pinned = not bool(target.get("pinned"))
+            if not _set_session_pinned(payload, new_pinned):
+                await query.answer("Could not update pin.")
+                return
+            target["pinned"] = new_pinned
+            await _show_session_details(
+                token,
+                chat_id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                meta=target,
+                message_id=query.message.message_id,
+                bot_cfg=bot_cfg,
+                bot_name=bot_name,
+                user_id=user.id,
+            )
+            await query.answer("Pinned" if new_pinned else "Unpinned")
             return
 
         if kind == "sd":
@@ -4253,6 +4355,7 @@ async def _dispatch_telegram_user_turn(
         ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
         ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
         ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
+        ctx.data[CTX_TG_SESSION_PREVIEW] = _truncate_preview(clean_body, 96)
 
         msg_id = str(uuid.uuid4())
         mq.log_user_message(
