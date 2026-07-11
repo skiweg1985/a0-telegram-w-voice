@@ -96,6 +96,10 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     CTX_TG_REPLY_ACTIONS_SESSION,
     CTX_TG_RICH_SESSION,
+    CTX_TG_SUGGEST_SESSION,
+    CTX_TG_SUGGESTED_REPLIES,
+    CTX_TG_PENDING_TURNS,
+    CTX_TG_PENDING_TURNS_WORKER,
     CTX_TG_SESSION_PREVIEW,
     CTX_TG_SESSION_PINNED,
     CTX_TG_LAST_USER_MESSAGE_ID,
@@ -701,6 +705,147 @@ def _detail_before_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dic
 
 def _rich_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
     return _on_off_inline_keyboard("ri", bot_cfg)
+
+
+def _suggest_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    return _on_off_inline_keyboard("sg", bot_cfg)
+
+
+def _suggested_replies_effective(bot_cfg: dict | None, ctx_data: dict | None) -> bool:
+    """Session /suggest override, else bot config suggested_replies_enabled (default off)."""
+    raw = str((ctx_data or {}).get(CTX_TG_SUGGEST_SESSION, "") or "").strip().lower()
+    if raw in ("on", "true", "1", "yes"):
+        return True
+    if raw in ("off", "false", "0", "no"):
+        return False
+    value = (bot_cfg or {}).get("suggested_replies_enabled")
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "on", "enabled")
+
+
+def _apply_suggest_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_SUGGEST_SESSION] = "on"
+        return i18n.t(bot_cfg, "suggest_on")
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_SUGGEST_SESSION] = "off"
+        return i18n.t(bot_cfg, "suggest_off")
+    return i18n.t(bot_cfg, "suggest_usage")
+
+
+_SUGGESTION_MAX_COUNT = 3
+_SUGGESTION_MAX_CHARS = 48
+
+
+async def _generate_reply_suggestions(
+    context: AgentContext, bot_cfg: dict, user_body: str, answer_text: str
+) -> list[str]:
+    """Ask the utility model for up to three tap-to-send follow-up messages."""
+    agent = getattr(context, "agent0", None)
+    if agent is None or not hasattr(agent, "call_utility_model"):
+        return []
+    system = (
+        "You suggest follow-up messages a user might send next in a chat with an "
+        "AI assistant. Reply ONLY with a JSON array of 1-3 short strings, each at "
+        f"most {_SUGGESTION_MAX_CHARS} characters, phrased as the user (imperative "
+        "or question), in the same language as the conversation. No numbering, no "
+        "explanations. Suggest nothing exotic — the most likely next steps."
+    )
+    message = (
+        f"[User message]\n{_truncate_preview(user_body, 600)}\n\n"
+        f"[Assistant answer]\n{_truncate_preview(answer_text, 1600)}"
+    )
+    try:
+        raw = await agent.call_utility_model(system=system, message=message, background=True)
+    except Exception as e:
+        PrintStyle.warning(f"Telegram reply suggestions failed: {format_error(e)}")
+        return []
+    return _parse_reply_suggestions(raw)
+
+
+def _parse_reply_suggestions(raw: object) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    suggestions: list[str] = []
+    for item in data:
+        s = re.sub(r"\s+", " ", str(item or "")).strip()
+        if not s:
+            continue
+        if len(s) > _SUGGESTION_MAX_CHARS:
+            s = s[: _SUGGESTION_MAX_CHARS - 1].rstrip() + "…"
+        suggestions.append(s)
+        if len(suggestions) >= _SUGGESTION_MAX_COUNT:
+            break
+    return suggestions
+
+
+def _suggestion_keyboard_rows(suggestions: list[str], token: str) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [{"text": f"💬 {s}", "callback_data": f"{p}sr|{idx}:{token}"}]
+        for idx, s in enumerate(suggestions)
+    ]
+
+
+async def _attach_reply_suggestions(
+    context: AgentContext,
+    bot_cfg: dict,
+    bot_token: str,
+    chat_id: int,
+    message_id: int,
+    base_rows: list[list[dict]] | None,
+    response_token: str,
+    user_body: str,
+    answer_text: str,
+) -> None:
+    """Generate follow-up chips and add them to the delivered reply's keyboard.
+
+    Runs after the final reply is already visible, so the utility-model call
+    never delays the answer. Aborted quietly when a newer response has taken
+    over the action token in the meantime.
+    """
+    try:
+        suggestions = await _generate_reply_suggestions(context, bot_cfg, user_body, answer_text)
+        if not suggestions:
+            return
+        if str(context.data.get(CTX_TG_LAST_RESPONSE_ACTION_TOKEN, "") or "") != response_token:
+            return
+        context.data[CTX_TG_SUGGESTED_REPLIES] = list(suggestions)
+        save_tmp_chat(context)
+        rows = _suggestion_keyboard_rows(suggestions, response_token) + list(base_rows or [])
+        keyboard = tc.build_inline_keyboard(rows)
+        async with _temp_bot(bot_token) as bot:
+            if str(context.data.get(CTX_TG_LAST_RESPONSE_ACTION_TOKEN, "") or "") != response_token:
+                return
+            await bot.edit_message_reply_markup(
+                chat_id=int(chat_id),
+                message_id=int(message_id),
+                reply_markup=keyboard,
+            )
+    except Exception as e:
+        PrintStyle.warning(f"Telegram reply suggestions attach failed: {format_error(e)}")
+
+
+def _schedule_reply_suggestions(**kwargs) -> None:
+    """Fire-and-forget wrapper so suggestions never block the reply path."""
+    try:
+        asyncio.get_running_loop().create_task(_attach_reply_suggestions(**kwargs))
+    except RuntimeError:
+        PrintStyle.warning("Telegram reply suggestions skipped: no running event loop.")
 
 
 def _mark_active_buttons(rows: list[list[dict]], active_callback_data: str) -> list[list[dict]]:
@@ -2062,6 +2207,8 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_VOICE_TEXT, None)
                 ctx.data.pop(CTX_TG_DETAIL_LEVEL_SESSION, None)
                 ctx.data.pop(CTX_TG_RICH_SESSION, None)
+                ctx.data.pop(CTX_TG_SUGGEST_SESSION, None)
+                ctx.data.pop(CTX_TG_SUGGESTED_REPLIES, None)
                 ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
                 ctx.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
                 ctx.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
@@ -2428,6 +2575,44 @@ async def handle_edited_message(message: TgMessage, bot_name: str, bot_cfg: dict
         i18n.t(bot_cfg, "edited_offer"),
         parse_mode=None,
         keyboard=keyboard,
+    )
+
+
+async def handle_suggest(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /suggest — toggle tap-to-send follow-up suggestions for this session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        effective = _suggested_replies_effective(bot_cfg, ctx.data)
+        reply = i18n.t(bot_cfg, "suggest_status", state="on" if effective else "off")
+        kb = _suggest_inline_keyboard(bot_cfg)
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+            keyboard=kb,
+        )
+        return
+
+    reply = _apply_suggest_setting(ctx, bot_cfg, arg)
+    save_tmp_chat(ctx)
+
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
     )
 
 
@@ -3974,6 +4159,53 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 )
             return
 
+        if kind == "sg":
+            if payload not in ("on", "off"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_suggest_setting(context, bot_cfg, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            if not await _edit_mode_status_message(
+                token, query, reply, _suggest_inline_keyboard(bot_cfg),
+                f"{TG_UI_CALLBACK_PREFIX}sg|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
+            return
+
+        if kind == "sr":
+            idx_raw, _, action_token = payload.partition(":")
+            suggestions = list(context.data.get(CTX_TG_SUGGESTED_REPLIES) or [])
+            try:
+                idx = int(idx_raw)
+            except (TypeError, ValueError):
+                idx = -1
+            if (
+                not _response_action_is_current(context, action_token)
+                or idx < 0
+                or idx >= len(suggestions)
+            ):
+                await query.answer(i18n.t(bot_cfg, "suggest_gone"))
+                return
+            body = str(suggestions[idx] or "").strip()
+            if not body:
+                await query.answer(i18n.t(bot_cfg, "suggest_gone"))
+                return
+            err = await _dispatch_telegram_user_turn(
+                context,
+                bot_token=token,
+                chat_id=chat_id,
+                sender=_format_user(user),
+                body=body,
+                attachments=[],
+                source=" (telegram suggested reply)",
+                busy_message=i18n.t(bot_cfg, "busy_stop_first"),
+            )
+            await query.answer(body[:200] if not err else err[:200])
+            return
+
         if kind == "em":
             pending_token = str(context.data.get(CTX_TG_EDITED_PENDING_TOKEN, "") or "")
             pending_text = str(context.data.get(CTX_TG_EDITED_PENDING_TEXT, "") or "")
@@ -4294,6 +4526,98 @@ async def _get_or_create_context_from_user(
 # Message content extraction
 
 
+_PENDING_TURNS_MAX = 5
+
+
+def _queue_messages_enabled(bot_cfg: dict | None) -> bool:
+    value = (bot_cfg or {}).get("queue_messages")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in ("false", "0", "no", "off", "disabled")
+
+
+def _enqueue_pending_turn(
+    ctx: AgentContext,
+    *,
+    bot_token: str,
+    chat_id: int,
+    sender: str,
+    body: str,
+    attachments: list[str] | None,
+    source: str,
+) -> bool:
+    """Queue a turn that arrived while the agent is busy. Returns False when full."""
+    queue = list(ctx.data.get(CTX_TG_PENDING_TURNS) or [])
+    if len(queue) >= _PENDING_TURNS_MAX:
+        return False
+    queue.append({
+        "bot_token": bot_token,
+        "chat_id": int(chat_id),
+        "sender": str(sender or ""),
+        "body": str(body or "").strip(),
+        "attachments": list(attachments or []),
+        "source": str(source or ""),
+    })
+    ctx.data[CTX_TG_PENDING_TURNS] = queue
+    return True
+
+
+async def process_pending_telegram_turns(context: AgentContext) -> None:
+    """Drain turns queued while the agent was busy, once the run has finished.
+
+    Multiple queued turns are merged into one dispatch (like a person sending
+    several messages in a row). Runs as a background task from chain end; the
+    guard flag keeps concurrent chain ends from double-draining.
+    """
+    if context.data.get(CTX_TG_PENDING_TURNS_WORKER):
+        return
+    context.data[CTX_TG_PENDING_TURNS_WORKER] = True
+    try:
+        for _ in range(120):  # wait up to ~60s for the current run to finish
+            if not context.data.get(CTX_TG_PENDING_TURNS):
+                return
+            if not context.is_running():
+                break
+            await asyncio.sleep(0.5)
+        queue = list(context.data.get(CTX_TG_PENDING_TURNS) or [])
+        context.data.pop(CTX_TG_PENDING_TURNS, None)
+        if not queue or context.is_running():
+            return
+        first = queue[0]
+        bodies = [t["body"] for t in queue if t.get("body")]
+        attachments: list[str] = []
+        for t in queue:
+            attachments.extend(t.get("attachments") or [])
+        err = await _dispatch_telegram_user_turn(
+            context,
+            bot_token=first["bot_token"],
+            chat_id=first["chat_id"],
+            sender=first.get("sender") or "",
+            body="\n\n".join(bodies),
+            attachments=attachments,
+            source=" (telegram queued)",
+            queue_if_busy=False,
+        )
+        if err:
+            PrintStyle.warning(f"Telegram queued turn not dispatched: {err}")
+    except Exception as e:
+        PrintStyle.warning(f"Telegram pending-turn drain failed: {format_error(e)}")
+    finally:
+        context.data.pop(CTX_TG_PENDING_TURNS_WORKER, None)
+
+
+def schedule_pending_telegram_turns(context: AgentContext) -> None:
+    """Fire-and-forget drain of queued turns (called from chain end)."""
+    if not context.data.get(CTX_TG_PENDING_TURNS):
+        return
+    try:
+        asyncio.get_running_loop().create_task(process_pending_telegram_turns(context))
+    except RuntimeError:
+        PrintStyle.warning("Telegram pending-turn drain skipped: no running event loop.")
+
+
 async def _dispatch_telegram_user_turn(
     ctx: AgentContext,
     *,
@@ -4304,8 +4628,22 @@ async def _dispatch_telegram_user_turn(
     attachments: list[str] | None,
     source: str,
     busy_message: str = "Agent is still working. Use /stop first.",
+    queue_if_busy: bool = True,
 ) -> str | None:
     if ctx.is_running():
+        bot_cfg = ctx.data.get(CTX_TG_BOT_CFG, {}) or {}
+        if queue_if_busy and _queue_messages_enabled(bot_cfg):
+            queued = _enqueue_pending_turn(
+                ctx,
+                bot_token=bot_token,
+                chat_id=chat_id,
+                sender=sender,
+                body=body,
+                attachments=attachments,
+                source=source,
+            )
+            if queued:
+                return i18n.t(bot_cfg, "queued_notice")
         return busy_message
 
     typing_stop = _start_typing(bot_token, chat_id)
@@ -6075,6 +6413,7 @@ async def send_telegram_reply(
                 logical_text_body = (voice_text or "").strip()
 
             context.data[CTX_TG_LAST_TEXT_RESPONSE] = logical_text_body
+            context.data.pop(CTX_TG_SUGGESTED_REPLIES, None)  # chips belong to the previous reply
             response_token = ""
             has_answer_payload = bool(logical_text_body or outbound_items or (want_voice and tts_raw and tts_on))
             if has_answer_payload:
@@ -6240,6 +6579,7 @@ async def send_telegram_reply(
             )
             progress_message_became_final = False
             sent_text = False
+            final_text_message_id: int | None = None
             if should_send_text:
                 progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
                 rich_final_candidate = _should_attempt_final_rich_text(
@@ -6266,6 +6606,8 @@ async def send_telegram_reply(
                             reply_bot, chat_id, int(progress_message_id), html_text,
                         )
                     progress_message_became_final = bool(edited)
+                    if edited:
+                        final_text_message_id = int(progress_message_id)
 
                 if not edited:
                     msg_id = await _send_telegram_text_message(
@@ -6279,6 +6621,8 @@ async def send_telegram_reply(
                         ctx_data=context.data,
                     )
                     sent_text = bool(msg_id)
+                    if msg_id:
+                        final_text_message_id = int(msg_id)
 
             if not progress_message_became_final:
                 await _cleanup_progress_message_after_final(
@@ -6299,6 +6643,28 @@ async def send_telegram_reply(
             if context.data[CTX_TG_FINAL_REPLY_DELIVERED]:
                 await _set_user_message_reaction(reply_bot, context, "👍")
             _clear_progress_state(context)
+
+            # Tap-to-send follow-up chips: generated after delivery so the
+            # utility-model call never delays the answer. Text replies only —
+            # voice bubbles keep their own compact action set.
+            if (
+                context.data[CTX_TG_FINAL_REPLY_DELIVERED]
+                and final_text_message_id
+                and response_token
+                and logical_text_body
+                and _suggested_replies_effective(bot_cfg, context.data)
+            ):
+                _schedule_reply_suggestions(
+                    context=context,
+                    bot_cfg=bot_cfg,
+                    bot_token=instance.bot.token,
+                    chat_id=int(chat_id),
+                    message_id=final_text_message_id,
+                    base_rows=final_keyboard,
+                    response_token=response_token,
+                    user_body=str(context.data.get(CTX_TG_LAST_USER_BODY, "") or ""),
+                    answer_text=logical_text_body,
+                )
 
         # Persist the reveal-button token/text so "Show text" survives restarts.
         save_tmp_chat(context)

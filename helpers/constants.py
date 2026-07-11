@@ -96,6 +96,19 @@ CTX_TG_REPLY_ACTIONS_SESSION = "telegram_reply_actions_session"
 CTX_TG_SESSION_PREVIEW = "telegram_session_preview"
 CTX_TG_SESSION_PINNED = "telegram_session_pinned"
 
+# Per-session suggested-replies toggle (/suggest): missing = use bot
+# suggested_replies_enabled; on | off. Persisted (no "_" prefix).
+CTX_TG_SUGGEST_SESSION = "telegram_suggested_replies_session"
+
+# Suggested follow-up texts for the last reply, addressed by the current
+# response-action token. Persisted so the chips survive restarts.
+CTX_TG_SUGGESTED_REPLIES = "telegram_suggested_replies"
+
+# Turns that arrived while the agent was busy (transient). Each entry is a
+# dict {body, sender, attachments, source}; drained after the current run.
+CTX_TG_PENDING_TURNS = "_telegram_pending_turns"
+CTX_TG_PENDING_TURNS_WORKER = "_telegram_pending_turns_worker"
+
 # Per-session rich-message rendering (/rich): missing = use rich_messages.enabled; on | off.
 # Key without "_" prefix so the choice survives restarts. Keep the literal in
 # telegram_client.effective_rich_enabled in sync with this value.

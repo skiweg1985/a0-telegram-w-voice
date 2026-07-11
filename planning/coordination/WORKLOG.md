@@ -774,3 +774,31 @@
   - yes ([Unreleased] Added)
 - Follow-ups:
   - i18n-Ausbau (siehe Next)
+
+## 2026-07-11 – Claude – Conversation-Comfort-Paket: Smart-Reply-Chips (/suggest) + Nachrichten-Warteschlange
+
+- Done:
+  - **Smart-Reply-Chips**: Utility-LLM generiert nach jedem Text-Reply bis zu drei antippbare Folgevorschläge (`_generate_reply_suggestions` → JSON-Parse `_parse_reply_suggestions`, max 3 × 48 Zeichen). Generierung läuft als Fire-and-forget-Task NACH Zustellung (`_schedule_reply_suggestions`/`_attach_reply_suggestions`) und editiert nur das Reply-Markup der finalen Nachricht (Chips über den bestehenden Action-Rows); Token-Guards gegen veraltete Antworten. Tap → `sr|{idx}:{token}`-Callback dispatcht den Vorschlag als User-Turn. `/suggest [on|off]` (Kind `sg`, In-place-Keyboard), Session-Key `telegram_suggested_replies_session`, Bot-Default `suggested_replies_enabled` (aus, wegen Utility-Kosten) + WebUI-Toggle; Vorschläge persistiert (überleben Restarts), Reset bei /clear und bei jeder neuen Antwort. Nur Text-Replies (Voice behält kompakte Action-Leiste).
+  - **Nachrichten-Warteschlange**: `_dispatch_telegram_user_turn` reiht bei laufendem Agenten ein (`CTX_TG_PENDING_TURNS`, Cap 5) statt abzulehnen und antwortet mit „📥 Eingereiht…" (i18n `queued_notice`); `queue_messages: true` konfigurierbar, `queue_if_busy=False` für interne Aufrufe. Chain-End (`_55_telegram_reply`) startet `schedule_pending_telegram_turns` → `process_pending_telegram_turns` wartet (≤60s) bis der Run endet, merged alle eingereihten Bodies/Attachments zu EINEM Turn und dispatcht; Worker-Flag verhindert Doppel-Drain.
+  - i18n-Keys (en/de): suggest_status/on/off/usage/gone, queued_notice. Command-Registry + deutsches Menü um `suggest` ergänzt; job_loop-Wiring; Version 0.12.0 → 0.13.0.
+- Next:
+  - Live testen: Vorschlagsqualität des Utility-Modells prüfen, ggf. Prompt nachschärfen.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: claude/plugin-ui-ux-improvements-cyrtvo (neu von main nach Merge von PR #25)
+  - PR: none
+- Files touched:
+  - helpers/handler.py, helpers/constants.py, helpers/i18n.py, helpers/command_registry.py
+  - extensions/python/process_chain_end/_55_telegram_reply.py, extensions/python/job_loop/_10_telegram_bot.py
+  - webui/config.html, webui/telegram-config-store.js
+  - default_config.yaml, plugin.yaml, README.md
+  - tests/test_telegram_session_picker.py
+  - docs/CHANGELOG.md, planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest discover -s tests` (240 passed, 10 neu)
+  - UI path: /suggest on → Antwort abwarten → 💬-Chips erscheinen unter der Antwort → Tap führt Vorschlag aus; während laufender Aufgabe „Retry"/Chip tippen → 📥-Notiz → läuft automatisch nach Task-Ende
+- Changelog updated:
+  - yes ([Unreleased] Added)
+- Follow-ups:
+  - none
