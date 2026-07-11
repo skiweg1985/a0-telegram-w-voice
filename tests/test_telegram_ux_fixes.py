@@ -6,6 +6,7 @@ Covers:
 - sentence-boundary TTS truncation (``speech.truncate_for_tts``)
 """
 
+import asyncio
 import importlib.util
 import sys
 import types
@@ -50,6 +51,12 @@ def _install_stub_helpers():
     aiogram_types.InputMediaDocument = _DummyInline
     aiogram_types.InputMediaPhoto = _DummyInline
     aiogram_types.InputMediaVideo = _DummyInline
+
+    class _DummyReaction:
+        def __init__(self, emoji=""):
+            self.emoji = emoji
+
+    aiogram_types.ReactionTypeEmoji = _DummyReaction
     sys.modules["aiogram.types"] = aiogram_types
 
     helpers = types.ModuleType("helpers")
@@ -151,6 +158,63 @@ class SplitTextHtmlAwareTests(unittest.TestCase):
         self.assertEqual(plain, "x <= y && a > b")
 
 
+class EffectiveRichEnabledTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = _load_client()
+
+    def test_defaults_to_bot_config(self):
+        self.assertFalse(self.client.effective_rich_enabled({}, {}))
+        self.assertTrue(
+            self.client.effective_rich_enabled({"rich_messages": {"enabled": True}}, {})
+        )
+
+    def test_session_override_wins_both_ways(self):
+        cfg_on = {"rich_messages": {"enabled": True}}
+        self.assertFalse(
+            self.client.effective_rich_enabled(cfg_on, {"telegram_rich_messages_session": "off"})
+        )
+        self.assertTrue(
+            self.client.effective_rich_enabled({}, {"telegram_rich_messages_session": "on"})
+        )
+
+
+class MessageReactionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = _load_client()
+
+    def test_reactions_enabled_default_and_override(self):
+        self.assertTrue(self.client.reactions_enabled({}))
+        self.assertFalse(self.client.reactions_enabled({"reactions_enabled": False}))
+        self.assertFalse(self.client.reactions_enabled({"reactions_enabled": "off"}))
+
+    def test_set_message_reaction_calls_api(self):
+        calls = []
+
+        class _Bot:
+            async def set_message_reaction(self, **kwargs):
+                calls.append(kwargs)
+
+        ok = asyncio.run(self.client.set_message_reaction(_Bot(), 99, 55, "👀"))
+        self.assertTrue(ok)
+        self.assertEqual(calls[0]["chat_id"], 99)
+        self.assertEqual(calls[0]["message_id"], 55)
+        self.assertEqual(calls[0]["reaction"][0].emoji, "👀")
+
+    def test_set_message_reaction_survives_old_bot_api(self):
+        ok = asyncio.run(self.client.set_message_reaction(object(), 99, 55, "👀"))
+        self.assertFalse(ok)  # no set_message_reaction attr → quiet no-op
+
+    def test_set_message_reaction_swallows_api_errors(self):
+        class _Bot:
+            async def set_message_reaction(self, **kwargs):
+                raise RuntimeError("reactions disabled in this chat")
+
+        ok = asyncio.run(self.client.set_message_reaction(_Bot(), 99, 55, "👍"))
+        self.assertFalse(ok)
+
+
 class TruncateForTtsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -178,6 +242,78 @@ class TruncateForTtsTests(unittest.TestCase):
     def test_default_max_chars_is_1400(self):
         settings = self.speech.voice_reply_settings({"speech": {"reply": {}}})
         self.assertEqual(settings["max_chars"], 1400)
+
+
+def _load_i18n():
+    spec = importlib.util.spec_from_file_location(
+        "telegram_ux_i18n_under_test", REPO_ROOT / "helpers" / "i18n.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class I18nTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.i18n = _load_i18n()
+
+    def test_language_defaults_to_english(self):
+        self.assertEqual(self.i18n.bot_language({}), "en")
+        self.assertEqual(self.i18n.bot_language({"language": "fr"}), "en")
+        self.assertEqual(self.i18n.bot_language({"language": "DE"}), "de")
+
+    def test_translation_with_formatting(self):
+        de = self.i18n.t({"language": "de"}, "welcome", name="Ben")
+        self.assertIn("Hallo Ben!", de)
+        en = self.i18n.t({}, "welcome", name="Ben")
+        self.assertIn("Hello Ben!", en)
+
+    def test_unknown_key_falls_back_to_key(self):
+        self.assertEqual(self.i18n.t({}, "no_such_key"), "no_such_key")
+
+    def test_all_keys_have_english_and_german(self):
+        for key, entry in self.i18n._STRINGS.items():
+            self.assertIn("en", entry, f"missing en for {key}")
+            self.assertIn("de", entry, f"missing de for {key}")
+
+    def test_unauthorized_contains_user_id(self):
+        text = self.i18n.t({"language": "de"}, "unauthorized", user_id=1234)
+        self.assertIn("1234", text)
+
+
+class CommandRegistryI18nTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _install_stub_helpers()
+        aiogram = sys.modules["aiogram"]
+        aiogram.Bot = object
+
+        class _BotCommand:
+            def __init__(self, command="", description=""):
+                self.command = command
+                self.description = description
+
+        sys.modules["aiogram.types"].BotCommand = _BotCommand
+        spec = importlib.util.spec_from_file_location(
+            "telegram_ux_registry_under_test", REPO_ROOT / "helpers" / "command_registry.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        cls.registry = module
+
+    def test_german_menu_covers_every_command(self):
+        commands = {cmd for cmd, _, _ in self.registry.COMMAND_ROWS}
+        self.assertEqual(commands, set(self.registry.COMMAND_MENU_DE.keys()))
+
+    def test_german_help_text_uses_german_descriptions(self):
+        text = self.registry.format_help_text(language="de")
+        self.assertIn("Befehle:", text)
+        self.assertIn("/clear — Chat zurücksetzen", text)
+        english = self.registry.format_help_text()
+        self.assertIn("Commands:", english)
 
 
 if __name__ == "__main__":

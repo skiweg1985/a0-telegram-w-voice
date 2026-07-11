@@ -54,6 +54,7 @@ def create_bot(
     on_command_clear: Callable[..., Awaitable],
     on_callback_query: Callable[..., Awaitable] | None = None,
     on_new_members: Callable[..., Awaitable] | None = None,
+    on_edited_message: Callable[..., Awaitable] | None = None,
     group_mode: str = "mention",
     extra_command_handlers: list[tuple[str, Callable[..., Awaitable]]] | None = None,
 ) -> BotInstance:
@@ -69,6 +70,12 @@ def create_bot(
 
     if on_callback_query:
         router.callback_query.register(on_callback_query)
+
+    if on_edited_message:
+        # Private chats only: group edits are noisy and rarely meant for the bot.
+        router.edited_message.register(
+            on_edited_message, F.chat.type == ChatType.PRIVATE,
+        )
 
     if on_new_members:
         router.message.register(on_new_members, F.content_type == ContentType.NEW_CHAT_MEMBERS)

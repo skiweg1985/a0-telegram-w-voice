@@ -120,6 +120,20 @@ def rich_messages_settings(bot_cfg: dict | None) -> dict:
     }
 
 
+def effective_rich_enabled(bot_cfg: dict | None, ctx_data: dict | None) -> bool:
+    """Session-aware rich-message switch: /rich override, else bot config.
+
+    The literal key mirrors constants.CTX_TG_RICH_SESSION (kept inline so this
+    module stays importable without the plugin package, e.g. in tests).
+    """
+    raw = str((ctx_data or {}).get("telegram_rich_messages_session", "") or "").strip().lower()
+    if raw in ("on", "true", "1", "yes"):
+        return True
+    if raw in ("off", "false", "0", "no"):
+        return False
+    return bool(rich_messages_settings(bot_cfg).get("enabled"))
+
+
 def rich_content_fits_limits(text: str) -> bool:
     return len(str(text or "").encode("utf-8")) <= RICH_MESSAGE_MAX_BYTES
 
@@ -657,6 +671,36 @@ async def send_message_draft(
             return False
     except Exception as e:
         PrintStyle.error(f"Telegram send_message_draft failed: {format_error(e)}")
+        return False
+
+
+def reactions_enabled(bot_cfg: dict | None) -> bool:
+    """Bot-level switch for emoji-reaction acknowledgements (default on)."""
+    return _coerce_bool((bot_cfg or {}).get("reactions_enabled"), True)
+
+
+async def set_message_reaction(bot: Bot, chat_id: int, message_id: int, emoji: str | None) -> bool:
+    """Set (or clear with None) a single emoji reaction on a message.
+
+    Reactions are cosmetic feedback: failures (old aiogram/Bot API, reactions
+    disabled in the chat, message too old) are logged quietly, never raised.
+    """
+    if not hasattr(bot, "set_message_reaction"):
+        return False
+    try:
+        reaction = []
+        if emoji:
+            from aiogram.types import ReactionTypeEmoji  # aiogram >= 3.2
+
+            reaction = [ReactionTypeEmoji(emoji=emoji)]
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=reaction,
+        )
+        return True
+    except Exception as e:
+        PrintStyle.warning(f"Telegram set_message_reaction failed: {format_error(e)}")
         return False
 
 

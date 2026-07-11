@@ -140,6 +140,19 @@
 
               <div class="field">
                 <div class="field-label">
+                  <div class="field-title">Language</div>
+                  <div class="field-description">Language for chat replies, buttons, and system notices</div>
+                </div>
+                <div class="field-control">
+                  <select x-model="bot.language">
+                    <option value="en">English</option>
+                    <option value="de">Deutsch</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
                   <div class="field-title">Mode</div>
                   <div class="field-description">Polling: no public IP required. Webhook: needs HTTPS URL</div>
                 </div>

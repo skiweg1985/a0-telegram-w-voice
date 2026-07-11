@@ -91,6 +91,24 @@ CTX_TG_DETAIL_BEFORE_SESSION = "telegram_detail_before_session"
 # Per-session toggle for inline reply actions: missing = use config default; on | off.
 CTX_TG_REPLY_ACTIONS_SESSION = "telegram_reply_actions_session"
 
+# Session-picker metadata (persisted, no "_" prefix): one-line preview of the
+# last user turn, and a pin flag ("on") that keeps the session on top of /session.
+CTX_TG_SESSION_PREVIEW = "telegram_session_preview"
+CTX_TG_SESSION_PINNED = "telegram_session_pinned"
+
+# Per-session rich-message rendering (/rich): missing = use rich_messages.enabled; on | off.
+# Key without "_" prefix so the choice survives restarts. Keep the literal in
+# telegram_client.effective_rich_enabled in sync with this value.
+CTX_TG_RICH_SESSION = "telegram_rich_messages_session"
+
+# Telegram message id of the user turn currently being processed (transient),
+# so the reaction lifecycle (👀 received → 👍 delivered / 😢 failed) can target it.
+CTX_TG_LAST_USER_MESSAGE_ID = "_telegram_last_user_message_id"
+
+# Pending edited-message re-run offer (transient): new text + confirmation token.
+CTX_TG_EDITED_PENDING_TEXT = "_telegram_edited_pending_text"
+CTX_TG_EDITED_PENDING_TOKEN = "_telegram_edited_pending_token"
+
 # Throttle for Telegram detail status lines (transient; reset on new user message).
 CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"
 

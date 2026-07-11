@@ -29,6 +29,7 @@ from usr.plugins.telegram_integration_voice.helpers import detail_status, speech
 from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
 from usr.plugins.telegram_integration_voice.helpers.command_registry import format_help_text
 from usr.plugins.telegram_integration_voice.helpers import status_copy
+from usr.plugins.telegram_integration_voice.helpers import i18n
 from usr.plugins.telegram_integration_voice.helpers.constants import (
     PLUGIN_NAME,
     DOWNLOAD_FOLDER,
@@ -94,6 +95,12 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_DETAIL_ACTIVE_TOOL_LINE_INDEX,
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     CTX_TG_REPLY_ACTIONS_SESSION,
+    CTX_TG_RICH_SESSION,
+    CTX_TG_SESSION_PREVIEW,
+    CTX_TG_SESSION_PINNED,
+    CTX_TG_LAST_USER_MESSAGE_ID,
+    CTX_TG_EDITED_PENDING_TEXT,
+    CTX_TG_EDITED_PENDING_TOKEN,
     TG_UI_CALLBACK_PREFIX,
 )
 
@@ -501,14 +508,15 @@ def _response_action_keyboard(
     *,
     include_more: bool,
     include_show_text: bool = False,
+    bot_cfg: dict | None = None,
 ) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     rows: list[list[dict]] = []
     if include_show_text:
-        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
+        rows.append([{"text": i18n.t(bot_cfg, "btn_show_text"), "callback_data": f"{p}qa|show_text:{token}"}])
     if include_more:
         show_text_flag = "1" if include_show_text else "0"
-        rows.append([{"text": "⋯ More", "callback_data": f"{p}rm|open:{token}:{show_text_flag}"}])
+        rows.append([{"text": i18n.t(bot_cfg, "btn_more"), "callback_data": f"{p}rm|open:{token}:{show_text_flag}"}])
     return rows
 
 
@@ -570,26 +578,31 @@ _RESPONSE_TRANSFORM_SPECS: dict[str, dict[str, str]] = {
 }
 
 
-def _response_transform_keyboard_rows(token: str) -> list[list[dict]]:
+def _response_transform_keyboard_rows(token: str, bot_cfg: dict | None = None) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     buttons = []
     for action, spec in _RESPONSE_TRANSFORM_SPECS.items():
         buttons.append({
-            "text": spec["button"],
+            "text": i18n.t(bot_cfg, f"btn_{action}") if f"btn_{action}" in i18n._STRINGS else spec["button"],
             "callback_data": f"{p}ra|{action}:{token}",
         })
     return [buttons] if buttons else []
 
 
-def _response_more_keyboard(token: str, *, include_show_text: bool = False) -> list[list[dict]]:
+def _response_more_keyboard(
+    token: str,
+    *,
+    include_show_text: bool = False,
+    bot_cfg: dict | None = None,
+) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     rows: list[list[dict]] = []
     if include_show_text:
-        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
-    rows.extend(_response_transform_keyboard_rows(token))
-    rows.append([{"text": "🎙 To voice", "callback_data": f"{p}ra|to_voice:{token}"}])
+        rows.append([{"text": i18n.t(bot_cfg, "btn_show_text"), "callback_data": f"{p}qa|show_text:{token}"}])
+    rows.extend(_response_transform_keyboard_rows(token, bot_cfg))
+    rows.append([{"text": i18n.t(bot_cfg, "btn_to_voice"), "callback_data": f"{p}ra|to_voice:{token}"}])
     back_flag = "1" if include_show_text else "0"
-    rows.append([{"text": "⬅ Back", "callback_data": f"{p}rm|back:{token}:{back_flag}"}])
+    rows.append([{"text": i18n.t(bot_cfg, "btn_back"), "callback_data": f"{p}rm|back:{token}:{back_flag}"}])
     return rows
 
 
@@ -601,11 +614,11 @@ def _apply_reply_actions_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> 
     arg = str(raw or "").strip().lower()
     if arg in ("on", "enable", "enabled"):
         ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "on"
-        return "Reply actions: on — the More menu will be shown for this session."
+        return i18n.t(bot_cfg, "actions_on")
     if arg in ("off", "disable", "disabled"):
         ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "off"
-        return "Reply actions: off — the More menu is hidden for this session."
-    return "Usage: /actions [on|off]"
+        return i18n.t(bot_cfg, "actions_off")
+    return i18n.t(bot_cfg, "actions_usage")
 
 
 def _response_transform_spec(action: str) -> dict[str, str] | None:
@@ -668,24 +681,88 @@ def _detail_inline_keyboard() -> list[list[dict]]:
     ]
 
 
-def _actions_inline_keyboard() -> list[list[dict]]:
+def _on_off_inline_keyboard(kind: str, bot_cfg: dict | None = None) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     return [
         [
-            {"text": "On", "callback_data": f"{p}a|on"},
-            {"text": "Off", "callback_data": f"{p}a|off"},
+            {"text": i18n.t(bot_cfg, "btn_on"), "callback_data": f"{p}{kind}|on"},
+            {"text": i18n.t(bot_cfg, "btn_off"), "callback_data": f"{p}{kind}|off"},
         ],
     ]
 
 
-def _detail_before_inline_keyboard() -> list[list[dict]]:
-    p = TG_UI_CALLBACK_PREFIX
-    return [
-        [
-            {"text": "On", "callback_data": f"{p}db|on"},
-            {"text": "Off", "callback_data": f"{p}db|off"},
-        ],
-    ]
+def _actions_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    return _on_off_inline_keyboard("a", bot_cfg)
+
+
+def _detail_before_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    return _on_off_inline_keyboard("db", bot_cfg)
+
+
+def _rich_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    return _on_off_inline_keyboard("ri", bot_cfg)
+
+
+def _mark_active_buttons(rows: list[list[dict]], active_callback_data: str) -> list[list[dict]]:
+    """Copy keyboard rows, prefixing the currently active option with a check."""
+    marked: list[list[dict]] = []
+    for row in rows:
+        new_row = []
+        for btn in row:
+            b = dict(btn)
+            if b.get("callback_data") == active_callback_data:
+                b["text"] = f"✓ {b.get('text', '')}"
+            new_row.append(b)
+        marked.append(new_row)
+    return marked
+
+
+async def _edit_mode_status_message(
+    token: str,
+    query: CallbackQuery,
+    text: str,
+    keyboard_rows: list[list[dict]],
+    active_callback_data: str,
+) -> bool:
+    """Turn the tapped settings bubble into the confirmation, in place.
+
+    Marks the now-active option in the keyboard so the chat shows the current
+    mode at a glance instead of piling up confirmation bubbles below stale,
+    still-clickable keyboards. Returns False when editing is impossible
+    (message gone, flood control, old client) so callers can fall back to a
+    plain send.
+    """
+    message = getattr(query, "message", None)
+    chat = getattr(message, "chat", None) if message else None
+    if not message or not chat:
+        return False
+    rows = _mark_active_buttons(keyboard_rows, active_callback_data)
+    try:
+        async with _temp_bot(token) as bot:
+            return bool(
+                await tc.edit_text_with_keyboard(
+                    bot,
+                    chat.id,
+                    message.message_id,
+                    text,
+                    rows,
+                    parse_mode=None,
+                )
+            )
+    except Exception as e:
+        PrintStyle.warning(f"Telegram mode-message edit failed: {format_error(e)}")
+        return False
+
+
+def _apply_rich_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_RICH_SESSION] = "on"
+        return i18n.t(bot_cfg, "rich_on")
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_RICH_SESSION] = "off"
+        return i18n.t(bot_cfg, "rich_off")
+    return i18n.t(bot_cfg, "rich_usage")
 
 
 def _detail_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
@@ -1126,6 +1203,10 @@ def _read_persisted_chat_meta(ctx_id: str) -> dict | None:
         meta["log"] = {}
     meta["display_name"] = _session_display_name(meta)
     meta["message_count"] = _session_message_count(meta)
+    meta["preview"] = _truncate_preview(meta["data"].get(CTX_TG_SESSION_PREVIEW) or "", 96)
+    meta["pinned"] = str(meta["data"].get(CTX_TG_SESSION_PINNED) or "").strip().lower() in (
+        "on", "true", "1", "yes",
+    )
     return meta
 
 
@@ -1182,8 +1263,10 @@ def _list_switchable_sessions(
         meta["telegram_binding"] = binding_state
         sessions.append(meta)
 
+    # Pinned sessions stay on top; within each group most-recent first.
     sessions.sort(
         key=lambda item: (
+            bool(item.get("pinned")),
             _parse_session_datetime(item.get("last_message") or item.get("created_at")),
             str(item.get("id") or ""),
         ),
@@ -1255,9 +1338,15 @@ def _session_selector_keyboard(
             marker = "🌐 "
         else:
             marker = "💬 "
+        if meta.get("pinned"):
+            marker = f"📌 {marker}"
+        label = f"{marker}{meta.get('display_name') or ctx_id}"
+        preview = str(meta.get("preview") or "").strip()
+        if preview:
+            label = f"{label} — {preview}"
         rows.append([
             {
-                "text": _model_preset_button_label(f"{marker}{meta.get('display_name') or ctx_id}"),
+                "text": _model_preset_button_label(label),
                 "callback_data": f"{p}sv|{ctx_id}",
             }
         ])
@@ -1287,6 +1376,8 @@ def _session_details_text(meta: dict, active_ctx_id: str | None, *, summary: str
         status = "🔓 unbound web session"
     else:
         status = "⚪ inactive"
+    if meta.get("pinned"):
+        status = f"{status} · 📌 pinned"
     lines = [
         f"📂 {meta.get('display_name') or ctx_id}",
         "",
@@ -1315,11 +1406,47 @@ def _session_details_keyboard(meta: dict, active_ctx_id: str | None) -> list[lis
         switch_label = "✅ Open and bind to this chat"
     else:
         switch_label = "✅ Open this session"
+    pin_label = "📌 Unpin" if meta.get("pinned") else "📌 Pin"
     return [
         [{"text": switch_label, "callback_data": f"{p}ss|{ctx_id}"}],
-        [{"text": "🗑 Delete", "callback_data": f"{p}sd|{ctx_id}"}],
+        [
+            {"text": pin_label, "callback_data": f"{p}spn|{ctx_id}"},
+            {"text": "🗑 Delete", "callback_data": f"{p}sd|{ctx_id}"},
+        ],
         [{"text": "⬅️ Back", "callback_data": f"{p}sb|back"}],
     ]
+
+
+def _set_session_pinned(ctx_id: str, pinned: bool) -> bool:
+    """Persist the pin flag for a loaded or on-disk session."""
+    ctx = AgentContext.get(ctx_id)
+    if ctx:
+        if pinned:
+            ctx.data[CTX_TG_SESSION_PINNED] = "on"
+        else:
+            ctx.data.pop(CTX_TG_SESSION_PINNED, None)
+        save_tmp_chat(ctx)
+        return True
+    path = _persisted_chat_file_path(ctx_id)
+    if not os.path.isfile(path):
+        return False
+    try:
+        data = json.loads(files.read_file(path))
+        if not isinstance(data, dict):
+            return False
+        payload = data.get("data")
+        if not isinstance(payload, dict):
+            payload = {}
+            data["data"] = payload
+        if pinned:
+            payload[CTX_TG_SESSION_PINNED] = "on"
+        else:
+            payload.pop(CTX_TG_SESSION_PINNED, None)
+        files.write_file(path, json.dumps(data))
+        return True
+    except Exception as e:
+        PrintStyle.warning(f"Telegram session pin update failed: {format_error(e)}")
+        return False
 
 
 def _session_delete_confirm_text(meta: dict, *, active_ctx_id: str | None = None) -> str:
@@ -1828,11 +1955,8 @@ def _is_admin_user(bot_cfg: dict, user_id: int, username: str | None) -> bool:
 _UNAUTHORIZED_NOTICE_TTL = 3600
 
 
-def _unauthorized_notice_text(user_id: int) -> str:
-    return (
-        "You are not authorized to use this bot.\n"
-        f"Your Telegram user ID is {user_id} — share it with the bot operator to request access."
-    )
+def _unauthorized_notice_text(user_id: int, bot_cfg: dict | None = None) -> str:
+    return i18n.t(bot_cfg, "unauthorized", user_id=user_id)
 
 
 def _should_send_unauthorized_notice(bot_name: str, user_id: int) -> bool:
@@ -1873,21 +1997,41 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     if not _is_allowed(bot_cfg, user.id, user.username):
-        await message.reply(_unauthorized_notice_text(user.id))
+        await message.reply(_unauthorized_notice_text(user.id, bot_cfg))
         return
 
     instance = get_bot(bot_name)
     if not instance:
         return
 
+    # One-tap entry back into the most recent other session.
+    keyboard = None
+    try:
+        active_id = _mapped_context_id(bot_name, user.id, message.chat.id)
+        recent = next(
+            (
+                s
+                for s in _list_switchable_sessions(bot_name, user.id, message.chat.id, limit=5)
+                if str(s.get("id") or "") != str(active_id or "")
+            ),
+            None,
+        )
+        if recent:
+            label = _model_preset_button_label(
+                i18n.t(bot_cfg, "continue_last", name=recent.get("display_name") or recent.get("id"))
+            )
+            keyboard = [[{
+                "text": label,
+                "callback_data": f"{TG_UI_CALLBACK_PREFIX}s|{recent.get('id')}",
+            }]]
+    except Exception as e:
+        PrintStyle.warning(f"Telegram continue-last lookup failed: {format_error(e)}")
+
     await _send_with_temp_bot(
         instance.bot.token, message.chat.id,
-        f"\U0001f44b Hello {user.first_name}! I'm connected to Agent Zero.\n\n"
-        "Send a message — text or voice — and I'll reply.\n\n"
-        "\U0001f399 /voice switches voice replies on or off.\n"
-        "\u2699\ufe0f /status shows the current modes.\n"
-        "\U0001f5d1 /clear resets this conversation. /help lists all commands.",
+        i18n.t(bot_cfg, "welcome", name=user.first_name),
         parse_mode=None,
+        keyboard=keyboard,
     )
 
     # Ensure a chat context exists
@@ -1917,6 +2061,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_OUTPUT_OPTIMIZE, None)
                 ctx.data.pop(CTX_TG_VOICE_TEXT, None)
                 ctx.data.pop(CTX_TG_DETAIL_LEVEL_SESSION, None)
+                ctx.data.pop(CTX_TG_RICH_SESSION, None)
                 ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
                 ctx.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)
                 ctx.data.pop(CTX_TG_PROGRESS_LAST_HASH, None)
@@ -1931,7 +2076,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
     if instance:
         await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
-            "Chat cleared. Send a new message to start fresh.",
+            i18n.t(bot_cfg, "chat_cleared"),
             parse_mode=None,
         )
 
@@ -1984,7 +2129,7 @@ async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
     await _send_with_temp_bot(
         instance.bot.token,
         message.chat.id,
-        format_help_text(),
+        format_help_text(language=i18n.bot_language(bot_cfg)),
         parse_mode=None,
     )
 
@@ -2084,7 +2229,7 @@ async def handle_detail_before(message: TgMessage, bot_name: str, bot_cfg: dict)
             f"Tool start updates: {_detail_before_status_text(enabled)}.\n"
             "Tap a button or type /detail_before on|off for this session."
         )
-        kb = _detail_before_inline_keyboard()
+        kb = _detail_before_inline_keyboard(bot_cfg)
         save_tmp_chat(ctx)
         await _send_with_temp_bot(
             instance.bot.token,
@@ -2221,7 +2366,7 @@ async def handle_actions(message: TgMessage, bot_name: str, bot_cfg: dict):
             f"Reply actions: {_reply_actions_status_text(effective)}.\n"
             "Tap a button or type /actions on|off for this session."
         )
-        kb = _actions_inline_keyboard()
+        kb = _actions_inline_keyboard(bot_cfg)
         save_tmp_chat(ctx)
         await _send_with_temp_bot(
             instance.bot.token,
@@ -2233,6 +2378,87 @@ async def handle_actions(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     reply = _apply_reply_actions_setting(ctx, bot_cfg, arg)
+    save_tmp_chat(ctx)
+
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
+async def handle_edited_message(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle edited user messages: offer a one-tap re-run with the new text.
+
+    Telegram edits arrive as separate updates that were previously ignored —
+    users who fix a typo expected the agent to notice. Instead of silently
+    re-running (which could surprise mid-task), a small inline offer maps the
+    edit onto the existing retry mechanic.
+    """
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    new_text = str(message.text or message.caption or "").strip()
+    if not new_text:
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+
+    token = uuid.uuid4().hex[:12]
+    ctx.data[CTX_TG_EDITED_PENDING_TEXT] = new_text
+    ctx.data[CTX_TG_EDITED_PENDING_TOKEN] = token
+    if tc.reactions_enabled(bot_cfg):
+        with suppress(Exception):
+            async with _temp_bot(instance.bot.token) as react_bot:
+                await tc.set_message_reaction(
+                    react_bot, message.chat.id, message.message_id, "✍️"
+                )
+    keyboard = [[{
+        "text": i18n.t(bot_cfg, "edited_offer_button"),
+        "callback_data": f"{TG_UI_CALLBACK_PREFIX}em|{token}",
+    }]]
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        i18n.t(bot_cfg, "edited_offer"),
+        parse_mode=None,
+        keyboard=keyboard,
+    )
+
+
+async def handle_rich(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /rich — toggle native rich-message rendering for this session."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        effective = tc.effective_rich_enabled(bot_cfg, ctx.data)
+        reply = i18n.t(bot_cfg, "rich_status", state="on" if effective else "off")
+        kb = _rich_inline_keyboard(bot_cfg)
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+            keyboard=kb,
+        )
+        return
+
+    reply = _apply_rich_setting(ctx, bot_cfg, arg)
     save_tmp_chat(ctx)
 
     await _send_with_temp_bot(
@@ -2346,11 +2572,13 @@ async def handle_status(message: TgMessage, bot_name: str, bot_cfg: dict):
         det_eff = detail_status.effective_detail_level(bot_cfg, ctx.data)
         det_eff_disp = detail_status.detail_level_display(det_eff)
         before_eff = detail_status.effective_execute_before_enabled(bot_cfg, ctx.data)
+        rich_eff = tc.effective_rich_enabled(bot_cfg, ctx.data)
         lines.append(
             f"⚙️ <b>Reply</b>: shaping <code>{esc(opt_eff)}</code> · "
             f"also text <code>{'on' if also_eff else 'off'}</code> · "
             f"tool detail <code>{esc(det_eff_disp)}</code> · "
-            f"tool start <code>{'on' if before_eff else 'off'}</code>"
+            f"tool start <code>{'on' if before_eff else 'off'}</code> · "
+            f"rich <code>{'on' if rich_eff else 'off'}</code>"
         )
 
         proj = projects.get_context_project_name(ctx)
@@ -3040,7 +3268,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                 await _send_with_temp_bot(
                     denied_bot.bot.token,
                     message.chat.id,
-                    _unauthorized_notice_text(user.id),
+                    _unauthorized_notice_text(user.id, bot_cfg),
                     parse_mode=None,
                 )
         return
@@ -3066,6 +3294,16 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             )
             return
 
+    # Instant "seen" signal: react 👀 on the user's message before any other
+    # feedback — fastest possible acknowledgement, and in groups it marks
+    # exactly which message is being worked on.
+    if tc.reactions_enabled(bot_cfg):
+        with suppress(Exception):
+            async with _temp_bot(instance.bot.token) as react_bot:
+                await tc.set_message_reaction(
+                    react_bot, message.chat.id, message.message_id, "👀"
+                )
+
     # Start persistent typing indicator (thread-based, works across event loops)
     typing_stop = _start_typing(instance.bot.token, message.chat.id)
     context: AgentContext | None = None
@@ -3077,7 +3315,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             _stop_typing_handle(typing_stop)
             await _send_with_temp_bot(
                 instance.bot.token, message.chat.id,
-                "Failed to create chat session.",
+                i18n.t(bot_cfg, "failed_create_session"),
                 parse_mode=None,
                 )
             return
@@ -3096,6 +3334,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         # Keep Telegram threading visible when the user replied to an earlier message.
         reply_to_id = message.message_id if message.reply_to_message else None
         context.data[CTX_TG_REPLY_TO] = reply_to_id
+        context.data[CTX_TG_LAST_USER_MESSAGE_ID] = message.message_id
 
         # Build user message text
         text = _extract_message_content(message)
@@ -3106,6 +3345,22 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         # Use temp bot for downloads (cross-event-loop safe)
         async with _temp_bot(instance.bot.token) as dl_bot:
             attachments = await _download_attachments(dl_bot, message, bot_name=bot_name)
+
+        # Nothing extractable (unsupported type like poll, dice or story):
+        # tell the user in private chats instead of forwarding an empty turn.
+        # In groups drop it silently so service messages don't trigger noise.
+        if text == "[No text content]" and not attachments:
+            if str(getattr(message.chat, "type", "") or "") == "private":
+                await _abort_turn_with_notice(
+                    context,
+                    instance.bot.token,
+                    message.chat.id,
+                    i18n.t(bot_cfg, "unsupported_type"),
+                )
+            else:
+                _clear_progress_state(context)
+                _stop_context_chat_actions(context)
+            return
 
         # Optional STT for voice/audio inputs
         stt_failure_notice: str | None = None
@@ -3120,17 +3375,10 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                     if transcript:
                         text = _merge_voice_transcript(text, transcript)
                     else:
-                        stt_failure_notice = (
-                            "\U0001f399 I couldn't understand that voice message "
-                            "(the transcription came back empty). Please try again "
-                            "or send it as text."
-                        )
+                        stt_failure_notice = i18n.t(bot_cfg, "stt_empty")
                 except Exception as e:
                     PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
-                    stt_failure_notice = (
-                        "\U0001f399 I couldn't process that voice message right now. "
-                        "Please try again or send it as text."
-                    )
+                    stt_failure_notice = i18n.t(bot_cfg, "stt_failed")
                 finally:
                     await _set_progress_phase_and_refresh(
                         context,
@@ -3142,27 +3390,9 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         if stt_failure_notice:
             # Tell the user directly instead of feeding a broken transcript
             # marker (or a raw provider error) to the agent as their message.
-            await _finalize_progress_updates(context)
-            progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
-            async with _temp_bot(instance.bot.token) as notice_bot:
-                edited = False
-                if progress_message_id:
-                    edited = await tc.edit_text(
-                        notice_bot,
-                        message.chat.id,
-                        int(progress_message_id),
-                        stt_failure_notice,
-                        parse_mode=None,
-                    )
-                if not edited:
-                    await tc.send_text(
-                        notice_bot,
-                        message.chat.id,
-                        stt_failure_notice,
-                        parse_mode=None,
-                    )
-            _clear_progress_state(context)
-            _stop_context_chat_actions(context)
+            await _abort_turn_with_notice(
+                context, instance.bot.token, message.chat.id, stt_failure_notice,
+            )
             return
 
         if reply_context:
@@ -3184,6 +3414,8 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         context.data[CTX_TG_LAST_USER_BODY] = text
         context.data[CTX_TG_LAST_USER_SENDER] = sender
         context.data[CTX_TG_LAST_USER_ATTACHMENTS] = list(attachments or [])
+        # One-line preview for the /session picker.
+        context.data[CTX_TG_SESSION_PREVIEW] = _truncate_preview(text, 96)
 
         msg_id = str(uuid.uuid4())
         mq.log_user_message(context, user_msg, attachments, message_id=msg_id, source=" (telegram)")
@@ -3394,6 +3626,30 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             await query.answer()
             return
 
+        if kind == "spn":
+            sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
+            target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
+            if not target:
+                await query.answer("Session not found")
+                return
+            new_pinned = not bool(target.get("pinned"))
+            if not _set_session_pinned(payload, new_pinned):
+                await query.answer("Could not update pin.")
+                return
+            target["pinned"] = new_pinned
+            await _show_session_details(
+                token,
+                chat_id,
+                active_ctx_id=_mapped_context_id(bot_name, user.id, chat_id),
+                meta=target,
+                message_id=query.message.message_id,
+                bot_cfg=bot_cfg,
+                bot_name=bot_name,
+                user_id=user.id,
+            )
+            await query.answer("Pinned" if new_pinned else "Unpinned")
+            return
+
         if kind == "sd":
             sessions = _list_switchable_sessions(bot_name, user.id, chat_id)
             target = next((s for s in sessions if str(s.get("id") or "") == payload), None)
@@ -3572,11 +3828,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                             bot,
                             chat_id,
                             voice_file,
-                            caption=(
-                                "🔊 Shortened for voice — the full reply is in the text above."
-                                if tts_truncated
-                                else ""
-                            ),
+                            caption=(i18n.t(bot_cfg, "voice_shortened_above") if tts_truncated else ""),
                             reply_to_message_id=(query.message.message_id if query.message else None),
                         )
                     await query.answer("Sent as voice (shortened)" if tts_truncated else "Sent as voice")
@@ -3649,9 +3901,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_output_optimize_mode(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("Updated")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _optimize_output_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}o|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "v":
@@ -3661,9 +3917,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_voice_mode_setting(context, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _voice_mode_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}v|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "a":
@@ -3673,9 +3933,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_reply_actions_setting(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _actions_inline_keyboard(bot_cfg),
+                f"{TG_UI_CALLBACK_PREFIX}a|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "db":
@@ -3685,9 +3949,50 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_detail_before_setting(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
+            if not await _edit_mode_status_message(
+                token, query, reply, _detail_before_inline_keyboard(bot_cfg),
+                f"{TG_UI_CALLBACK_PREFIX}db|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
+            return
+
+        if kind == "ri":
+            if payload not in ("on", "off"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_rich_setting(context, bot_cfg, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            if not await _edit_mode_status_message(
+                token, query, reply, _rich_inline_keyboard(bot_cfg),
+                f"{TG_UI_CALLBACK_PREFIX}ri|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
+            return
+
+        if kind == "em":
+            pending_token = str(context.data.get(CTX_TG_EDITED_PENDING_TOKEN, "") or "")
+            pending_text = str(context.data.get(CTX_TG_EDITED_PENDING_TEXT, "") or "")
+            if not payload or payload != pending_token or not pending_text:
+                await query.answer(i18n.t(bot_cfg, "edited_gone"))
+                return
+            context.data.pop(CTX_TG_EDITED_PENDING_TEXT, None)
+            context.data.pop(CTX_TG_EDITED_PENDING_TOKEN, None)
+            err = await _dispatch_telegram_user_turn(
+                context,
+                bot_token=token,
+                chat_id=chat_id,
+                sender=_format_user(user),
+                body=pending_text,
+                attachments=[],
+                source=" (telegram edited message)",
+                busy_message=i18n.t(bot_cfg, "busy_stop_first"),
             )
+            await query.answer(i18n.t(bot_cfg, "edited_running") if not err else err)
             return
 
         if kind == "sx":
@@ -3718,7 +4023,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 if not query.message:
                     await query.answer("Message is no longer available.")
                     return
-                keyboard = tc.build_inline_keyboard(_response_more_keyboard(action_token, include_show_text=show_text_flag))
+                keyboard = tc.build_inline_keyboard(_response_more_keyboard(action_token, include_show_text=show_text_flag, bot_cfg=bot_cfg))
                 edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
                 if callable(edit_reply_markup):
                     await edit_reply_markup(reply_markup=keyboard)
@@ -3736,6 +4041,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                         action_token,
                         include_more=True,
                         include_show_text=show_text_flag,
+                        bot_cfg=bot_cfg,
                     )
                 )
                 edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
@@ -3808,9 +4114,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_detail_level(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _detail_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}d|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "p":
@@ -4019,6 +4329,7 @@ async def _dispatch_telegram_user_turn(
         ctx.data[CTX_TG_LAST_USER_BODY] = clean_body
         ctx.data[CTX_TG_LAST_USER_SENDER] = clean_sender
         ctx.data[CTX_TG_LAST_USER_ATTACHMENTS] = clean_attachments
+        ctx.data[CTX_TG_SESSION_PREVIEW] = _truncate_preview(clean_body, 96)
 
         msg_id = str(uuid.uuid4())
         mq.log_user_message(
@@ -4041,6 +4352,36 @@ async def _dispatch_telegram_user_turn(
         else:
             _stop_typing_handle(typing_stop)
         raise
+
+
+async def _abort_turn_with_notice(
+    context: AgentContext,
+    bot_token: str,
+    chat_id: int,
+    notice: str,
+) -> None:
+    """End the current user turn with a short user-facing notice.
+
+    Reuses the live progress bubble for the notice when one exists, then
+    clears progress state and stops the typing indicator so the chat does not
+    look stuck after the turn was dropped.
+    """
+    await _finalize_progress_updates(context)
+    progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
+    async with _temp_bot(bot_token) as notice_bot:
+        edited = False
+        if progress_message_id:
+            edited = await tc.edit_text(
+                notice_bot,
+                int(chat_id),
+                int(progress_message_id),
+                notice,
+                parse_mode=None,
+            )
+        if not edited:
+            await tc.send_text(notice_bot, int(chat_id), notice, parse_mode=None)
+    _clear_progress_state(context)
+    _stop_context_chat_actions(context)
 
 
 def _truncate_preview(text: str, limit: int = 280) -> str:
@@ -4074,7 +4415,13 @@ def _extract_message_content(message: TgMessage) -> str:
     if message.photo:
         parts.append("[Photo attachment]")
 
-    if message.document:
+    if getattr(message, "animation", None):
+        name = getattr(message.animation, "file_name", None) or "animation"
+        parts.append(f"[Animation/GIF: {name}]")
+
+    # Telegram mirrors animations into `document` for backward compatibility —
+    # skip the duplicate label in that case.
+    if message.document and not getattr(message, "animation", None):
         name = getattr(message.document, "file_name", None) or "document"
         parts.append(f"[Document: {name}]")
 
@@ -4176,15 +4523,24 @@ async def _download_attachments(bot, message: TgMessage, bot_name: str = "") -> 
 
     # Other attachment types: (attr, default_prefix, default_ext)
     _types = [
+        ("animation",  "animation", ".mp4"),
         ("document",   "file",      None),
         ("audio",      "audio",     ".mp3"),
         ("voice",      "voice",     ".ogg"),
         ("video",      "video",     ".mp4"),
         ("video_note", "videonote", ".mp4"),
     ]
+    animation = getattr(message, "animation", None)
     for attr, prefix, ext in _types:
         obj = getattr(message, attr, None)
         if not obj:
+            continue
+        # Animations are mirrored into `document` — don't download them twice.
+        if (
+            attr == "document"
+            and animation is not None
+            and getattr(obj, "file_unique_id", None) == getattr(animation, "file_unique_id", None)
+        ):
             continue
         fname = getattr(obj, "file_name", None) or f"{prefix}_{obj.file_unique_id}{ext or ''}"
         path = await _dl(obj.file_id, fname)
@@ -4952,13 +5308,26 @@ async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int)
         await tc.send_text(
             bot,
             chat_id,
-            "⏳ Still working — live updates are paused by Telegram rate limits.",
+            i18n.t(context.data.get(CTX_TG_BOT_CFG, {}) or {}, "updates_paused"),
             parse_mode=None,
         )
         if not _typing_rearm_blocked(context):
             await tc.send_typing(bot, chat_id)
     except Exception as e:
         PrintStyle.warning(f"Telegram updates-paused notice failed: {format_error(e)}")
+
+
+async def _set_user_message_reaction(bot: Bot, context: AgentContext, emoji: str) -> None:
+    """Move the lifecycle reaction on the current user message (👀 → 👍/😢)."""
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    if not tc.reactions_enabled(bot_cfg):
+        return
+    msg_id = context.data.pop(CTX_TG_LAST_USER_MESSAGE_ID, None)
+    chat_id = context.data.get(CTX_TG_CHAT_ID)
+    if not msg_id or not chat_id:
+        return
+    with suppress(Exception):
+        await tc.set_message_reaction(bot, int(chat_id), int(msg_id), emoji)
 
 
 async def notify_telegram_delivery_failure(context: AgentContext) -> None:
@@ -4975,10 +5344,7 @@ async def notify_telegram_delivery_failure(context: AgentContext) -> None:
     instance = get_bot(bot_name) if bot_name else None
     if not instance or not chat_id:
         return
-    notice = (
-        "⚠️ I finished, but the reply could not be delivered to Telegram. "
-        "Send /retry to run your last message again."
-    )
+    notice = i18n.t(context.data.get(CTX_TG_BOT_CFG, {}) or {}, "delivery_failed")
     try:
         await _finalize_progress_updates(context)
         progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
@@ -4994,6 +5360,7 @@ async def notify_telegram_delivery_failure(context: AgentContext) -> None:
                 )
             if not edited:
                 await tc.send_text(notice_bot, int(chat_id), notice, parse_mode=None)
+            await _set_user_message_reaction(notice_bot, context, "😢")
     except Exception as e:
         PrintStyle.warning(f"Telegram delivery-failure notice failed: {format_error(e)}")
     finally:
@@ -5188,9 +5555,8 @@ def _should_attempt_final_rich_text(
     ctx_data: dict,
     text_body: str,
 ) -> bool:
-    settings = tc.rich_messages_settings(bot_cfg)
     return bool(
-        settings.get("enabled")
+        tc.effective_rich_enabled(bot_cfg, ctx_data)
         and not ctx_data.get(CTX_TG_RICH_SEND_DISABLED)
         and tc.rich_message_eligible(text_body)
         and tc.rich_content_fits_limits(text_body)
@@ -5769,6 +6135,7 @@ async def send_telegram_reply(
                     response_token,
                     include_more=show_more_button,
                     include_show_text=want_show_text_button,
+                    bot_cfg=bot_cfg,
                 )
             else:
                 voice_buttons = None
@@ -5776,6 +6143,7 @@ async def send_telegram_reply(
                     response_action_rows = _response_action_keyboard(
                         response_token,
                         include_more=True,
+                        bot_cfg=bot_cfg,
                     )
             final_keyboard = _append_inline_keyboard(base_keyboard, response_action_rows)
             planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(
@@ -5819,11 +6187,7 @@ async def send_telegram_reply(
                 )
                 voice_stop = None
                 try:
-                    voice_caption = (
-                        "🔊 Shortened for voice — the full reply is available as text."
-                        if tts_truncated
-                        else ""
-                    )
+                    voice_caption = i18n.t(bot_cfg, "voice_shortened") if tts_truncated else ""
                     voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                     voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
                     msg_id = await tc.send_voice(
@@ -5932,6 +6296,8 @@ async def send_telegram_reply(
                 or sent_voice
                 or sent_artifact_count
             )
+            if context.data[CTX_TG_FINAL_REPLY_DELIVERED]:
+                await _set_user_message_reaction(reply_bot, context, "👍")
             _clear_progress_state(context)
 
         # Persist the reveal-button token/text so "Show text" survives restarts.

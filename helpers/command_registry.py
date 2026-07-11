@@ -79,6 +79,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/voice [voice_only|voice_text|auto|text_only|off] — auto speaks only after a voice message; no arg = status + buttons",
     ),
     (
+        "rich",
+        "Rich message rendering",
+        "/rich [on|off] — native rendering for tables, headings, task lists and math; no arg = status + buttons",
+    ),
+    (
         "retry",
         "Redo last message",
         "/retry — re-run your last message",
@@ -131,29 +136,79 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
 ]
 
 
-def get_bot_commands() -> list[BotCommand]:
+# German command-menu descriptions (shown to Telegram clients with a German
+# UI via setMyCommands(language_code="de")). Fallback: English description.
+COMMAND_MENU_DE: dict[str, str] = {
+    "help": "Befehlsliste",
+    "start": "Begrüßung und Session",
+    "status": "Agent-Status",
+    "clear": "Chat zurücksetzen",
+    "newchat": "Neue Chat-Session",
+    "session": "Sessions durchsuchen und löschen",
+    "title": "Aktuelle Session umbenennen",
+    "actions": "Antwort-Aktionen",
+    "topic": "Topic öffnen oder benennen",
+    "optimize_output": "Antwortstil (Sprache/Text)",
+    "detail": "Tool-Status-Detailgrad",
+    "detail_before": "Updates beim Tool-Start",
+    "voice": "Sprachantwort-Modus",
+    "rich": "Rich-Nachrichten-Rendering",
+    "retry": "Letzte Nachricht wiederholen",
+    "undo": "Letzten Austausch entfernen",
+    "compact": "Kontext komprimieren",
+    "shortcut": "Antwort-Shortcuts",
+    "stop": "Aufgabe stoppen",
+    "reload": "Agent Zero neu laden",
+    "project": "Projekt anzeigen oder wechseln",
+    "model": "Modell-Preset anzeigen/wechseln",
+    "pause": "Agent pausieren",
+    "resume": "Agent fortsetzen",
+}
+
+
+def get_bot_commands(language: str = "en") -> list[BotCommand]:
     """Commands shown in the Telegram command menu (order preserved)."""
-    return [
-        BotCommand(command=cmd, description=desc[:256])
-        for cmd, desc, _ in COMMAND_ROWS
-    ]
+    commands = []
+    for cmd, desc, _ in COMMAND_ROWS:
+        if language == "de":
+            desc = COMMAND_MENU_DE.get(cmd, desc)
+        commands.append(BotCommand(command=cmd, description=desc[:256]))
+    return commands
 
 
 async def register_bot_command_menu(bot: Bot) -> None:
-    """Call Telegram setMyCommands so the client shows the command menu."""
+    """Call Telegram setMyCommands so the client shows the command menu.
+
+    Registers the English menu as default plus a German variant scoped to
+    clients with a German UI (Telegram picks per user automatically).
+    """
     try:
         await bot.set_my_commands(get_bot_commands())
     except Exception as e:
         PrintStyle.warning(f"Telegram set_my_commands failed: {format_error(e)}")
+    try:
+        await bot.set_my_commands(get_bot_commands("de"), language_code="de")
+    except Exception as e:
+        PrintStyle.warning(f"Telegram set_my_commands (de) failed: {format_error(e)}")
 
 
-def format_help_text() -> str:
+_HELP_INTRO = {
+    "en": "Reply and voice modes apply to this chat and switch anytime with the commands below.",
+    "de": "Antwort- und Sprachmodi gelten für diesen Chat und lassen sich jederzeit mit den Befehlen unten umschalten.",
+}
+
+
+def format_help_text(language: str = "en") -> str:
     """Plain-text body for /help replies."""
     lines = [
-        "Reply and voice modes apply to this chat and switch anytime with the commands below.",
+        _HELP_INTRO.get(language) or _HELP_INTRO["en"],
         "",
-        "Commands:",
+        "Commands:" if language != "de" else "Befehle:",
     ]
-    for _, _, help_line in COMMAND_ROWS:
-        lines.append(help_line)
+    if language == "de":
+        for cmd, desc, _ in COMMAND_ROWS:
+            lines.append(f"/{cmd} — {COMMAND_MENU_DE.get(cmd, desc)}")
+    else:
+        for _, _, help_line in COMMAND_ROWS:
+            lines.append(help_line)
     return "\n".join(lines)

@@ -287,6 +287,22 @@ def _install_stub_modules():
     tc.rich_message_eligible = lambda text: False
     tc.rich_content_fits_limits = lambda text: True
 
+    def _tc_effective_rich_enabled(bot_cfg, ctx_data):
+        raw = str((ctx_data or {}).get("telegram_rich_messages_session", "") or "").strip().lower()
+        if raw in ("on", "true", "1", "yes"):
+            return True
+        if raw in ("off", "false", "0", "no"):
+            return False
+        return bool(((bot_cfg or {}).get("rich_messages") or {}).get("enabled"))
+
+    tc.effective_rich_enabled = _tc_effective_rich_enabled
+    tc.reactions_enabled = lambda bot_cfg: False  # keep reaction I/O out of tests by default
+
+    async def _tc_set_message_reaction(*args, **kwargs):
+        return True
+
+    tc.set_message_reaction = _tc_set_message_reaction
+
     async def _tc_send_rich_text(*args, **kwargs):
         return types.SimpleNamespace(
             success=False,
@@ -355,6 +371,14 @@ def _install_stub_modules():
     status_copy_module = importlib.util.module_from_spec(status_copy_spec)
     sys.modules[status_copy_spec.name] = status_copy_module
     status_copy_spec.loader.exec_module(status_copy_module)
+
+    i18n_spec = importlib.util.spec_from_file_location(
+        "usr.plugins.telegram_integration_voice.helpers.i18n",
+        REPO_ROOT / "helpers" / "i18n.py",
+    )
+    i18n_module = importlib.util.module_from_spec(i18n_spec)
+    sys.modules[i18n_spec.name] = i18n_module
+    i18n_spec.loader.exec_module(i18n_module)
 
 
 
@@ -917,6 +941,343 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         typing_stop.assert_called_once_with()
         self.assertNotIn(handler.CTX_TG_TYPING_STOP, ctx.data)
+
+    def test_extract_message_content_labels_animation_without_document_duplicate(self):
+        handler = self.handler
+        animation = types.SimpleNamespace(file_name="funny.gif", file_unique_id="u1")
+        message = types.SimpleNamespace(
+            text=None, caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=types.SimpleNamespace(file_name="funny.gif", file_unique_id="u1"),
+            audio=None, voice=None, video=None, video_note=None,
+            animation=animation,
+        )
+        content = handler._extract_message_content(message)
+        self.assertIn("[Animation/GIF: funny.gif]", content)
+        self.assertNotIn("[Document:", content)
+
+    def test_download_attachments_fetches_animation_once(self):
+        handler = self.handler
+        animation = types.SimpleNamespace(file_name=None, file_unique_id="u1", file_id="fid1")
+        message = types.SimpleNamespace(
+            photo=None,
+            animation=animation,
+            document=types.SimpleNamespace(file_name=None, file_unique_id="u1", file_id="fid1"),
+            audio=None, voice=None, video=None, video_note=None,
+        )
+        downloads = []
+
+        async def _fake_download(bot, file_id, dest):
+            downloads.append(file_id)
+            return dest
+
+        with mock.patch.object(handler.tc, "download_file", new=_fake_download, create=True), \
+             mock.patch.object(handler.files, "get_abs_path", return_value="/tmp/dl"), \
+             mock.patch.object(handler.files, "get_abs_path_dockerized", return_value="/a0/dl", create=True), \
+             mock.patch.object(handler.os, "makedirs"):
+            paths = asyncio.run(handler._download_attachments(object(), message, bot_name="mainbot"))
+
+        self.assertEqual(downloads, ["fid1"])  # mirrored document is skipped
+        self.assertEqual(len(paths), 1)
+        self.assertIn("animation_u1.mp4", paths[0])
+
+    def test_handle_message_unsupported_type_notifies_in_private(self):
+        handler = self.handler
+        ctx = types.SimpleNamespace(
+            data={},
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=None),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            text=None, caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=None, audio=None, voice=None, video=None,
+            video_note=None, reply_to_message=None, message_id=123,
+        )
+        abort = mock.AsyncMock()
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=types.SimpleNamespace(set=mock.Mock())), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=[])), \
+             mock.patch.object(handler, "_abort_turn_with_notice", new=abort), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()):
+            asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        abort.assert_awaited_once()
+        self.assertIn("can't process this type of message", abort.await_args.args[3])
+        ctx.communicate.assert_not_called()
+
+    def test_handle_message_unsupported_type_stays_silent_in_groups(self):
+        handler = self.handler
+        ctx = types.SimpleNamespace(
+            data={},
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=None),
+            chat=types.SimpleNamespace(id=-100, type="supergroup"),
+            text=None, caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=None, audio=None, voice=None, video=None,
+            video_note=None, reply_to_message=None, message_id=123,
+        )
+        abort = mock.AsyncMock()
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=types.SimpleNamespace(set=mock.Mock())), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=[])), \
+             mock.patch.object(handler, "_abort_turn_with_notice", new=abort), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()):
+            asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        abort.assert_not_awaited()
+        ctx.communicate.assert_not_called()
+
+    def test_pinned_sessions_sort_first_and_show_preview_in_picker(self):
+        handler = self.handler
+        meta = {
+            "old_pinned": {
+                "id": "old_pinned",
+                "display_name": "Old pinned",
+                "created_at": "2026-01-01T00:00:00",
+                "last_message": "2026-01-02T00:00:00",
+                "data": {
+                    handler.CTX_TG_BOT: "mainbot",
+                    handler.CTX_TG_USER_ID: 42,
+                    handler.CTX_TG_CHAT_ID: 99,
+                    handler.CTX_TG_SESSION_PINNED: "on",
+                    handler.CTX_TG_SESSION_PREVIEW: "deploy the staging bot",
+                },
+            },
+            "fresh": {
+                "id": "fresh",
+                "display_name": "Fresh session",
+                "created_at": "2026-01-05T00:00:00",
+                "last_message": "2026-01-06T00:00:00",
+                "data": {
+                    handler.CTX_TG_BOT: "mainbot",
+                    handler.CTX_TG_USER_ID: 42,
+                    handler.CTX_TG_CHAT_ID: 99,
+                },
+            },
+        }
+
+        def _fake_meta(ctx_id):
+            raw = meta[ctx_id]
+            m = dict(raw)
+            m["preview"] = handler._truncate_preview(
+                raw["data"].get(handler.CTX_TG_SESSION_PREVIEW) or "", 96
+            )
+            m["pinned"] = raw["data"].get(handler.CTX_TG_SESSION_PINNED) == "on"
+            m["message_count"] = 1
+            return m
+
+        with mock.patch.object(handler.files, "get_abs_path", return_value="/tmp/chats"), \
+             mock.patch.object(handler.os.path, "isdir", return_value=True), \
+             mock.patch.object(handler.os, "listdir", return_value=["fresh", "old_pinned"]), \
+             mock.patch.object(handler, "_read_persisted_chat_meta", side_effect=_fake_meta):
+            sessions = handler._list_switchable_sessions("mainbot", 42, 99)
+
+        self.assertEqual([s["id"] for s in sessions], ["old_pinned", "fresh"])
+
+        rows = handler._session_selector_keyboard(
+            sessions, active_ctx_id=None, page=0, total_pages=1, has_query=False,
+        )
+        first_label = rows[0][0]["text"]
+        self.assertTrue(first_label.startswith("📌 "))
+        self.assertIn("deploy the staging bot", first_label)
+
+    def test_session_details_show_pin_toggle_and_status(self):
+        handler = self.handler
+        meta = {
+            "id": "web",
+            "display_name": "Web session",
+            "created_at": "2026-01-01T00:00:00",
+            "last_message": "2026-01-02T00:00:00",
+            "message_count": 3,
+            "telegram_binding": "bound",
+            "pinned": True,
+            "data": {},
+        }
+        text = handler._session_details_text(meta, active_ctx_id=None)
+        self.assertIn("📌 pinned", text)
+        keyboard = handler._session_details_keyboard(meta, active_ctx_id=None)
+        flat = [b for row in keyboard for b in row]
+        pin_btn = next(b for b in flat if b["callback_data"].startswith(f"{handler.TG_UI_CALLBACK_PREFIX}spn|"))
+        self.assertEqual(pin_btn["text"], "📌 Unpin")
+
+    def test_set_session_pinned_updates_loaded_context(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {}
+        _DummyAgentContext.registry["ctx1"] = ctx
+        saved = []
+        with mock.patch.object(handler, "save_tmp_chat", side_effect=lambda c: saved.append(c)):
+            self.assertTrue(handler._set_session_pinned("ctx1", True))
+        self.assertEqual(ctx.data[handler.CTX_TG_SESSION_PINNED], "on")
+        with mock.patch.object(handler, "save_tmp_chat"):
+            self.assertTrue(handler._set_session_pinned("ctx1", False))
+        self.assertNotIn(handler.CTX_TG_SESSION_PINNED, ctx.data)
+
+    def test_set_session_pinned_rewrites_on_disk_session(self):
+        handler = self.handler
+        stored = {"value": json.dumps({"id": "cold", "data": {}})}
+
+        def _read(path):
+            return stored["value"]
+
+        def _write(path, content):
+            stored["value"] = content
+
+        with mock.patch.object(handler.files, "read_file", side_effect=_read), \
+             mock.patch.object(handler.files, "write_file", side_effect=_write), \
+             mock.patch.object(handler.os.path, "isfile", return_value=True):
+            self.assertTrue(handler._set_session_pinned("cold", True))
+
+        data = json.loads(stored["value"])
+        self.assertEqual(data["data"][handler.CTX_TG_SESSION_PINNED], "on")
+
+    def test_handle_message_stores_session_preview(self):
+        handler = self.handler
+        ctx = types.SimpleNamespace(
+            data={},
+            agent0=types.SimpleNamespace(read_prompt=lambda *args, **kwargs: "prompt"),
+            communicate=mock.Mock(),
+        )
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=None),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            text="Please deploy the staging bot today",
+            caption=None, location=None, contact=None, sticker=None,
+            photo=None, document=None, audio=None, voice=None, video=None,
+            video_note=None, reply_to_message=None, message_id=123,
+        )
+        with mock.patch.object(handler, "_is_allowed", return_value=True), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_is_session_search_pending", return_value=False), \
+             mock.patch.object(handler, "_start_typing", return_value=types.SimpleNamespace(set=mock.Mock())), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_clear_progress_state"), \
+             mock.patch.object(handler, "_send_initial_progress_status", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_download_attachments", new=mock.AsyncMock(return_value=[])), \
+             mock.patch.object(handler.mq, "log_user_message"), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()):
+            asyncio.run(handler.handle_message(message, "mainbot", {}))
+
+        self.assertEqual(
+            ctx.data[handler.CTX_TG_SESSION_PREVIEW],
+            "Please deploy the staging bot today",
+        )
+
+    def test_handle_start_offers_continue_last_button(self):
+        handler = self.handler
+        sent = []
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            reply=mock.AsyncMock(),
+        )
+        recent = {
+            "id": "prev",
+            "display_name": "Yesterday's task",
+            "telegram_binding": "bound",
+            "data": {},
+        }
+        with mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))), \
+             mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=_DummyAgentContext(name="S"))), \
+             mock.patch.object(handler, "_mapped_context_id", return_value=None), \
+             mock.patch.object(handler, "_list_switchable_sessions", return_value=[recent]):
+            asyncio.run(handler.handle_start(message, "mainbot", {}))
+
+        keyboard = sent[-1][1].get("keyboard")
+        self.assertIsNotNone(keyboard)
+        self.assertIn("Continue: Yesterday's task", keyboard[0][0]["text"])
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}s|prev")
+
+    def test_handle_edited_message_offers_rerun_with_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            message_id=55,
+            text="fixed question",
+            caption=None,
+        )
+        sent = []
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            asyncio.run(handler.handle_edited_message(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_EDITED_PENDING_TEXT], "fixed question")
+        token = ctx.data[handler.CTX_TG_EDITED_PENDING_TOKEN]
+        self.assertTrue(token)
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(
+            keyboard[0][0]["callback_data"],
+            f"{handler.TG_UI_CALLBACK_PREFIX}em|{token}",
+        )
+
+    def test_edited_rerun_callback_dispatches_new_text(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {
+            handler.CTX_TG_EDITED_PENDING_TEXT: "fixed question",
+            handler.CTX_TG_EDITED_PENDING_TOKEN: "tok123",
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}em|tok123",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        dispatch = mock.AsyncMock(return_value=None)
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=dispatch):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        dispatch.assert_awaited_once()
+        self.assertEqual(dispatch.await_args.kwargs["body"], "fixed question")
+        self.assertNotIn(handler.CTX_TG_EDITED_PENDING_TEXT, ctx.data)
+
+    def test_edited_rerun_callback_rejects_stale_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {
+            handler.CTX_TG_EDITED_PENDING_TEXT: "fixed question",
+            handler.CTX_TG_EDITED_PENDING_TOKEN: "tok123",
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}em|other",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        dispatch = mock.AsyncMock()
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=dispatch):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        dispatch.assert_not_awaited()
+        query.answer.assert_awaited_once_with("Edit is no longer available.")
 
     def test_extract_live_response_preview_from_complete_response_tool_json(self):
         handler = self.handler
@@ -3139,6 +3500,143 @@ class TelegramSessionPickerTests(unittest.TestCase):
             asyncio.run(handler.handle_clear(message, "mainbot", {}))
         self.assertEqual(len(sent), 1)
         self.assertIn("Chat cleared", str(sent[0][0][2]))
+
+    def test_handle_rich_without_arg_shows_inline_picker(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/rich",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_rich(message, "mainbot", {"rich_messages": {"enabled": True}}))
+
+        self.assertEqual(saved, [ctx])
+        self.assertIn("Rich messages: on", sent[-1][0][2])
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}ri|on")
+        self.assertEqual(keyboard[0][1]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}ri|off")
+
+    def test_handle_rich_sets_session_toggle(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/rich on",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_rich(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "on")
+        self.assertIn("Rich messages: on", sent[-1][0][2])
+
+    def test_handle_callback_query_rich_toggle_sets_session_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ri|off",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "off")
+        query.answer.assert_awaited()
+
+    def test_mode_callback_edits_settings_message_in_place_with_active_mark(self):
+        """Tapping a mode button updates the original bubble and marks the active option."""
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}v|voice_only",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        edit_mock = mock.AsyncMock(return_value=True)
+        send_mock = mock.AsyncMock()
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()), \
+             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=edit_mock, create=True), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=send_mock):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        edit_mock.assert_awaited_once()
+        args = edit_mock.await_args.args
+        self.assertEqual(args[1], 99)   # chat id
+        self.assertEqual(args[2], 77)   # original settings message id
+        rows = args[4]
+        flat = [btn for row in rows for btn in row]
+        active = [b for b in flat if b["callback_data"].endswith("v|voice_only")]
+        self.assertTrue(active and active[0]["text"].startswith("✓ "))
+        inactive = [b for b in flat if not b["callback_data"].endswith("v|voice_only")]
+        self.assertTrue(all(not b["text"].startswith("✓") for b in inactive))
+        send_mock.assert_not_awaited()  # no extra confirmation bubble
+
+    def test_mode_callback_falls_back_to_send_when_edit_fails(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}d|info",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        send_mock = mock.AsyncMock()
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()), \
+             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=mock.AsyncMock(return_value=False), create=True), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=send_mock):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        send_mock.assert_awaited_once()
+
+    def test_clear_resets_rich_session_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {handler.CTX_TG_RICH_SESSION: "on"}
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            reply=mock.AsyncMock(),
+        )
+        _DummyAgentContext.registry["ctx1"] = ctx
+        with mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): "ctx1"}}), \
+             mock.patch.object(handler, "save_tmp_chat"):
+            asyncio.run(handler.handle_clear(message, "mainbot", {}))
+        self.assertNotIn(handler.CTX_TG_RICH_SESSION, ctx.data)
 
     def test_progress_lines_show_spinner_while_running_and_check_when_done(self):
         """Tool-start lines render with a spinner; the completion replace switches to a checkmark."""

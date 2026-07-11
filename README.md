@@ -1,6 +1,6 @@
 # a0-telegram-w-voice
 
-![version](https://img.shields.io/badge/version-0.11.3-blue)
+![version](https://img.shields.io/badge/version-0.12.0-blue)
 
 Agent Zero plugin: **Telegram** with optional **STT/TTS** (voice in, voice out), live response preview, inline buttons, and background progress streaming. Aligned with the upstream conventions in [a0-create-plugin](https://github.com/agent0ai/agent-zero/blob/main/skills/a0-create-plugin/SKILL.md).
 
@@ -99,6 +99,14 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 - `/retry` re-runs your last message; `/undo` drops the last exchange (your message and the agent's reply) from session history.
 - `/topic [name]` opens a named conversation thread in the same chat, or lists existing topics without a name.
 
+### Modern chat feedback & sessions
+
+- **Emoji-reaction acknowledgements** (`reactions_enabled`, default on): the bot reacts 👀 the instant your message arrives, 👍 when the reply is delivered, 😢 if delivery ultimately fails — silent lifecycle feedback without extra bubbles, especially useful in groups.
+- **Edited messages**: editing your last message offers a one-tap **"Run again with the edited text"** button (private chats).
+- **`/rich` command**: toggle native rich rendering (tables, headings, task lists, math) per session; the WebUI toggle sets the default for new sessions.
+- **Session picker upgrades**: sessions show a one-line preview of the last request, can be **📌 pinned** to the top from the details view, and `/start` offers a **▶️ Continue last session** button.
+- **Language** (`language: en|de`): chat copy — welcome, notices, confirmations, quick-action buttons, `/help`, and the Telegram command menu — is available in English and German.
+
 ### WebUI
 
 - Per-bot defaults for **Answer Style** (`optimize_output_default`) and **Tool Status Detail** (`telegram_detail_level`) directly in the plugin settings UI.
@@ -125,6 +133,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/detail` | `off` / `info` / `smart` / `verbose`, or no arg shows level + **inline buttons** |
 | `/detail_before` | `on` / `off`, or no arg shows current tool-start mode + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
+| `/rich` | `on` / `off` — native rich rendering (tables, headings, task lists, math) for this session; no arg shows state + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off`, or no arg shows current mode **with inline buttons** |
 | `/retry` | Re-run your last message |
 | `/undo` | Drop the last exchange from session history |

@@ -45,6 +45,7 @@ export const store = createStore("telegramConfig", {
       notify_messages: false,
       token: "",
       mode: "polling",
+      language: "en",
       webhook_url: "",
       webhook_secret: "",
       allowed_users: [],
@@ -119,6 +120,17 @@ export const store = createStore("telegramConfig", {
   ensureProgress(bot) {
     const d = this.defaultBot().progress;
     bot.progress = { ...d, ...(bot.progress || {}) };
+  },
+
+  ensureLanguage(bot) {
+    if (bot.language === undefined || bot.language === null || bot.language === "") {
+      bot.language = "en";
+    }
+  },
+
+  // Legacy x-init hook still referenced by cached config.html versions.
+  ensureReplyKeyboard(bot) {
+    this.ensureLanguage(bot);
   },
 
   ensureRichMessages(bot) {

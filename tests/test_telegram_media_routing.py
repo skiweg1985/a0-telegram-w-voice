@@ -207,6 +207,14 @@ def _install_stub_modules():
     sys.modules[status_copy_spec.name] = status_copy_module
     status_copy_spec.loader.exec_module(status_copy_module)
 
+    i18n_spec = importlib.util.spec_from_file_location(
+        "usr.plugins.telegram_integration_voice.helpers.i18n",
+        REPO_ROOT / "helpers" / "i18n.py",
+    )
+    i18n_module = importlib.util.module_from_spec(i18n_spec)
+    sys.modules[i18n_spec.name] = i18n_module
+    i18n_spec.loader.exec_module(i18n_module)
+
 
 def _load_handler_module():
     _install_stub_modules()
