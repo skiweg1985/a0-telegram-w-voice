@@ -1279,6 +1279,214 @@ class TelegramSessionPickerTests(unittest.TestCase):
         dispatch.assert_not_awaited()
         query.answer.assert_awaited_once_with("Edit is no longer available.")
 
+    def test_handle_suggest_without_arg_shows_inline_picker(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/suggest",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            asyncio.run(handler.handle_suggest(message, "mainbot", {}))
+
+        self.assertIn("Suggested replies: off", sent[-1][0][2])
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}sg|on")
+
+    def test_handle_suggest_sets_session_toggle(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/suggest on",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            asyncio.run(handler.handle_suggest(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_SUGGEST_SESSION], "on")
+        self.assertTrue(handler._suggested_replies_effective({}, ctx.data))
+
+    def test_parse_reply_suggestions_handles_json_and_garbage(self):
+        handler = self.handler
+        parsed = handler._parse_reply_suggestions('["Show an example", "How do I test it?"]')
+        self.assertEqual(parsed, ["Show an example", "How do I test it?"])
+        wrapped = handler._parse_reply_suggestions('Sure! ["One", "Two", "Three", "Four"]')
+        self.assertEqual(len(wrapped), 3)  # capped at three
+        long = handler._parse_reply_suggestions(json.dumps(["x" * 100]))
+        self.assertLessEqual(len(long[0]), handler._SUGGESTION_MAX_CHARS)
+        self.assertEqual(handler._parse_reply_suggestions("no json here"), [])
+        self.assertEqual(handler._parse_reply_suggestions('{"a": 1}'), [])
+
+    def test_attach_reply_suggestions_edits_markup_with_chips(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN: "tok1"}
+        edit_mock = mock.AsyncMock()
+        bot = types.SimpleNamespace(edit_message_reply_markup=edit_mock)
+
+        class _CM:
+            async def __aenter__(self):
+                return bot
+
+            async def __aexit__(self, *a):
+                return False
+
+        base_rows = [[{"text": "⋯ More", "callback_data": "tgx|rm|open:tok1:0"}]]
+        with mock.patch.object(handler, "_generate_reply_suggestions", new=mock.AsyncMock(return_value=["Do X", "Do Y"])), \
+             mock.patch.object(handler, "_temp_bot", return_value=_CM()), \
+             mock.patch.object(handler, "save_tmp_chat"):
+            asyncio.run(handler._attach_reply_suggestions(
+                context=ctx, bot_cfg={}, bot_token="tok", chat_id=99, message_id=77,
+                base_rows=base_rows, response_token="tok1",
+                user_body="question", answer_text="answer",
+            ))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_SUGGESTED_REPLIES], ["Do X", "Do Y"])
+        edit_mock.assert_awaited_once()
+        rows = edit_mock.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        self.assertEqual(rows[0][0]["text"], "💬 Do X")
+        self.assertEqual(rows[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}sr|0:tok1")
+        self.assertEqual(rows[-1][0]["text"], "⋯ More")  # base rows preserved below
+
+    def test_attach_reply_suggestions_aborts_on_stale_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN: "newer"}
+        edit_mock = mock.AsyncMock()
+
+        class _CM:
+            async def __aenter__(self):
+                return types.SimpleNamespace(edit_message_reply_markup=edit_mock)
+
+            async def __aexit__(self, *a):
+                return False
+
+        with mock.patch.object(handler, "_generate_reply_suggestions", new=mock.AsyncMock(return_value=["Do X"])), \
+             mock.patch.object(handler, "_temp_bot", return_value=_CM()), \
+             mock.patch.object(handler, "save_tmp_chat"):
+            asyncio.run(handler._attach_reply_suggestions(
+                context=ctx, bot_cfg={}, bot_token="tok", chat_id=99, message_id=77,
+                base_rows=None, response_token="tok1",
+                user_body="q", answer_text="a",
+            ))
+        edit_mock.assert_not_awaited()
+        self.assertNotIn(handler.CTX_TG_SUGGESTED_REPLIES, ctx.data)
+
+    def test_suggestion_tap_dispatches_suggestion_text(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {
+            handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN: "tok1",
+            handler.CTX_TG_SUGGESTED_REPLIES: ["Show an example", "Run the tests"],
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sr|1:tok1",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        dispatch = mock.AsyncMock(return_value=None)
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=dispatch):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        dispatch.assert_awaited_once()
+        self.assertEqual(dispatch.await_args.kwargs["body"], "Run the tests")
+
+    def test_suggestion_tap_rejects_stale_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {
+            handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN: "newer",
+            handler.CTX_TG_SUGGESTED_REPLIES: ["Show an example"],
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}sr|0:tok1",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        dispatch = mock.AsyncMock()
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=dispatch):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        dispatch.assert_not_awaited()
+
+    def test_dispatch_queues_turn_while_agent_busy(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {}
+        ctx.is_running = lambda: True
+        result = asyncio.run(handler._dispatch_telegram_user_turn(
+            ctx,
+            bot_token="tok",
+            chat_id=99,
+            sender="Benji",
+            body="do this next",
+            attachments=[],
+            source=" (telegram test)",
+        ))
+        self.assertIn("📥", result)
+        queue = ctx.data[handler.CTX_TG_PENDING_TURNS]
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["body"], "do this next")
+
+    def test_dispatch_busy_without_queueing_returns_busy_message(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {}
+        ctx.is_running = lambda: True
+        result = asyncio.run(handler._dispatch_telegram_user_turn(
+            ctx,
+            bot_token="tok",
+            chat_id=99,
+            sender="Benji",
+            body="do this next",
+            attachments=[],
+            source=" (telegram test)",
+            busy_message="busy!",
+            queue_if_busy=False,
+        ))
+        self.assertEqual(result, "busy!")
+        self.assertNotIn(handler.CTX_TG_PENDING_TURNS, ctx.data)
+
+    def test_pending_turns_drain_merges_and_dispatches_once(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {
+            handler.CTX_TG_PENDING_TURNS: [
+                {"bot_token": "tok", "chat_id": 99, "sender": "Benji", "body": "first", "attachments": ["/a"], "source": " (x)"},
+                {"bot_token": "tok", "chat_id": 99, "sender": "Benji", "body": "second", "attachments": [], "source": " (x)"},
+            ],
+        }
+        ctx.is_running = lambda: False
+        dispatch = mock.AsyncMock(return_value=None)
+        with mock.patch.object(handler, "_dispatch_telegram_user_turn", new=dispatch):
+            asyncio.run(handler.process_pending_telegram_turns(ctx))
+        dispatch.assert_awaited_once()
+        kwargs = dispatch.await_args.kwargs
+        self.assertEqual(kwargs["body"], "first\n\nsecond")
+        self.assertEqual(kwargs["attachments"], ["/a"])
+        self.assertFalse(kwargs["queue_if_busy"])
+        self.assertNotIn(handler.CTX_TG_PENDING_TURNS, ctx.data)
+
     def test_extract_live_response_preview_from_complete_response_tool_json(self):
         handler = self.handler
         payload = json.dumps({

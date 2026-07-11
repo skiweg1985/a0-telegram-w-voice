@@ -6,6 +6,9 @@ Older entries are chronological release history and may mention commands/feature
 
 ### Added
 
+- **Suggested replies** (`/suggest [on|off]`, bot default `suggested_replies_enabled`, WebUI toggle): after each text reply the utility LLM proposes up to three tap-to-send follow-up chips (💬), generated *after* delivery so the answer is never delayed, token-guarded like the other reply actions, localized via the conversation language, and cleared on the next reply and `/clear`.
+- **Message queue** (`queue_messages`, default on): button-driven follow-ups (Retry, Shorter/Longer, suggestions, edited re-runs, Continue) that arrive while the agent is busy are queued with a "📥 Queued" notice instead of being rejected; multiple queued turns are merged and dispatched automatically once the current run finishes (chain end).
+
 - New `/rich [on|off]` command: per-session toggle for native rich-message rendering (tables, headings, task lists, math) with inline buttons; the WebUI/YAML `rich_messages.enabled` becomes the default for new sessions, shown in `/status`, reset on `/clear`/`/newchat`. The session override also gates the rich system-prompt guidance so the agent only produces rich structures that will render.
 - Settings keyboards (`/voice`, `/detail`, `/detail_before`, `/optimize_output`, `/actions`, `/rich`) now edit the tapped message in place and mark the active option with a checkmark, instead of stacking confirmation bubbles below stale keyboards.
 - Incoming **GIFs/animations** are downloaded and labeled for the agent; unsupported message types (polls, dice, stories, …) answer with a short "can't process this type" notice in private chats instead of silently forwarding an empty turn (groups drop them silently).

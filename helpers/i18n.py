@@ -181,6 +181,38 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Usage: /actions [on|off]",
         "de": "Verwendung: /actions [on|off]",
     },
+    "suggest_status": {
+        "en": (
+            "Suggested replies: {state}.\n"
+            "Shows up to three tap-to-send follow-up suggestions under replies. "
+            "Tap a button or type /suggest on|off for this session."
+        ),
+        "de": (
+            "Antwortvorschläge: {state}.\n"
+            "Zeigt bis zu drei antippbare Folgevorschläge unter Antworten. "
+            "Tippe einen Button oder /suggest on|off für diese Session."
+        ),
+    },
+    "suggest_on": {
+        "en": "Suggested replies: on — follow-up suggestions appear under replies in this session.",
+        "de": "Antwortvorschläge: an — Folgevorschläge erscheinen in dieser Session unter den Antworten.",
+    },
+    "suggest_off": {
+        "en": "Suggested replies: off — no follow-up suggestions in this session.",
+        "de": "Antwortvorschläge: aus — keine Folgevorschläge in dieser Session.",
+    },
+    "suggest_usage": {
+        "en": "Usage: /suggest [on|off]",
+        "de": "Verwendung: /suggest [on|off]",
+    },
+    "suggest_gone": {
+        "en": "Suggestion is no longer available.",
+        "de": "Der Vorschlag ist nicht mehr verfügbar.",
+    },
+    "queued_notice": {
+        "en": "📥 Queued — I'll get to it right after the current task.",
+        "de": "📥 Eingereiht — ich kümmere mich direkt nach der aktuellen Aufgabe darum.",
+    },
     "help_intro": {
         "en": "Reply and voice modes apply to this chat and switch anytime with the commands below.",
         "de": "Antwort- und Sprachmodi gelten für diesen Chat und lassen sich jederzeit mit den Befehlen unten umschalten.",

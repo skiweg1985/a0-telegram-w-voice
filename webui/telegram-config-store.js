@@ -46,6 +46,7 @@ export const store = createStore("telegramConfig", {
       token: "",
       mode: "polling",
       language: "en",
+      suggested_replies_enabled: false,
       webhook_url: "",
       webhook_secret: "",
       allowed_users: [],

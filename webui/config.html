@@ -547,6 +547,19 @@
 
               <div class="field">
                 <div class="field-label">
+                  <div class="field-title">Suggested replies</div>
+                  <div class="field-description">Tap-to-send follow-up suggestions under replies (one utility-LLM call per reply). Default for new sessions; in chat: /suggest</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.suggested_replies_enabled" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
                   <div class="field-title">Quick action buttons</div>
                   <div class="field-description">Optional inline buttons under Telegram replies</div>
                 </div>

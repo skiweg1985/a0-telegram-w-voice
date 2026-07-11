@@ -82,6 +82,7 @@ class TelegramAutoReply(Extension):
             context.data.pop(CTX_TG_FINAL_REPLY_SENT, None)
             context.data.pop(CTX_TG_FINAL_REPLY_DELIVERED, None)
             _clear_telegram_progress_state(context)
+            _drain_pending_telegram_turns(context)
 
     async def _send_reply(
         self,
@@ -171,3 +172,15 @@ def _clear_telegram_progress_state(context: AgentContext):
         _clear_progress_state(context)
     except Exception as e:
         PrintStyle.warning(f"Telegram progress cleanup failed: {format_error(e)}")
+
+
+def _drain_pending_telegram_turns(context: AgentContext):
+    """Kick off queued turns (messages that arrived while the agent was busy)."""
+    try:
+        from usr.plugins.telegram_integration_voice.helpers.handler import (
+            schedule_pending_telegram_turns,
+        )
+
+        schedule_pending_telegram_turns(context)
+    except Exception as e:
+        PrintStyle.warning(f"Telegram pending-turn schedule failed: {format_error(e)}")

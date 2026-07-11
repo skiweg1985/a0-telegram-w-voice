@@ -1,6 +1,6 @@
 # a0-telegram-w-voice
 
-![version](https://img.shields.io/badge/version-0.12.0-blue)
+![version](https://img.shields.io/badge/version-0.13.0-blue)
 
 Agent Zero plugin: **Telegram** with optional **STT/TTS** (voice in, voice out), live response preview, inline buttons, and background progress streaming. Aligned with the upstream conventions in [a0-create-plugin](https://github.com/agent0ai/agent-zero/blob/main/skills/a0-create-plugin/SKILL.md).
 
@@ -106,6 +106,8 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 - **`/rich` command**: toggle native rich rendering (tables, headings, task lists, math) per session; the WebUI toggle sets the default for new sessions.
 - **Session picker upgrades**: sessions show a one-line preview of the last request, can be **📌 pinned** to the top from the details view, and `/start` offers a **▶️ Continue last session** button.
 - **Language** (`language: en|de`): chat copy — welcome, notices, confirmations, quick-action buttons, `/help`, and the Telegram command menu — is available in English and German.
+- **Suggested replies** (`suggested_replies_enabled`, default off; `/suggest` per session): after each text reply the utility LLM proposes up to three tap-to-send follow-up messages as inline chips — generated after delivery, so the answer is never delayed.
+- **Message queue** (`queue_messages`, default on): button-driven follow-ups (Retry, Shorter, suggestions, edited re-runs, …) that arrive while the agent is busy are queued with a "📥 Queued" notice and run automatically after the current task, instead of being rejected with "use /stop first".
 
 ### WebUI
 
@@ -134,6 +136,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/detail_before` | `on` / `off`, or no arg shows current tool-start mode + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
 | `/rich` | `on` / `off` — native rich rendering (tables, headings, task lists, math) for this session; no arg shows state + **inline buttons** |
+| `/suggest` | `on` / `off` — tap-to-send follow-up suggestions under replies (utility LLM); no arg shows state + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off`, or no arg shows current mode **with inline buttons** |
 | `/retry` | Re-run your last message |
 | `/undo` | Drop the last exchange from session history |
