@@ -1,6 +1,6 @@
 # a0-telegram-w-voice
 
-![version](https://img.shields.io/badge/version-0.13.0-blue)
+![version](https://img.shields.io/badge/version-0.14.0-blue)
 
 Agent Zero plugin: **Telegram** with optional **STT/TTS** (voice in, voice out), live response preview, inline buttons, and background progress streaming. Aligned with the upstream conventions in [a0-create-plugin](https://github.com/agent0ai/agent-zero/blob/main/skills/a0-create-plugin/SKILL.md).
 
@@ -104,6 +104,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 - **Emoji-reaction acknowledgements** (`reactions_enabled`, default on): the bot reacts 👀 the instant your message arrives, 👍 when the reply is delivered, 😢 if delivery ultimately fails — silent lifecycle feedback without extra bubbles, especially useful in groups.
 - **Edited messages**: editing your last message offers a one-tap **"Run again with the edited text"** button (private chats).
 - **`/rich` command**: toggle native rich rendering (tables, headings, task lists, math) per session; the WebUI toggle sets the default for new sessions.
+- **`/ux` command**: toggle the enhanced reply UX per session: rich rendering, native draft previews, and copy buttons for short code/command snippets.
 - **Session picker upgrades**: sessions show a one-line preview of the last request, can be **📌 pinned** to the top from the details view, and `/start` offers a **▶️ Continue last session** button.
 - **Language** (`language: en|de`): chat copy — welcome, notices, confirmations, quick-action buttons, `/help`, and the Telegram command menu — is available in English and German.
 - **Suggested replies** (`suggested_replies_enabled`, default off; `/suggest` per session): after each text reply the utility LLM proposes up to three tap-to-send follow-up messages as inline chips — generated after delivery, so the answer is never delayed.
@@ -136,6 +137,7 @@ Streamed agent responses appear as a **live-edited Telegram message** while the 
 | `/detail_before` | `on` / `off`, or no arg shows current tool-start mode + **inline buttons** |
 | `/voice` | `voice_only` / `voice_text` / `auto` / `text_only` / `off`, or no arg shows mode + **inline buttons** |
 | `/rich` | `on` / `off` — native rich rendering (tables, headings, task lists, math) for this session; no arg shows state + **inline buttons** |
+| `/ux` | `on` / `off`, or `rich` / `drafts` / `copy` + `on` / `off` — enhanced reply UX; no arg shows state + **inline buttons** |
 | `/suggest` | `on` / `off` — tap-to-send follow-up suggestions under replies (utility LLM); no arg shows state + **inline buttons** |
 | `/optimize_output` | `voice` / `text` / `off`, or no arg shows current mode **with inline buttons** |
 | `/retry` | Re-run your last message |
@@ -162,6 +164,7 @@ bots:
     allowed_users: ["123456789"]
     allow_restart_command: false
     admin_users: ["123456789"]
+    copy_buttons_enabled: false                # copy buttons for short code/command snippets; /ux copy overrides
 
     telegram_detail_level: info                 # off | info | smart | debug (verbose alias in chat)
     telegram_detail_execute_before: true        # default; set false to hide tool-start lines and only show completion-time detail
@@ -172,12 +175,13 @@ bots:
     # telegram_detail_max_body_chars: 3200       # verbose JSON truncation limit
 
     rich_messages:
-      enabled: false        # opt-in native final replies for tables/task lists/headings/details/math
+      enabled: false        # opt-in native final replies for tables/task lists/headings/details/math; new WebUI bots default on
       drafts_enabled: false # separate opt-in switch reserved for rich live previews
 
     progress:
       edit_throttle_ms: 200
       completed_mode: delete                     # delete | none | edit; avoids leftover "Completed" bubbles
+      native_drafts_enabled: true                # Telegram-native live draft previews when supported; /ux drafts overrides
       live_response_preview_interval_ms: 800     # max cadence for live draft preview edits
       live_response_preview_buffer_threshold: 24 # flush early after enough buffered chars
       live_response_preview_chars: 1200          # visible draft text cap
@@ -231,7 +235,8 @@ bots:
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
 - **Reload command**: `/reload` is opt-in via `allow_restart_command: true`, requires the Telegram user to match `admin_users`, and always asks for inline Approve/Cancel confirmation before calling Agent Zero's internal reload mechanism. After the Telegram bot reconnects, it sends a one-time restart confirmation to the chat that approved the reload.
-- **Rich Messages**: final assistant replies can opt into Telegram Bot API native rich rendering for tables, task lists, headings, details, and math via `rich_messages.enabled` or the WebUI toggle. When enabled, the Telegram system prompt lets the agent use those structures when useful. The default stays off for copyability and client compatibility; live draft previews remain on the existing path unless `rich_messages.drafts_enabled` is enabled by a future implementation.
+- **Enhanced Telegram UX**: new WebUI bots default to rich final replies, native plain-text draft previews, and copy buttons for short code/command snippets. Existing bots preserve the previous native-draft behavior when the key is missing, while rich replies and copy buttons remain off until enabled. `rich_messages.drafts_enabled` stays reserved for future rich draft previews.
+- **Rich Messages**: final assistant replies can opt into Telegram Bot API native rich rendering for tables, task lists, headings, details, and math via `rich_messages.enabled` or the WebUI toggle. When enabled, the Telegram system prompt lets the agent use those structures when useful. Copy buttons preserve quick copying for short code and command snippets.
 - **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
 - **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
 - Publishing to the Plugin Index: use `name` without a leading underscore. The exact Plugin Index repository/path is not part of this repo; verify current upstream publishing instructions before opening an index PR.

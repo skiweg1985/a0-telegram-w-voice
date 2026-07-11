@@ -10,6 +10,7 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
 )
 from aiogram.types import (
+    CopyTextButton,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -419,12 +420,22 @@ def build_inline_keyboard(
     buttons: list[list[dict]],
 ) -> InlineKeyboardMarkup:
     """Build inline keyboard from a list of rows.
-    Each row is a list of dicts with keys: text, callback_data or url.
+    Each row is a list of dicts with keys: text and callback_data, url or
+    copy_text. Invalid copy_text payloads are skipped because Telegram limits
+    them to 1-256 characters.
     """
     rows = []
     for row in buttons:
         row_buttons = []
         for btn in row:
+            if "copy_text" in btn:
+                payload = str(btn.get("copy_text") or "")
+                if 1 <= len(payload) <= 256:
+                    row_buttons.append(InlineKeyboardButton(
+                        text=btn["text"],
+                        copy_text=CopyTextButton(text=payload),
+                    ))
+                continue
             if "url" in btn:
                 row_buttons.append(InlineKeyboardButton(
                     text=btn["text"], url=btn["url"],
@@ -434,7 +445,8 @@ def build_inline_keyboard(
                     text=btn["text"],
                     callback_data=btn.get("callback_data", btn["text"]),
                 ))
-        rows.append(row_buttons)
+        if row_buttons:
+            rows.append(row_buttons)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

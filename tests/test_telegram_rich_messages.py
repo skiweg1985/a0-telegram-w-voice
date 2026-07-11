@@ -38,6 +38,7 @@ def _install_stub_helpers():
             self.kwargs = kwargs
 
     aiogram_types.FSInputFile = _DummyInline
+    aiogram_types.CopyTextButton = _DummyInline
     aiogram_types.InlineKeyboardButton = _DummyInline
     aiogram_types.InlineKeyboardMarkup = _DummyInline
     aiogram_types.InputMediaDocument = _DummyInline
