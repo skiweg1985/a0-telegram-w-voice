@@ -1416,12 +1416,38 @@ $ gh pr view
     def test_copy_button_rows_caps_to_two_when_requested(self):
         handler = self.handler
         rows = handler._copy_button_rows(
-            "git status\ngh pr view\nnpm test",
+            "$ git status\n`gh pr view`\n$ npm test",
             {"copy_buttons_enabled": True},
             {},
             max_count=2,
         )
         self.assertEqual([row[0]["copy_text"] for row in rows], ["git status", "gh pr view"])
+
+    def test_copy_button_rows_rejects_prose_that_starts_with_tool_names(self):
+        handler = self.handler
+        rows = handler._copy_button_rows(
+            "\n".join([
+                "Git ist ein verteiltes Versionskontrollsystem und sehr beliebt.",
+                "Node läuft auf deinem Server, das ist kein Problem.",
+                "Python 3 ist die aktuelle Version der Sprache.",
+                "Make sure to restart the bot afterwards.",
+                "git status",
+            ]),
+            {"copy_buttons_enabled": True},
+            {},
+            max_count=3,
+        )
+        self.assertEqual(rows, [])
+
+    def test_copy_button_rows_accepts_allowlisted_inline_code_command(self):
+        handler = self.handler
+        rows = handler._copy_button_rows(
+            "Run `git status` and inspect the result.",
+            {"copy_buttons_enabled": True},
+            {},
+            max_count=3,
+        )
+        self.assertEqual([row[0]["copy_text"] for row in rows], ["git status"])
 
     def test_copy_button_rows_respects_session_override(self):
         handler = self.handler
@@ -1691,11 +1717,20 @@ $ gh pr view
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
 
-    def test_supports_native_draft_preview_respects_config_default_off(self):
+    def test_supports_native_draft_preview_preserves_default_on(self):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
         ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {}}
+
+        with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
+            self.assertTrue(handler._supports_native_draft_preview(ctx, object()))
+
+    def test_supports_native_draft_preview_respects_explicit_config_off(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {"native_drafts_enabled": False}}
 
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
@@ -2292,7 +2327,7 @@ $ gh pr view
             tts_enabled=True,
             also_send_text=False,
         ):
-            result = asyncio.run(handler.send_telegram_reply(ctx, "git status"))
+            result = asyncio.run(handler.send_telegram_reply(ctx, "Run `git status` now"))
             self.assertIsNone(result)
             handler.tc.send_voice.assert_awaited_once()
             self.assertEqual(
@@ -4005,10 +4040,14 @@ $ gh pr view
             asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
         send_mock.assert_awaited_once()
 
-    def test_clear_resets_rich_session_override(self):
+    def test_clear_resets_ux_session_overrides(self):
         handler = self.handler
         ctx = _DummyAgentContext(name="Shipping dashboard")
-        ctx.data = {handler.CTX_TG_RICH_SESSION: "on"}
+        ctx.data = {
+            handler.CTX_TG_RICH_SESSION: "on",
+            handler.CTX_TG_NATIVE_DRAFTS_SESSION: "off",
+            handler.CTX_TG_COPY_BUTTONS_SESSION: "off",
+        }
         message = types.SimpleNamespace(
             from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
             chat=types.SimpleNamespace(id=99, type="private"),
@@ -4020,6 +4059,8 @@ $ gh pr view
              mock.patch.object(handler, "save_tmp_chat"):
             asyncio.run(handler.handle_clear(message, "mainbot", {}))
         self.assertNotIn(handler.CTX_TG_RICH_SESSION, ctx.data)
+        self.assertNotIn(handler.CTX_TG_NATIVE_DRAFTS_SESSION, ctx.data)
+        self.assertNotIn(handler.CTX_TG_COPY_BUTTONS_SESSION, ctx.data)
 
     def test_progress_lines_show_spinner_while_running_and_check_when_done(self):
         """Tool-start lines render with a spinner; the completion replace switches to a checkmark."""

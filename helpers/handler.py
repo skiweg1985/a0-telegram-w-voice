@@ -764,7 +764,7 @@ def _native_drafts_effective(bot_cfg: dict | None, ctx_data: dict | None) -> boo
     if override is not None:
         return override
     progress = (bot_cfg or {}).get("progress") or {}
-    return _coerce_config_bool(progress.get("native_drafts_enabled"), False)
+    return _coerce_config_bool(progress.get("native_drafts_enabled"), True)
 
 
 def _copy_buttons_effective(bot_cfg: dict | None, ctx_data: dict | None) -> bool:
@@ -884,17 +884,22 @@ def _extract_copy_payloads(markdown: str, max_count: int) -> list[tuple[str, str
             return found
 
     without_fences = fenced_pattern.sub("", raw)
-    command_re = re.compile(
-        r"^\s*(?:\$\s*)?((?:sudo\s+)?(?:git|gh|npm|pnpm|yarn|npx|pip|python3?|"
+    command_start_re = re.compile(
+        r"^(?:sudo\s+)?(?:git|gh|npm|pnpm|yarn|npx|pip|python3?|"
         r"docker(?:\s+compose|-compose)?|kubectl|curl|wget|ssh|scp|rsync|make|"
         r"pytest|uv|poetry|brew|apt(?:-get)?|systemctl|terraform|node|deno|bun)"
-        r"\b[^\n`]*)\s*$",
+        r"\b",
         re.IGNORECASE,
     )
-    for line in without_fences.splitlines():
-        match = command_re.match(line)
-        if match:
-            add("command", match.group(1))
+    command_signal_re = re.compile(
+        r"^\s*\$\s+([^\n`]+?)\s*$|(?<!`)`([^`\n]+)`(?!`)",
+        re.MULTILINE,
+    )
+    for match in command_signal_re.finditer(without_fences):
+        shell_payload, inline_payload = match.groups()
+        payload = (shell_payload or inline_payload or "").strip()
+        if shell_payload is not None or command_start_re.match(payload):
+            add("command", payload)
             if len(found) >= max_count:
                 break
     return found
@@ -2403,6 +2408,8 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
                 ctx.data.pop(CTX_TG_DETAIL_LEVEL_SESSION, None)
                 ctx.data.pop(CTX_TG_RICH_SESSION, None)
                 ctx.data.pop(CTX_TG_SUGGEST_SESSION, None)
+                ctx.data.pop(CTX_TG_NATIVE_DRAFTS_SESSION, None)
+                ctx.data.pop(CTX_TG_COPY_BUTTONS_SESSION, None)
                 ctx.data.pop(CTX_TG_SUGGESTED_REPLIES, None)
                 ctx.data.pop(CTX_TG_DETAIL_LAST_SENT_TS, None)
                 ctx.data.pop(CTX_TG_PROGRESS_MESSAGE_ID, None)

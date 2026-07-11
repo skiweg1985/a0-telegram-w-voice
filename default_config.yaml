@@ -45,7 +45,7 @@ bots: []
 #   progress:
 #     edit_throttle_ms: 200        # (YAML only) Minimum delay between progress edits
 #     completed_mode: delete       # (YAML only) delete | none | edit — cleanup leftover progress; never leave "Completed" by default
-#     native_drafts_enabled: false # Telegram-native live draft previews when supported; new WebUI bots default on; /ux drafts overrides per session
+#     native_drafts_enabled: true  # Telegram-native live draft previews when supported; /ux drafts overrides per session
 #     live_response_preview_interval_ms: 800      # (YAML only) Hermes-style max preview cadence
 #     live_response_preview_buffer_threshold: 24  # (YAML only) Flush early after enough new buffered chars
 #     live_response_preview_chars: 1200           # (YAML only) Cap visible draft text to avoid giant Telegram edits

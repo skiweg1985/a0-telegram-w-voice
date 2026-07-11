@@ -6,7 +6,7 @@ Older entries are chronological release history and may mention commands/feature
 
 ### Added
 
-- **Enhanced Telegram UX** (`/ux`): macro command for rich final replies, native plain-text draft previews, and copy buttons. New WebUI bots default these on; existing bots keep conservative missing-key defaults until enabled. Copy buttons are limited to short code/command snippets and merge ahead of suggested-reply chips.
+- **Enhanced Telegram UX** (`/ux`): macro command for rich final replies, native plain-text draft previews, and copy buttons. New WebUI bots default rich replies and copy buttons on; existing native-draft behavior remains enabled unless explicitly disabled. Copy buttons are limited to fenced code, `$ `-prefixed commands, and allowlisted commands in inline-code spans, and merge ahead of suggested-reply chips.
 - **Suggested replies** (`/suggest [on|off]`, bot default `suggested_replies_enabled`, WebUI toggle): after each text reply the utility LLM proposes up to three tap-to-send follow-up chips (💬), generated *after* delivery so the answer is never delayed, token-guarded like the other reply actions, localized via the conversation language, and cleared on the next reply and `/clear`.
 - **Message queue** (`queue_messages`, default on): button-driven follow-ups (Retry, Shorter/Longer, suggestions, edited re-runs, Continue) that arrive while the agent is busy are queued with a "📥 Queued" notice instead of being rejected; multiple queued turns are merged and dispatched automatically once the current run finishes (chain end).
 
@@ -52,6 +52,7 @@ Older entries are chronological release history and may mention commands/feature
 
 ### Fixed
 
+- Copy buttons no longer mistake prose beginning with words such as "Git", "Python", "Node", or "Make" for shell commands. `/clear` also resets the new native-draft and copy-button session overrides.
 - **`/start` and `/clear` crashed with a `NameError`** (`reply_markup` was referenced but never defined), so new users got no welcome message and `/clear` never confirmed the reset.
 - Long messages are now split HTML-tag-aware at the 4096-char limit: tags left open at a chunk boundary are closed and re-opened in the next chunk, so a `<pre>` code block or `<b>` span crossing the limit no longer loses its formatting via the plain-text parse-error fallback. That fallback also decodes HTML entities now, so users see `<` instead of a literal `&lt;`.
 - Tool-status lines no longer show a `✓` checkmark the moment a tool **starts**; running steps render with `⏳` and switch to `✓` when the completion detail replaces the line.

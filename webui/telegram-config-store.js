@@ -121,7 +121,7 @@ export const store = createStore("telegramConfig", {
   },
 
   ensureProgress(bot) {
-    const d = { ...this.defaultBot().progress, native_drafts_enabled: false };
+    const d = { ...this.defaultBot().progress, native_drafts_enabled: true };
     bot.progress = { ...d, ...(bot.progress || {}) };
   },
 

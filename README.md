@@ -1,6 +1,6 @@
 # a0-telegram-w-voice
 
-![version](https://img.shields.io/badge/version-0.13.0-blue)
+![version](https://img.shields.io/badge/version-0.14.0-blue)
 
 Agent Zero plugin: **Telegram** with optional **STT/TTS** (voice in, voice out), live response preview, inline buttons, and background progress streaming. Aligned with the upstream conventions in [a0-create-plugin](https://github.com/agent0ai/agent-zero/blob/main/skills/a0-create-plugin/SKILL.md).
 
@@ -181,7 +181,7 @@ bots:
     progress:
       edit_throttle_ms: 200
       completed_mode: delete                     # delete | none | edit; avoids leftover "Completed" bubbles
-      native_drafts_enabled: false               # Telegram-native live draft previews when supported; /ux drafts overrides
+      native_drafts_enabled: true                # Telegram-native live draft previews when supported; /ux drafts overrides
       live_response_preview_interval_ms: 800     # max cadence for live draft preview edits
       live_response_preview_buffer_threshold: 24 # flush early after enough buffered chars
       live_response_preview_chars: 1200          # visible draft text cap
@@ -235,7 +235,7 @@ bots:
 - API keys may use `${ENV_VAR}` or `os.environ/ENV_VAR` style values as documented in the plugin UI.
 - Python imports use `usr.plugins.telegram_integration_voice` (see a0-create-plugin).
 - **Reload command**: `/reload` is opt-in via `allow_restart_command: true`, requires the Telegram user to match `admin_users`, and always asks for inline Approve/Cancel confirmation before calling Agent Zero's internal reload mechanism. After the Telegram bot reconnects, it sends a one-time restart confirmation to the chat that approved the reload.
-- **Enhanced Telegram UX**: new WebUI bots default to rich final replies, native plain-text draft previews, and copy buttons for short code/command snippets. Existing YAML/configured bots keep conservative missing-key defaults until an operator enables the switches. `rich_messages.drafts_enabled` stays reserved for future rich draft previews.
+- **Enhanced Telegram UX**: new WebUI bots default to rich final replies, native plain-text draft previews, and copy buttons for short code/command snippets. Existing bots preserve the previous native-draft behavior when the key is missing, while rich replies and copy buttons remain off until enabled. `rich_messages.drafts_enabled` stays reserved for future rich draft previews.
 - **Rich Messages**: final assistant replies can opt into Telegram Bot API native rich rendering for tables, task lists, headings, details, and math via `rich_messages.enabled` or the WebUI toggle. When enabled, the Telegram system prompt lets the agent use those structures when useful. Copy buttons preserve quick copying for short code and command snippets.
 - **Inline buttons**: commands like `/detail`, `/voice`, `/optimize_output`, `/project`, `/model`, and `/shortcut` show inline keyboards when called without arguments. The agent can also present Approve / Cancel choices for risky actions.
 - **Unauthorized access**: users not in `allowed_users` receive a throttled reply with their Telegram user ID so they can request access from the operator.
