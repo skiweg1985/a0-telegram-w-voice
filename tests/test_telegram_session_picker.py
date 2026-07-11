@@ -3214,6 +3214,63 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "off")
         query.answer.assert_awaited()
 
+    def test_mode_callback_edits_settings_message_in_place_with_active_mark(self):
+        """Tapping a mode button updates the original bubble and marks the active option."""
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}v|voice_only",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        edit_mock = mock.AsyncMock(return_value=True)
+        send_mock = mock.AsyncMock()
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()), \
+             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=edit_mock, create=True), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=send_mock):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        edit_mock.assert_awaited_once()
+        args = edit_mock.await_args.args
+        self.assertEqual(args[1], 99)   # chat id
+        self.assertEqual(args[2], 77)   # original settings message id
+        rows = args[4]
+        flat = [btn for row in rows for btn in row]
+        active = [b for b in flat if b["callback_data"].endswith("v|voice_only")]
+        self.assertTrue(active and active[0]["text"].startswith("✓ "))
+        inactive = [b for b in flat if not b["callback_data"].endswith("v|voice_only")]
+        self.assertTrue(all(not b["text"].startswith("✓") for b in inactive))
+        send_mock.assert_not_awaited()  # no extra confirmation bubble
+
+    def test_mode_callback_falls_back_to_send_when_edit_fails(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}d|info",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        send_mock = mock.AsyncMock()
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_temp_bot", return_value=_DummyAsyncBotContext()), \
+             mock.patch.object(handler.tc, "edit_text_with_keyboard", new=mock.AsyncMock(return_value=False), create=True), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=send_mock):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        send_mock.assert_awaited_once()
+
     def test_clear_resets_rich_session_override(self):
         handler = self.handler
         ctx = _DummyAgentContext(name="Shipping dashboard")

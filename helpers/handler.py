@@ -699,6 +699,57 @@ def _rich_inline_keyboard() -> list[list[dict]]:
     ]
 
 
+def _mark_active_buttons(rows: list[list[dict]], active_callback_data: str) -> list[list[dict]]:
+    """Copy keyboard rows, prefixing the currently active option with a check."""
+    marked: list[list[dict]] = []
+    for row in rows:
+        new_row = []
+        for btn in row:
+            b = dict(btn)
+            if b.get("callback_data") == active_callback_data:
+                b["text"] = f"✓ {b.get('text', '')}"
+            new_row.append(b)
+        marked.append(new_row)
+    return marked
+
+
+async def _edit_mode_status_message(
+    token: str,
+    query: CallbackQuery,
+    text: str,
+    keyboard_rows: list[list[dict]],
+    active_callback_data: str,
+) -> bool:
+    """Turn the tapped settings bubble into the confirmation, in place.
+
+    Marks the now-active option in the keyboard so the chat shows the current
+    mode at a glance instead of piling up confirmation bubbles below stale,
+    still-clickable keyboards. Returns False when editing is impossible
+    (message gone, flood control, old client) so callers can fall back to a
+    plain send.
+    """
+    message = getattr(query, "message", None)
+    chat = getattr(message, "chat", None) if message else None
+    if not message or not chat:
+        return False
+    rows = _mark_active_buttons(keyboard_rows, active_callback_data)
+    try:
+        async with _temp_bot(token) as bot:
+            return bool(
+                await tc.edit_text_with_keyboard(
+                    bot,
+                    chat.id,
+                    message.message_id,
+                    text,
+                    rows,
+                    parse_mode=None,
+                )
+            )
+    except Exception as e:
+        PrintStyle.warning(f"Telegram mode-message edit failed: {format_error(e)}")
+        return False
+
+
 def _apply_rich_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
     arg = str(raw or "").strip().lower()
     if arg in ("on", "enable", "enabled"):
@@ -3719,9 +3770,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_output_optimize_mode(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("Updated")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _optimize_output_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}o|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "v":
@@ -3731,9 +3786,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_voice_mode_setting(context, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _voice_mode_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}v|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "a":
@@ -3743,9 +3802,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_reply_actions_setting(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _actions_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}a|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "db":
@@ -3755,9 +3818,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_detail_before_setting(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _detail_before_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}db|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "ri":
@@ -3767,9 +3834,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_rich_setting(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _rich_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}ri|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "sx":
@@ -3890,9 +3961,13 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             reply = _apply_detail_level(context, bot_cfg, payload)
             save_tmp_chat(context)
             await query.answer("OK")
-            await _send_with_temp_bot(
-                token, chat_id, reply, parse_mode=None
-            )
+            if not await _edit_mode_status_message(
+                token, query, reply, _detail_inline_keyboard(),
+                f"{TG_UI_CALLBACK_PREFIX}d|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
             return
 
         if kind == "p":
