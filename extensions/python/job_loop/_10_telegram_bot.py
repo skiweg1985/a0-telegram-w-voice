@@ -74,6 +74,7 @@ class TelegramBotManager(Extension):
         handle_undo = getattr(_tg_handler, "handle_undo", None)
         handle_topic = getattr(_tg_handler, "handle_topic", None)
         handle_rich = getattr(_tg_handler, "handle_rich", None)
+        handle_ux = getattr(_tg_handler, "handle_ux", None)
         handle_suggest = getattr(_tg_handler, "handle_suggest", None)
         handle_edited_message = getattr(_tg_handler, "handle_edited_message", None)
 
@@ -147,6 +148,11 @@ class TelegramBotManager(Extension):
                     if handle_rich
                     else None
                 )
+                _on_ux = (
+                    partial(_make_handler(handle_ux), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_ux
+                    else None
+                )
                 _on_suggest = (
                     partial(_make_handler(handle_suggest), bot_name=name, bot_cfg=bot_cfg)
                     if handle_suggest
@@ -208,6 +214,7 @@ class TelegramBotManager(Extension):
                     *(([("topic", _on_topic)]) if _on_topic else []),
                     *(([("voice", _on_voice)]) if _on_voice else []),
                     *(([("rich", _on_rich)]) if _on_rich else []),
+                    *(([("ux", _on_ux)]) if _on_ux else []),
                     *(([("suggest", _on_suggest)]) if _on_suggest else []),
                     ("detail", _on_detail),
                     *(([("detail_before", _on_detail_before)]) if _on_detail_before else []),

@@ -97,6 +97,8 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_REPLY_ACTIONS_SESSION,
     CTX_TG_RICH_SESSION,
     CTX_TG_SUGGEST_SESSION,
+    CTX_TG_NATIVE_DRAFTS_SESSION,
+    CTX_TG_COPY_BUTTONS_SESSION,
     CTX_TG_SUGGESTED_REPLIES,
     CTX_TG_PENDING_TURNS,
     CTX_TG_PENDING_TURNS_WORKER,
@@ -711,6 +713,28 @@ def _suggest_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
     return _on_off_inline_keyboard("sg", bot_cfg)
 
 
+def _ux_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    p = TG_UI_CALLBACK_PREFIX
+    return [
+        [
+            {"text": i18n.t(bot_cfg, "btn_ux_on"), "callback_data": f"{p}ux|all:on"},
+            {"text": i18n.t(bot_cfg, "btn_ux_off"), "callback_data": f"{p}ux|all:off"},
+        ],
+        [
+            {"text": i18n.t(bot_cfg, "btn_ux_rich_on"), "callback_data": f"{p}ux|rich:on"},
+            {"text": i18n.t(bot_cfg, "btn_ux_rich_off"), "callback_data": f"{p}ux|rich:off"},
+        ],
+        [
+            {"text": i18n.t(bot_cfg, "btn_ux_drafts_on"), "callback_data": f"{p}ux|drafts:on"},
+            {"text": i18n.t(bot_cfg, "btn_ux_drafts_off"), "callback_data": f"{p}ux|drafts:off"},
+        ],
+        [
+            {"text": i18n.t(bot_cfg, "btn_ux_copy_on"), "callback_data": f"{p}ux|copy:on"},
+            {"text": i18n.t(bot_cfg, "btn_ux_copy_off"), "callback_data": f"{p}ux|copy:off"},
+        ],
+    ]
+
+
 def _suggested_replies_effective(bot_cfg: dict | None, ctx_data: dict | None) -> bool:
     """Session /suggest override, else bot config suggested_replies_enabled (default off)."""
     raw = str((ctx_data or {}).get(CTX_TG_SUGGEST_SESSION, "") or "").strip().lower()
@@ -726,6 +750,30 @@ def _suggested_replies_effective(bot_cfg: dict | None, ctx_data: dict | None) ->
     return str(value).strip().lower() in ("true", "1", "yes", "on", "enabled")
 
 
+def _session_bool_override(ctx_data: dict | None, key: str) -> bool | None:
+    raw = str((ctx_data or {}).get(key, "") or "").strip().lower()
+    if raw in ("on", "true", "1", "yes", "enabled"):
+        return True
+    if raw in ("off", "false", "0", "no", "disabled"):
+        return False
+    return None
+
+
+def _native_drafts_effective(bot_cfg: dict | None, ctx_data: dict | None) -> bool:
+    override = _session_bool_override(ctx_data, CTX_TG_NATIVE_DRAFTS_SESSION)
+    if override is not None:
+        return override
+    progress = (bot_cfg or {}).get("progress") or {}
+    return _coerce_config_bool(progress.get("native_drafts_enabled"), False)
+
+
+def _copy_buttons_effective(bot_cfg: dict | None, ctx_data: dict | None) -> bool:
+    override = _session_bool_override(ctx_data, CTX_TG_COPY_BUTTONS_SESSION)
+    if override is not None:
+        return override
+    return _coerce_config_bool((bot_cfg or {}).get("copy_buttons_enabled"), False)
+
+
 def _apply_suggest_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
     arg = str(raw or "").strip().lower()
     if arg in ("on", "enable", "enabled"):
@@ -735,6 +783,152 @@ def _apply_suggest_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
         ctx.data[CTX_TG_SUGGEST_SESSION] = "off"
         return i18n.t(bot_cfg, "suggest_off")
     return i18n.t(bot_cfg, "suggest_usage")
+
+
+def _apply_native_drafts_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_NATIVE_DRAFTS_SESSION] = "on"
+        ctx.data.pop(CTX_TG_STREAM_DRAFT_DISABLED, None)
+        return i18n.t(bot_cfg, "native_drafts_on")
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_NATIVE_DRAFTS_SESSION] = "off"
+        context_keys = (
+            CTX_TG_STREAM_DRAFT_ACTIVE,
+            CTX_TG_STREAM_DRAFT_USED,
+            CTX_TG_STREAM_DRAFT_ID,
+            CTX_TG_STREAM_DRAFT_LAST_TS,
+        )
+        for key in context_keys:
+            ctx.data.pop(key, None)
+        return i18n.t(bot_cfg, "native_drafts_off")
+    return i18n.t(bot_cfg, "ux_usage")
+
+
+def _apply_copy_buttons_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    arg = str(raw or "").strip().lower()
+    if arg in ("on", "enable", "enabled"):
+        ctx.data[CTX_TG_COPY_BUTTONS_SESSION] = "on"
+        return i18n.t(bot_cfg, "copy_buttons_on")
+    if arg in ("off", "disable", "disabled"):
+        ctx.data[CTX_TG_COPY_BUTTONS_SESSION] = "off"
+        return i18n.t(bot_cfg, "copy_buttons_off")
+    return i18n.t(bot_cfg, "ux_usage")
+
+
+def _apply_ux_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
+    parts = [p for p in re.split(r"[\s:]+", str(raw or "").strip().lower()) if p]
+    if not parts:
+        return i18n.t(bot_cfg, "ux_usage")
+    if len(parts) == 1 and parts[0] in ("on", "enable", "enabled", "off", "disable", "disabled"):
+        value = "on" if parts[0] in ("on", "enable", "enabled") else "off"
+        _apply_rich_setting(ctx, bot_cfg, value)
+        _apply_native_drafts_setting(ctx, bot_cfg, value)
+        _apply_copy_buttons_setting(ctx, bot_cfg, value)
+        return i18n.t(bot_cfg, "ux_all_on" if value == "on" else "ux_all_off")
+    if len(parts) == 2 and parts[0] in ("all", "rich", "drafts", "copy"):
+        target, value = parts
+        if value not in ("on", "enable", "enabled", "off", "disable", "disabled"):
+            return i18n.t(bot_cfg, "ux_usage")
+        if target == "all":
+            return _apply_ux_setting(ctx, bot_cfg, value)
+        if target == "rich":
+            return _apply_rich_setting(ctx, bot_cfg, value)
+        if target == "drafts":
+            return _apply_native_drafts_setting(ctx, bot_cfg, value)
+        if target == "copy":
+            return _apply_copy_buttons_setting(ctx, bot_cfg, value)
+    return i18n.t(bot_cfg, "ux_usage")
+
+
+def _ux_status_text(ctx: AgentContext, bot_cfg: dict) -> str:
+    return i18n.t(
+        bot_cfg,
+        "ux_status",
+        rich="on" if tc.effective_rich_enabled(bot_cfg, ctx.data) else "off",
+        drafts="on" if _native_drafts_effective(bot_cfg, ctx.data) else "off",
+        copy="on" if _copy_buttons_effective(bot_cfg, ctx.data) else "off",
+    )
+
+
+def _valid_copy_payload(text: str) -> str:
+    payload = str(text or "").strip()
+    if not payload or len(payload) > 256:
+        return ""
+    return payload
+
+
+def _copy_button_label(bot_cfg: dict | None, kind: str, ordinal: int) -> str:
+    base = i18n.t(bot_cfg, "btn_copy_command" if kind == "command" else "btn_copy_code")
+    return base if ordinal <= 1 else f"{base} {ordinal}"
+
+
+def _extract_copy_payloads(markdown: str, max_count: int) -> list[tuple[str, str]]:
+    raw = str(markdown or "")
+    if max_count <= 0 or not raw.strip():
+        return []
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(kind: str, payload: str) -> None:
+        valid = _valid_copy_payload(payload)
+        if not valid or valid in seen or len(found) >= max_count:
+            return
+        seen.add(valid)
+        found.append((kind, valid))
+
+    fenced_pattern = re.compile(r"```[^\n`]*\n(.*?)```", re.DOTALL)
+    for match in fenced_pattern.finditer(raw):
+        add("code", match.group(1))
+        if len(found) >= max_count:
+            return found
+
+    without_fences = fenced_pattern.sub("", raw)
+    command_re = re.compile(
+        r"^\s*(?:\$\s*)?((?:sudo\s+)?(?:git|gh|npm|pnpm|yarn|npx|pip|python3?|"
+        r"docker(?:\s+compose|-compose)?|kubectl|curl|wget|ssh|scp|rsync|make|"
+        r"pytest|uv|poetry|brew|apt(?:-get)?|systemctl|terraform|node|deno|bun)"
+        r"\b[^\n`]*)\s*$",
+        re.IGNORECASE,
+    )
+    for line in without_fences.splitlines():
+        match = command_re.match(line)
+        if match:
+            add("command", match.group(1))
+            if len(found) >= max_count:
+                break
+    return found
+
+
+def _copy_button_rows(
+    markdown: str,
+    bot_cfg: dict | None,
+    ctx_data: dict | None,
+    *,
+    max_count: int,
+) -> list[list[dict]]:
+    if not _copy_buttons_effective(bot_cfg, ctx_data):
+        return []
+    counters = {"code": 0, "command": 0}
+    rows: list[list[dict]] = []
+    for kind, payload in _extract_copy_payloads(markdown, max_count):
+        counters[kind] = counters.get(kind, 0) + 1
+        rows.append([{
+            "text": _copy_button_label(bot_cfg, kind, counters[kind]),
+            "copy_text": payload,
+        }])
+    return rows
+
+
+def _split_copy_keyboard_rows(rows: list[list[dict]] | None) -> tuple[list[list[dict]], list[list[dict]]]:
+    copy_rows: list[list[dict]] = []
+    other_rows: list[list[dict]] = []
+    for row in rows or []:
+        if row and all("copy_text" in btn for btn in row):
+            copy_rows.append(row)
+        else:
+            other_rows.append(row)
+    return copy_rows, other_rows
 
 
 _SUGGESTION_MAX_COUNT = 3
@@ -826,7 +1020,8 @@ async def _attach_reply_suggestions(
             return
         context.data[CTX_TG_SUGGESTED_REPLIES] = list(suggestions)
         save_tmp_chat(context)
-        rows = _suggestion_keyboard_rows(suggestions, response_token) + list(base_rows or [])
+        copy_rows, other_rows = _split_copy_keyboard_rows(base_rows)
+        rows = copy_rows + _suggestion_keyboard_rows(suggestions, response_token) + other_rows
         keyboard = tc.build_inline_keyboard(rows)
         async with _temp_bot(bot_token) as bot:
             if str(context.data.get(CTX_TG_LAST_RESPONSE_ACTION_TOKEN, "") or "") != response_token:
@@ -2654,6 +2849,43 @@ async def handle_rich(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+async def handle_ux(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle /ux — macro for rich messages, native drafts, and copy buttons."""
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+
+    arg = _cmd_rest(message)
+    if not arg:
+        reply = _ux_status_text(ctx, bot_cfg)
+        kb = _ux_inline_keyboard(bot_cfg)
+        save_tmp_chat(ctx)
+        await _send_with_temp_bot(
+            instance.bot.token,
+            message.chat.id,
+            reply,
+            parse_mode=None,
+            keyboard=kb,
+        )
+        return
+
+    reply = _apply_ux_setting(ctx, bot_cfg, arg)
+    save_tmp_chat(ctx)
+
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        reply,
+        parse_mode=None,
+    )
+
+
 def _status_on_off(enabled: bool) -> str:
     return "on" if enabled else "off"
 
@@ -4175,6 +4407,23 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 )
             return
 
+        if kind == "ux":
+            parts = [p for p in payload.split(":") if p]
+            if len(parts) != 2 or parts[0] not in ("all", "rich", "drafts", "copy") or parts[1] not in ("on", "off"):
+                await query.answer("Unknown option.")
+                return
+            reply = _apply_ux_setting(context, bot_cfg, payload)
+            save_tmp_chat(context)
+            await query.answer("OK")
+            if not await _edit_mode_status_message(
+                token, query, reply, _ux_inline_keyboard(bot_cfg),
+                f"{TG_UI_CALLBACK_PREFIX}ux|{payload}",
+            ):
+                await _send_with_temp_bot(
+                    token, chat_id, reply, parse_mode=None
+                )
+            return
+
         if kind == "sr":
             idx_raw, _, action_token = payload.partition(":")
             suggestions = list(context.data.get(CTX_TG_SUGGESTED_REPLIES) or [])
@@ -5282,6 +5531,9 @@ def _preview_has_meaningful_visible_text(text: str) -> bool:
 
 def _supports_native_draft_preview(context: AgentContext, bot) -> bool:
     if context.data.get(CTX_TG_STREAM_DRAFT_DISABLED):
+        return False
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    if not _native_drafts_effective(bot_cfg, context.data):
         return False
     try:
         chat_id = int(context.data.get(CTX_TG_CHAT_ID) or 0)
@@ -6469,6 +6721,15 @@ async def send_telegram_reply(
             )
             response_action_rows = None
             show_more_button = bool(logical_text_body and reply_actions_enabled)
+            suggestions_enabled = _suggested_replies_effective(bot_cfg, context.data)
+            copy_rows = []
+            if not hidden_voice_action_host:
+                copy_rows = _copy_button_rows(
+                    logical_text_body,
+                    bot_cfg,
+                    context.data,
+                    max_count=(2 if suggestions_enabled else 3),
+                )
             if response_token and hidden_voice_action_host:
                 voice_buttons = _response_action_keyboard(
                     response_token,
@@ -6484,7 +6745,10 @@ async def send_telegram_reply(
                         include_more=True,
                         bot_cfg=bot_cfg,
                     )
-            final_keyboard = _append_inline_keyboard(base_keyboard, response_action_rows)
+            final_keyboard = _append_inline_keyboard(
+                _append_inline_keyboard(copy_rows, base_keyboard),
+                response_action_rows,
+            )
             planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(
                 outbound_items,
                 logical_text_body,

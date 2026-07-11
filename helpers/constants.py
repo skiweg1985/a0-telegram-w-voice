@@ -100,6 +100,14 @@ CTX_TG_SESSION_PINNED = "telegram_session_pinned"
 # suggested_replies_enabled; on | off. Persisted (no "_" prefix).
 CTX_TG_SUGGEST_SESSION = "telegram_suggested_replies_session"
 
+# Per-session native plain-text draft previews (/ux drafts): missing = use
+# progress.native_drafts_enabled; on | off. Persisted (no "_" prefix).
+CTX_TG_NATIVE_DRAFTS_SESSION = "telegram_native_drafts_session"
+
+# Per-session copy buttons (/ux copy): missing = use copy_buttons_enabled;
+# on | off. Persisted (no "_" prefix).
+CTX_TG_COPY_BUTTONS_SESSION = "telegram_copy_buttons_session"
+
 # Suggested follow-up texts for the last reply, addressed by the current
 # response-action token. Persisted so the chips survive restarts.
 CTX_TG_SUGGESTED_REPLIES = "telegram_suggested_replies"

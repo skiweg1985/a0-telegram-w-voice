@@ -47,6 +47,7 @@ export const store = createStore("telegramConfig", {
       mode: "polling",
       language: "en",
       suggested_replies_enabled: false,
+      copy_buttons_enabled: true,
       webhook_url: "",
       webhook_secret: "",
       allowed_users: [],
@@ -61,12 +62,13 @@ export const store = createStore("telegramConfig", {
       attachment_max_age_hours: 0,
       telegram_detail_level: "info",
       rich_messages: {
-        enabled: false,
+        enabled: true,
         drafts_enabled: false,
       },
       progress: {
         edit_throttle_ms: 200,
         completed_mode: "delete",
+        native_drafts_enabled: true,
         live_response_preview_chars: 1200,
         live_response_preview_interval_ms: 800,
         live_response_preview_buffer_threshold: 24,
@@ -119,7 +121,7 @@ export const store = createStore("telegramConfig", {
   },
 
   ensureProgress(bot) {
-    const d = this.defaultBot().progress;
+    const d = { ...this.defaultBot().progress, native_drafts_enabled: false };
     bot.progress = { ...d, ...(bot.progress || {}) };
   },
 
@@ -135,8 +137,26 @@ export const store = createStore("telegramConfig", {
   },
 
   ensureRichMessages(bot) {
-    const d = this.defaultBot().rich_messages;
+    const d = { enabled: false, drafts_enabled: false };
     bot.rich_messages = { ...d, ...(bot.rich_messages || {}) };
+  },
+
+  enhancedUxEnabled(bot) {
+    this.ensureProgress(bot);
+    this.ensureRichMessages(bot);
+    return !!(
+      bot.rich_messages.enabled &&
+      bot.progress.native_drafts_enabled &&
+      bot.copy_buttons_enabled
+    );
+  },
+
+  setEnhancedUx(bot, enabled) {
+    this.ensureProgress(bot);
+    this.ensureRichMessages(bot);
+    bot.rich_messages.enabled = !!enabled;
+    bot.progress.native_drafts_enabled = !!enabled;
+    bot.copy_buttons_enabled = !!enabled;
   },
 
 

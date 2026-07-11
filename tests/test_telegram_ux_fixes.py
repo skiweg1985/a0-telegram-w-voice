@@ -46,6 +46,7 @@ def _install_stub_helpers():
             self.kwargs = kwargs
 
     aiogram_types.FSInputFile = _DummyInline
+    aiogram_types.CopyTextButton = _DummyInline
     aiogram_types.InlineKeyboardButton = _DummyInline
     aiogram_types.InlineKeyboardMarkup = _DummyInline
     aiogram_types.InputMediaDocument = _DummyInline
@@ -177,6 +178,37 @@ class EffectiveRichEnabledTests(unittest.TestCase):
         self.assertTrue(
             self.client.effective_rich_enabled({}, {"telegram_rich_messages_session": "on"})
         )
+
+
+class CopyTextKeyboardTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = _load_client()
+
+    def test_build_inline_keyboard_supports_copy_text(self):
+        markup = self.client.build_inline_keyboard([
+            [
+                {"text": "Copy", "copy_text": "git status"},
+                {"text": "More", "callback_data": "m"},
+            ],
+            [{"text": "Docs", "url": "https://example.test"}],
+        ])
+        rows = markup.kwargs["inline_keyboard"]
+        copy_btn = rows[0][0]
+        self.assertEqual(copy_btn.kwargs["text"], "Copy")
+        self.assertEqual(copy_btn.kwargs["copy_text"].kwargs["text"], "git status")
+        self.assertEqual(rows[0][1].kwargs["callback_data"], "m")
+        self.assertEqual(rows[1][0].kwargs["url"], "https://example.test")
+
+    def test_build_inline_keyboard_skips_invalid_copy_text(self):
+        markup = self.client.build_inline_keyboard([
+            [{"text": "Empty", "copy_text": ""}],
+            [{"text": "Long", "copy_text": "x" * 257}],
+            [{"text": "OK", "callback_data": "ok"}],
+        ])
+        rows = markup.kwargs["inline_keyboard"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0].kwargs["callback_data"], "ok")
 
 
 class MessageReactionTests(unittest.TestCase):

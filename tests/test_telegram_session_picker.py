@@ -1360,6 +1360,79 @@ class TelegramSessionPickerTests(unittest.TestCase):
         self.assertEqual(rows[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}sr|0:tok1")
         self.assertEqual(rows[-1][0]["text"], "⋯ More")  # base rows preserved below
 
+    def test_attach_reply_suggestions_keeps_copy_rows_before_chips(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="X")
+        ctx.data = {handler.CTX_TG_LAST_RESPONSE_ACTION_TOKEN: "tok1"}
+        edit_mock = mock.AsyncMock()
+        bot = types.SimpleNamespace(edit_message_reply_markup=edit_mock)
+
+        class _CM:
+            async def __aenter__(self):
+                return bot
+
+            async def __aexit__(self, *a):
+                return False
+
+        base_rows = [
+            [{"text": "📋 Copy command", "copy_text": "git status"}],
+            [{"text": "⋯ More", "callback_data": "tgx|rm|open:tok1:0"}],
+        ]
+        with mock.patch.object(handler, "_generate_reply_suggestions", new=mock.AsyncMock(return_value=["Do X"])), \
+             mock.patch.object(handler, "_temp_bot", return_value=_CM()), \
+             mock.patch.object(handler, "save_tmp_chat"):
+            asyncio.run(handler._attach_reply_suggestions(
+                context=ctx, bot_cfg={}, bot_token="tok", chat_id=99, message_id=77,
+                base_rows=base_rows, response_token="tok1",
+                user_body="question", answer_text="answer",
+            ))
+
+        rows = edit_mock.await_args.kwargs["reply_markup"]["inline_keyboard"]
+        self.assertEqual([row[0]["text"] for row in rows], [
+            "📋 Copy command",
+            "💬 Do X",
+            "⋯ More",
+        ])
+
+    def test_copy_button_rows_extract_code_and_commands_from_raw_markdown(self):
+        handler = self.handler
+        markdown = """Run this:
+
+```bash
+git status
+```
+
+$ gh pr view
+"""
+        rows = handler._copy_button_rows(
+            markdown,
+            {"copy_buttons_enabled": True},
+            {},
+            max_count=3,
+        )
+        self.assertEqual(rows[0][0]["copy_text"], "git status")
+        self.assertEqual(rows[1][0]["copy_text"], "gh pr view")
+
+    def test_copy_button_rows_caps_to_two_when_requested(self):
+        handler = self.handler
+        rows = handler._copy_button_rows(
+            "git status\ngh pr view\nnpm test",
+            {"copy_buttons_enabled": True},
+            {},
+            max_count=2,
+        )
+        self.assertEqual([row[0]["copy_text"] for row in rows], ["git status", "gh pr view"])
+
+    def test_copy_button_rows_respects_session_override(self):
+        handler = self.handler
+        rows = handler._copy_button_rows(
+            "git status",
+            {"copy_buttons_enabled": True},
+            {handler.CTX_TG_COPY_BUTTONS_SESSION: "off"},
+            max_count=3,
+        )
+        self.assertEqual(rows, [])
+
     def test_attach_reply_suggestions_aborts_on_stale_token(self):
         handler = self.handler
         ctx = _DummyAgentContext(name="X")
@@ -1609,6 +1682,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {"native_drafts_enabled": True}}
 
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             self.assertTrue(handler._supports_native_draft_preview(ctx, object()))
@@ -1617,10 +1691,20 @@ class TelegramSessionPickerTests(unittest.TestCase):
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
             self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
 
+    def test_supports_native_draft_preview_respects_config_default_off(self):
+        handler = self.handler
+        ctx = _DummyAgentContext()
+        ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {}}
+
+        with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
+            self.assertFalse(handler._supports_native_draft_preview(ctx, object()))
+
     def test_supports_native_draft_preview_respects_disabled_flag(self):
         handler = self.handler
         ctx = _DummyAgentContext()
         ctx.data[handler.CTX_TG_CHAT_ID] = 123456
+        ctx.data[handler.CTX_TG_BOT_CFG] = {"progress": {"native_drafts_enabled": True}}
         ctx.data[handler.CTX_TG_STREAM_DRAFT_DISABLED] = True
 
         with mock.patch.object(handler.tc, "supports_message_draft", return_value=True):
@@ -2199,6 +2283,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
         ctx = self._reply_context({"completed_mode": "delete"})
         ctx.data[handler.CTX_TG_STREAM_DRAFT_USED] = True
         ctx.data[handler.CTX_TG_VOICE_CONVERSATION_MODE] = "voice_only"
+        ctx.data[handler.CTX_TG_BOT_CFG]["copy_buttons_enabled"] = True
 
         with self._patch_reply_dependencies(
             handler,
@@ -2207,7 +2292,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
             tts_enabled=True,
             also_send_text=False,
         ):
-            result = asyncio.run(handler.send_telegram_reply(ctx, "Final answer"))
+            result = asyncio.run(handler.send_telegram_reply(ctx, "git status"))
             self.assertIsNone(result)
             handler.tc.send_voice.assert_awaited_once()
             self.assertEqual(
@@ -2215,6 +2300,7 @@ class TelegramSessionPickerTests(unittest.TestCase):
                 "📝 Show text",
             )
             handler.tc.send_text.assert_not_awaited()
+            handler.tc.send_text_with_keyboard.assert_not_awaited()
             self.assertEqual(
                 [btn["text"] for btn in handler.tc.send_voice.await_args.kwargs["buttons"][1]],
                 ["⋯ More"],
@@ -3771,6 +3857,95 @@ class TelegramSessionPickerTests(unittest.TestCase):
              mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()):
             asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
         self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "off")
+        query.answer.assert_awaited()
+
+    def test_handle_ux_without_arg_shows_status_and_inline_picker(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/ux",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        bot_cfg = {
+            "rich_messages": {"enabled": True},
+            "progress": {"native_drafts_enabled": True},
+            "copy_buttons_enabled": True,
+        }
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_ux(message, "mainbot", bot_cfg))
+
+        self.assertIn("Enhanced Telegram UX", sent[-1][0][2])
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}ux|all:on")
+        self.assertEqual(keyboard[3][1]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}ux|copy:off")
+
+    def test_handle_ux_all_on_sets_component_session_overrides(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/ux on",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_ux(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "on")
+        self.assertEqual(ctx.data[handler.CTX_TG_NATIVE_DRAFTS_SESSION], "on")
+        self.assertEqual(ctx.data[handler.CTX_TG_COPY_BUTTONS_SESSION], "on")
+        self.assertIn("Enhanced Telegram UX: on", sent[-1][0][2])
+
+    def test_handle_ux_copy_off_sets_only_copy_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {handler.CTX_TG_RICH_SESSION: "on"}
+        message = types.SimpleNamespace(
+            text="/ux copy off",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()):
+            asyncio.run(handler.handle_ux(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "on")
+        self.assertEqual(ctx.data[handler.CTX_TG_COPY_BUTTONS_SESSION], "off")
+        self.assertNotIn(handler.CTX_TG_NATIVE_DRAFTS_SESSION, ctx.data)
+
+    def test_handle_callback_query_ux_toggle_sets_session_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ux|drafts:on",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        self.assertEqual(ctx.data[handler.CTX_TG_NATIVE_DRAFTS_SESSION], "on")
         query.answer.assert_awaited()
 
     def test_mode_callback_edits_settings_message_in_place_with_active_mark(self):

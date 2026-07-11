@@ -521,6 +521,21 @@
 
               <div class="field">
                 <div class="field-label">
+                  <div class="field-title">Enhanced Telegram UX</div>
+                  <div class="field-description">Turns on rich final replies, native draft previews, and copy buttons for this bot</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox"
+                           :checked="$store.telegramConfig.enhancedUxEnabled(bot)"
+                           @change="$store.telegramConfig.setEnhancedUx(bot, $event.target.checked)" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
                   <div class="field-title">Rich Messages</div>
                   <div class="field-description">Opt-in native Telegram rendering for final replies with tables, task lists, headings, details, or math</div>
                 </div>
@@ -540,6 +555,32 @@
                 <div class="field-control">
                   <label class="toggle">
                     <input type="checkbox" x-model="bot.rich_messages.drafts_enabled" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Native draft previews</div>
+                  <div class="field-description">Use Telegram-native draft bubbles for live response previews when the bot API supports them; in chat: /ux drafts</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.progress.native_drafts_enabled" />
+                    <span class="toggler"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label">
+                  <div class="field-title">Copy buttons</div>
+                  <div class="field-description">Add copy buttons for short code and command snippets; in chat: /ux copy</div>
+                </div>
+                <div class="field-control">
+                  <label class="toggle">
+                    <input type="checkbox" x-model="bot.copy_buttons_enabled" />
                     <span class="toggler"></span>
                   </label>
                 </div>

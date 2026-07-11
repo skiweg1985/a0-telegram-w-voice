@@ -84,6 +84,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/rich [on|off] — native rendering for tables, headings, task lists and math; no arg = status + buttons",
     ),
     (
+        "ux",
+        "Enhanced reply UX",
+        "/ux [on|off|rich|drafts|copy] — rich rendering, native drafts, and copy buttons; no arg = status + buttons",
+    ),
+    (
         "suggest",
         "Suggested replies",
         "/suggest [on|off] — tap-to-send follow-up suggestions under replies; no arg = status + buttons",
@@ -158,6 +163,7 @@ COMMAND_MENU_DE: dict[str, str] = {
     "detail_before": "Updates beim Tool-Start",
     "voice": "Sprachantwort-Modus",
     "rich": "Rich-Nachrichten-Rendering",
+    "ux": "Erweiterte Antwort-UX",
     "suggest": "Antwortvorschläge",
     "retry": "Letzte Nachricht wiederholen",
     "undo": "Letzten Austausch entfernen",

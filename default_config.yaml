@@ -19,6 +19,7 @@ bots: []
 #   reactions_enabled: true      # Emoji-reaction acknowledgements on user messages (👀 received, 👍 delivered, 😢 failed)
 #   language: en                 # Chat copy language: en | de (buttons, notices, welcome, command menu)
 #   suggested_replies_enabled: false # Tap-to-send follow-up suggestions under replies (one utility-LLM call per reply); /suggest overrides per session
+#   copy_buttons_enabled: false  # Copy buttons for short code/command snippets; new WebUI bots default on; /ux copy overrides per session
 #   queue_messages: true         # Queue button-driven follow-ups that arrive while the agent is busy and run them after the current task
 #   agent_instructions: ""       # Extra instructions for the agent in Telegram chats
 #   # The WebUI exposes the common settings below. Keys marked "(YAML only)" are not
@@ -36,7 +37,7 @@ bots: []
 #   telegram_detail_max_body_chars: 3200        # (YAML only) Max chars for smart/debug detail body (truncated if longer)
 #
 #   rich_messages:
-#     enabled: false        # Bot API rich final replies for tables/task lists/headings/details/math (opt-in)
+#     enabled: false        # Bot API rich final replies for tables/task lists/headings/details/math; new WebUI bots default on
 #     drafts_enabled: false # reserved separate opt-in for rich live draft previews
 
 #
@@ -44,6 +45,7 @@ bots: []
 #   progress:
 #     edit_throttle_ms: 200        # (YAML only) Minimum delay between progress edits
 #     completed_mode: delete       # (YAML only) delete | none | edit — cleanup leftover progress; never leave "Completed" by default
+#     native_drafts_enabled: false # Telegram-native live draft previews when supported; new WebUI bots default on; /ux drafts overrides per session
 #     live_response_preview_interval_ms: 800      # (YAML only) Hermes-style max preview cadence
 #     live_response_preview_buffer_threshold: 24  # (YAML only) Flush early after enough new buffered chars
 #     live_response_preview_chars: 1200           # (YAML only) Cap visible draft text to avoid giant Telegram edits

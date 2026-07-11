@@ -6,6 +6,7 @@ Older entries are chronological release history and may mention commands/feature
 
 ### Added
 
+- **Enhanced Telegram UX** (`/ux`): macro command for rich final replies, native plain-text draft previews, and copy buttons. New WebUI bots default these on; existing bots keep conservative missing-key defaults until enabled. Copy buttons are limited to short code/command snippets and merge ahead of suggested-reply chips.
 - **Suggested replies** (`/suggest [on|off]`, bot default `suggested_replies_enabled`, WebUI toggle): after each text reply the utility LLM proposes up to three tap-to-send follow-up chips (💬), generated *after* delivery so the answer is never delayed, token-guarded like the other reply actions, localized via the conversation language, and cleared on the next reply and `/clear`.
 - **Message queue** (`queue_messages`, default on): button-driven follow-ups (Retry, Shorter/Longer, suggestions, edited re-runs, Continue) that arrive while the agent is busy are queued with a "📥 Queued" notice instead of being rejected; multiple queued turns are merged and dispatched automatically once the current run finishes (chain end).
 

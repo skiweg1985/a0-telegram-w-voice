@@ -136,8 +136,18 @@ _STRINGS: dict[str, dict[str, str]] = {
     "btn_longer": {"en": "📏 Longer", "de": "📏 Ausführlicher"},
     "btn_to_voice": {"en": "🎙 To voice", "de": "🎙 Als Sprache"},
     "btn_back": {"en": "⬅ Back", "de": "⬅ Zurück"},
+    "btn_copy_code": {"en": "📋 Copy code", "de": "📋 Code kopieren"},
+    "btn_copy_command": {"en": "📋 Copy command", "de": "📋 Befehl kopieren"},
     "btn_on": {"en": "On", "de": "An"},
     "btn_off": {"en": "Off", "de": "Aus"},
+    "btn_ux_on": {"en": "UX on", "de": "UX an"},
+    "btn_ux_off": {"en": "UX off", "de": "UX aus"},
+    "btn_ux_rich_on": {"en": "Rich on", "de": "Rich an"},
+    "btn_ux_rich_off": {"en": "Rich off", "de": "Rich aus"},
+    "btn_ux_drafts_on": {"en": "Drafts on", "de": "Drafts an"},
+    "btn_ux_drafts_off": {"en": "Drafts off", "de": "Drafts aus"},
+    "btn_ux_copy_on": {"en": "Copy on", "de": "Copy an"},
+    "btn_ux_copy_off": {"en": "Copy off", "de": "Copy aus"},
     # /rich
     "rich_status": {
         "en": (
@@ -168,6 +178,53 @@ _STRINGS: dict[str, dict[str, str]] = {
     "rich_usage": {
         "en": "Usage: /rich [on|off]",
         "de": "Verwendung: /rich [on|off]",
+    },
+    # /ux
+    "ux_status": {
+        "en": (
+            "Enhanced Telegram UX:\n"
+            "Rich messages: {rich}\n"
+            "Native drafts: {drafts}\n"
+            "Copy buttons: {copy}\n\n"
+            "Tap a button or type /ux on|off, /ux rich on|off, "
+            "/ux drafts on|off, or /ux copy on|off."
+        ),
+        "de": (
+            "Erweiterte Telegram-UX:\n"
+            "Rich-Nachrichten: {rich}\n"
+            "Native Drafts: {drafts}\n"
+            "Copy-Buttons: {copy}\n\n"
+            "Tippe einen Button oder /ux on|off, /ux rich on|off, "
+            "/ux drafts on|off oder /ux copy on|off."
+        ),
+    },
+    "ux_all_on": {
+        "en": "Enhanced Telegram UX: on — rich messages, native drafts, and copy buttons are active in this session.",
+        "de": "Erweiterte Telegram-UX: an — Rich-Nachrichten, native Drafts und Copy-Buttons sind in dieser Session aktiv.",
+    },
+    "ux_all_off": {
+        "en": "Enhanced Telegram UX: off — rich messages, native drafts, and copy buttons are disabled in this session.",
+        "de": "Erweiterte Telegram-UX: aus — Rich-Nachrichten, native Drafts und Copy-Buttons sind in dieser Session deaktiviert.",
+    },
+    "native_drafts_on": {
+        "en": "Native drafts: on — live response previews use Telegram drafts when supported.",
+        "de": "Native Drafts: an — Live-Vorschauen nutzen Telegram-Drafts, wenn unterstützt.",
+    },
+    "native_drafts_off": {
+        "en": "Native drafts: off — live response previews stay in the progress message.",
+        "de": "Native Drafts: aus — Live-Vorschauen bleiben in der Fortschrittsnachricht.",
+    },
+    "copy_buttons_on": {
+        "en": "Copy buttons: on — short code and command snippets get copy buttons.",
+        "de": "Copy-Buttons: an — kurze Code- und Befehls-Snippets bekommen Kopierbuttons.",
+    },
+    "copy_buttons_off": {
+        "en": "Copy buttons: off — replies keep the existing action buttons only.",
+        "de": "Copy-Buttons: aus — Antworten behalten nur die bisherigen Aktionsbuttons.",
+    },
+    "ux_usage": {
+        "en": "Usage: /ux [on|off] or /ux rich|drafts|copy [on|off]",
+        "de": "Verwendung: /ux [on|off] oder /ux rich|drafts|copy [on|off]",
     },
     "actions_on": {
         "en": "Reply actions: on — the More menu will be shown for this session.",
