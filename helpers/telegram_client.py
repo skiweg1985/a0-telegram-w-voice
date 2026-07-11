@@ -674,6 +674,36 @@ async def send_message_draft(
         return False
 
 
+def reactions_enabled(bot_cfg: dict | None) -> bool:
+    """Bot-level switch for emoji-reaction acknowledgements (default on)."""
+    return _coerce_bool((bot_cfg or {}).get("reactions_enabled"), True)
+
+
+async def set_message_reaction(bot: Bot, chat_id: int, message_id: int, emoji: str | None) -> bool:
+    """Set (or clear with None) a single emoji reaction on a message.
+
+    Reactions are cosmetic feedback: failures (old aiogram/Bot API, reactions
+    disabled in the chat, message too old) are logged quietly, never raised.
+    """
+    if not hasattr(bot, "set_message_reaction"):
+        return False
+    try:
+        reaction = []
+        if emoji:
+            from aiogram.types import ReactionTypeEmoji  # aiogram >= 3.2
+
+            reaction = [ReactionTypeEmoji(emoji=emoji)]
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=reaction,
+        )
+        return True
+    except Exception as e:
+        PrintStyle.warning(f"Telegram set_message_reaction failed: {format_error(e)}")
+        return False
+
+
 # Chat actions
 
 async def send_chat_action(bot: Bot, chat_id: int, action: str):

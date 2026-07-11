@@ -6,6 +6,7 @@ Covers:
 - sentence-boundary TTS truncation (``speech.truncate_for_tts``)
 """
 
+import asyncio
 import importlib.util
 import sys
 import types
@@ -50,6 +51,12 @@ def _install_stub_helpers():
     aiogram_types.InputMediaDocument = _DummyInline
     aiogram_types.InputMediaPhoto = _DummyInline
     aiogram_types.InputMediaVideo = _DummyInline
+
+    class _DummyReaction:
+        def __init__(self, emoji=""):
+            self.emoji = emoji
+
+    aiogram_types.ReactionTypeEmoji = _DummyReaction
     sys.modules["aiogram.types"] = aiogram_types
 
     helpers = types.ModuleType("helpers")
@@ -170,6 +177,42 @@ class EffectiveRichEnabledTests(unittest.TestCase):
         self.assertTrue(
             self.client.effective_rich_enabled({}, {"telegram_rich_messages_session": "on"})
         )
+
+
+class MessageReactionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = _load_client()
+
+    def test_reactions_enabled_default_and_override(self):
+        self.assertTrue(self.client.reactions_enabled({}))
+        self.assertFalse(self.client.reactions_enabled({"reactions_enabled": False}))
+        self.assertFalse(self.client.reactions_enabled({"reactions_enabled": "off"}))
+
+    def test_set_message_reaction_calls_api(self):
+        calls = []
+
+        class _Bot:
+            async def set_message_reaction(self, **kwargs):
+                calls.append(kwargs)
+
+        ok = asyncio.run(self.client.set_message_reaction(_Bot(), 99, 55, "👀"))
+        self.assertTrue(ok)
+        self.assertEqual(calls[0]["chat_id"], 99)
+        self.assertEqual(calls[0]["message_id"], 55)
+        self.assertEqual(calls[0]["reaction"][0].emoji, "👀")
+
+    def test_set_message_reaction_survives_old_bot_api(self):
+        ok = asyncio.run(self.client.set_message_reaction(object(), 99, 55, "👀"))
+        self.assertFalse(ok)  # no set_message_reaction attr → quiet no-op
+
+    def test_set_message_reaction_swallows_api_errors(self):
+        class _Bot:
+            async def set_message_reaction(self, **kwargs):
+                raise RuntimeError("reactions disabled in this chat")
+
+        ok = asyncio.run(self.client.set_message_reaction(_Bot(), 99, 55, "👍"))
+        self.assertFalse(ok)
 
 
 class TruncateForTtsTests(unittest.TestCase):

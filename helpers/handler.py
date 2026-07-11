@@ -95,6 +95,9 @@ from usr.plugins.telegram_integration_voice.helpers.constants import (
     CTX_TG_ALSO_SEND_TEXT_OVERRIDE,
     CTX_TG_REPLY_ACTIONS_SESSION,
     CTX_TG_RICH_SESSION,
+    CTX_TG_LAST_USER_MESSAGE_ID,
+    CTX_TG_EDITED_PENDING_TEXT,
+    CTX_TG_EDITED_PENDING_TOKEN,
     TG_UI_CALLBACK_PREFIX,
 )
 
@@ -2320,6 +2323,49 @@ async def handle_actions(message: TgMessage, bot_name: str, bot_cfg: dict):
     )
 
 
+async def handle_edited_message(message: TgMessage, bot_name: str, bot_cfg: dict):
+    """Handle edited user messages: offer a one-tap re-run with the new text.
+
+    Telegram edits arrive as separate updates that were previously ignored —
+    users who fix a typo expected the agent to notice. Instead of silently
+    re-running (which could surprise mid-task), a small inline offer maps the
+    edit onto the existing retry mechanic.
+    """
+    user = message.from_user
+    if not user or not _is_allowed(bot_cfg, user.id, user.username):
+        return
+    instance = get_bot(bot_name)
+    if not instance:
+        return
+    new_text = str(message.text or message.caption or "").strip()
+    if not new_text:
+        return
+    ctx = await _get_or_create_context(bot_name, bot_cfg, message)
+    if not ctx:
+        return
+
+    token = uuid.uuid4().hex[:12]
+    ctx.data[CTX_TG_EDITED_PENDING_TEXT] = new_text
+    ctx.data[CTX_TG_EDITED_PENDING_TOKEN] = token
+    if tc.reactions_enabled(bot_cfg):
+        with suppress(Exception):
+            async with _temp_bot(instance.bot.token) as react_bot:
+                await tc.set_message_reaction(
+                    react_bot, message.chat.id, message.message_id, "✍️"
+                )
+    keyboard = [[{
+        "text": "🔁 Run again with the edited text",
+        "callback_data": f"{TG_UI_CALLBACK_PREFIX}em|{token}",
+    }]]
+    await _send_with_temp_bot(
+        instance.bot.token,
+        message.chat.id,
+        "✏️ You edited your message.",
+        parse_mode=None,
+        keyboard=keyboard,
+    )
+
+
 async def handle_rich(message: TgMessage, bot_name: str, bot_cfg: dict):
     """Handle /rich — toggle native rich-message rendering for this session."""
     user = message.from_user
@@ -3187,6 +3233,16 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             )
             return
 
+    # Instant "seen" signal: react 👀 on the user's message before any other
+    # feedback — fastest possible acknowledgement, and in groups it marks
+    # exactly which message is being worked on.
+    if tc.reactions_enabled(bot_cfg):
+        with suppress(Exception):
+            async with _temp_bot(instance.bot.token) as react_bot:
+                await tc.set_message_reaction(
+                    react_bot, message.chat.id, message.message_id, "👀"
+                )
+
     # Start persistent typing indicator (thread-based, works across event loops)
     typing_stop = _start_typing(instance.bot.token, message.chat.id)
     context: AgentContext | None = None
@@ -3217,6 +3273,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
         # Keep Telegram threading visible when the user replied to an earlier message.
         reply_to_id = message.message_id if message.reply_to_message else None
         context.data[CTX_TG_REPLY_TO] = reply_to_id
+        context.data[CTX_TG_LAST_USER_MESSAGE_ID] = message.message_id
 
         # Build user message text
         text = _extract_message_content(message)
@@ -3840,6 +3897,27 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 await _send_with_temp_bot(
                     token, chat_id, reply, parse_mode=None
                 )
+            return
+
+        if kind == "em":
+            pending_token = str(context.data.get(CTX_TG_EDITED_PENDING_TOKEN, "") or "")
+            pending_text = str(context.data.get(CTX_TG_EDITED_PENDING_TEXT, "") or "")
+            if not payload or payload != pending_token or not pending_text:
+                await query.answer("Edit is no longer available.")
+                return
+            context.data.pop(CTX_TG_EDITED_PENDING_TEXT, None)
+            context.data.pop(CTX_TG_EDITED_PENDING_TOKEN, None)
+            err = await _dispatch_telegram_user_turn(
+                context,
+                bot_token=token,
+                chat_id=chat_id,
+                sender=_format_user(user),
+                body=pending_text,
+                attachments=[],
+                source=" (telegram edited message)",
+                busy_message="Agent is still working — use /stop first, then tap again.",
+            )
+            await query.answer("Running with the edited text" if not err else err)
             return
 
         if kind == "sx":
@@ -5162,6 +5240,19 @@ async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int)
         PrintStyle.warning(f"Telegram updates-paused notice failed: {format_error(e)}")
 
 
+async def _set_user_message_reaction(bot: Bot, context: AgentContext, emoji: str) -> None:
+    """Move the lifecycle reaction on the current user message (👀 → 👍/😢)."""
+    bot_cfg = context.data.get(CTX_TG_BOT_CFG, {}) or {}
+    if not tc.reactions_enabled(bot_cfg):
+        return
+    msg_id = context.data.pop(CTX_TG_LAST_USER_MESSAGE_ID, None)
+    chat_id = context.data.get(CTX_TG_CHAT_ID)
+    if not msg_id or not chat_id:
+        return
+    with suppress(Exception):
+        await tc.set_message_reaction(bot, int(chat_id), int(msg_id), emoji)
+
+
 async def notify_telegram_delivery_failure(context: AgentContext) -> None:
     """Last-resort user notice when the final reply could not be delivered.
 
@@ -5195,6 +5286,7 @@ async def notify_telegram_delivery_failure(context: AgentContext) -> None:
                 )
             if not edited:
                 await tc.send_text(notice_bot, int(chat_id), notice, parse_mode=None)
+            await _set_user_message_reaction(notice_bot, context, "😢")
     except Exception as e:
         PrintStyle.warning(f"Telegram delivery-failure notice failed: {format_error(e)}")
     finally:
@@ -6132,6 +6224,8 @@ async def send_telegram_reply(
                 or sent_voice
                 or sent_artifact_count
             )
+            if context.data[CTX_TG_FINAL_REPLY_DELIVERED]:
+                await _set_user_message_reaction(reply_bot, context, "👍")
             _clear_progress_state(context)
 
         # Persist the reveal-button token/text so "Show text" survives restarts.

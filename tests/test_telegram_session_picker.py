@@ -296,6 +296,12 @@ def _install_stub_modules():
         return bool(((bot_cfg or {}).get("rich_messages") or {}).get("enabled"))
 
     tc.effective_rich_enabled = _tc_effective_rich_enabled
+    tc.reactions_enabled = lambda bot_cfg: False  # keep reaction I/O out of tests by default
+
+    async def _tc_set_message_reaction(*args, **kwargs):
+        return True
+
+    tc.set_message_reaction = _tc_set_message_reaction
 
     async def _tc_send_rich_text(*args, **kwargs):
         return types.SimpleNamespace(
@@ -1028,6 +1034,80 @@ class TelegramSessionPickerTests(unittest.TestCase):
 
         abort.assert_not_awaited()
         ctx.communicate.assert_not_called()
+
+    def test_handle_edited_message_offers_rerun_with_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            message_id=55,
+            text="fixed question",
+            caption=None,
+        )
+        sent = []
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=_DummyBotInstance()), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *a, **k: sent.append((a, k)))):
+            asyncio.run(handler.handle_edited_message(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_EDITED_PENDING_TEXT], "fixed question")
+        token = ctx.data[handler.CTX_TG_EDITED_PENDING_TOKEN]
+        self.assertTrue(token)
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(
+            keyboard[0][0]["callback_data"],
+            f"{handler.TG_UI_CALLBACK_PREFIX}em|{token}",
+        )
+
+    def test_edited_rerun_callback_dispatches_new_text(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {
+            handler.CTX_TG_EDITED_PENDING_TEXT: "fixed question",
+            handler.CTX_TG_EDITED_PENDING_TOKEN: "tok123",
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}em|tok123",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        dispatch = mock.AsyncMock(return_value=None)
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=dispatch):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+
+        dispatch.assert_awaited_once()
+        self.assertEqual(dispatch.await_args.kwargs["body"], "fixed question")
+        self.assertNotIn(handler.CTX_TG_EDITED_PENDING_TEXT, ctx.data)
+
+    def test_edited_rerun_callback_rejects_stale_token(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {
+            handler.CTX_TG_EDITED_PENDING_TEXT: "fixed question",
+            handler.CTX_TG_EDITED_PENDING_TOKEN: "tok123",
+        }
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}em|other",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        dispatch = mock.AsyncMock()
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "_dispatch_telegram_user_turn", new=dispatch):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        dispatch.assert_not_awaited()
+        query.answer.assert_awaited_once_with("Edit is no longer available.")
 
     def test_extract_live_response_preview_from_complete_response_tool_json(self):
         handler = self.handler

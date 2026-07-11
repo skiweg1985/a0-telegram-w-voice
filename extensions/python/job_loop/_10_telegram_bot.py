@@ -74,6 +74,7 @@ class TelegramBotManager(Extension):
         handle_undo = getattr(_tg_handler, "handle_undo", None)
         handle_topic = getattr(_tg_handler, "handle_topic", None)
         handle_rich = getattr(_tg_handler, "handle_rich", None)
+        handle_edited_message = getattr(_tg_handler, "handle_edited_message", None)
 
         handle_optimize_output = getattr(_tg_handler, "handle_optimize_output", None)
         if handle_optimize_output is None and not _MISSING_OPTIMIZE_HANDLER_WARNED:
@@ -186,6 +187,11 @@ class TelegramBotManager(Extension):
                 _on_message = partial(_make_handler(handle_message), bot_name=name, bot_cfg=bot_cfg)
                 _on_callback = partial(_make_handler(handle_callback_query), bot_name=name, bot_cfg=bot_cfg)
                 _on_new_members = partial(_make_handler(handle_new_members), bot_name=name, bot_cfg=bot_cfg)
+                _on_edited_message = (
+                    partial(_make_handler(handle_edited_message), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_edited_message
+                    else None
+                )
 
                 _extra_commands = [
                     ("help", _on_help),
@@ -227,6 +233,7 @@ class TelegramBotManager(Extension):
                     on_command_clear=_on_clear,
                     on_callback_query=_on_callback,
                     on_new_members=_on_new_members,
+                    on_edited_message=_on_edited_message,
                     group_mode=bot_cfg.get("group_mode", "mention"),
                     extra_command_handlers=_extra_commands,
                 )

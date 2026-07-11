@@ -96,6 +96,14 @@ CTX_TG_REPLY_ACTIONS_SESSION = "telegram_reply_actions_session"
 # telegram_client.effective_rich_enabled in sync with this value.
 CTX_TG_RICH_SESSION = "telegram_rich_messages_session"
 
+# Telegram message id of the user turn currently being processed (transient),
+# so the reaction lifecycle (👀 received → 👍 delivered / 😢 failed) can target it.
+CTX_TG_LAST_USER_MESSAGE_ID = "_telegram_last_user_message_id"
+
+# Pending edited-message re-run offer (transient): new text + confirmation token.
+CTX_TG_EDITED_PENDING_TEXT = "_telegram_edited_pending_text"
+CTX_TG_EDITED_PENDING_TOKEN = "_telegram_edited_pending_token"
+
 # Throttle for Telegram detail status lines (transient; reset on new user message).
 CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"
 
