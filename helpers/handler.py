@@ -29,6 +29,7 @@ from usr.plugins.telegram_integration_voice.helpers import detail_status, speech
 from usr.plugins.telegram_integration_voice.helpers.bot_manager import get_bot
 from usr.plugins.telegram_integration_voice.helpers.command_registry import format_help_text
 from usr.plugins.telegram_integration_voice.helpers import status_copy
+from usr.plugins.telegram_integration_voice.helpers import i18n
 from usr.plugins.telegram_integration_voice.helpers.constants import (
     PLUGIN_NAME,
     DOWNLOAD_FOLDER,
@@ -507,14 +508,15 @@ def _response_action_keyboard(
     *,
     include_more: bool,
     include_show_text: bool = False,
+    bot_cfg: dict | None = None,
 ) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     rows: list[list[dict]] = []
     if include_show_text:
-        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
+        rows.append([{"text": i18n.t(bot_cfg, "btn_show_text"), "callback_data": f"{p}qa|show_text:{token}"}])
     if include_more:
         show_text_flag = "1" if include_show_text else "0"
-        rows.append([{"text": "⋯ More", "callback_data": f"{p}rm|open:{token}:{show_text_flag}"}])
+        rows.append([{"text": i18n.t(bot_cfg, "btn_more"), "callback_data": f"{p}rm|open:{token}:{show_text_flag}"}])
     return rows
 
 
@@ -576,26 +578,31 @@ _RESPONSE_TRANSFORM_SPECS: dict[str, dict[str, str]] = {
 }
 
 
-def _response_transform_keyboard_rows(token: str) -> list[list[dict]]:
+def _response_transform_keyboard_rows(token: str, bot_cfg: dict | None = None) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     buttons = []
     for action, spec in _RESPONSE_TRANSFORM_SPECS.items():
         buttons.append({
-            "text": spec["button"],
+            "text": i18n.t(bot_cfg, f"btn_{action}") if f"btn_{action}" in i18n._STRINGS else spec["button"],
             "callback_data": f"{p}ra|{action}:{token}",
         })
     return [buttons] if buttons else []
 
 
-def _response_more_keyboard(token: str, *, include_show_text: bool = False) -> list[list[dict]]:
+def _response_more_keyboard(
+    token: str,
+    *,
+    include_show_text: bool = False,
+    bot_cfg: dict | None = None,
+) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     rows: list[list[dict]] = []
     if include_show_text:
-        rows.append([{"text": "📝 Show text", "callback_data": f"{p}qa|show_text:{token}"}])
-    rows.extend(_response_transform_keyboard_rows(token))
-    rows.append([{"text": "🎙 To voice", "callback_data": f"{p}ra|to_voice:{token}"}])
+        rows.append([{"text": i18n.t(bot_cfg, "btn_show_text"), "callback_data": f"{p}qa|show_text:{token}"}])
+    rows.extend(_response_transform_keyboard_rows(token, bot_cfg))
+    rows.append([{"text": i18n.t(bot_cfg, "btn_to_voice"), "callback_data": f"{p}ra|to_voice:{token}"}])
     back_flag = "1" if include_show_text else "0"
-    rows.append([{"text": "⬅ Back", "callback_data": f"{p}rm|back:{token}:{back_flag}"}])
+    rows.append([{"text": i18n.t(bot_cfg, "btn_back"), "callback_data": f"{p}rm|back:{token}:{back_flag}"}])
     return rows
 
 
@@ -607,11 +614,11 @@ def _apply_reply_actions_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> 
     arg = str(raw or "").strip().lower()
     if arg in ("on", "enable", "enabled"):
         ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "on"
-        return "Reply actions: on — the More menu will be shown for this session."
+        return i18n.t(bot_cfg, "actions_on")
     if arg in ("off", "disable", "disabled"):
         ctx.data[CTX_TG_REPLY_ACTIONS_SESSION] = "off"
-        return "Reply actions: off — the More menu is hidden for this session."
-    return "Usage: /actions [on|off]"
+        return i18n.t(bot_cfg, "actions_off")
+    return i18n.t(bot_cfg, "actions_usage")
 
 
 def _response_transform_spec(action: str) -> dict[str, str] | None:
@@ -674,34 +681,26 @@ def _detail_inline_keyboard() -> list[list[dict]]:
     ]
 
 
-def _actions_inline_keyboard() -> list[list[dict]]:
+def _on_off_inline_keyboard(kind: str, bot_cfg: dict | None = None) -> list[list[dict]]:
     p = TG_UI_CALLBACK_PREFIX
     return [
         [
-            {"text": "On", "callback_data": f"{p}a|on"},
-            {"text": "Off", "callback_data": f"{p}a|off"},
+            {"text": i18n.t(bot_cfg, "btn_on"), "callback_data": f"{p}{kind}|on"},
+            {"text": i18n.t(bot_cfg, "btn_off"), "callback_data": f"{p}{kind}|off"},
         ],
     ]
 
 
-def _detail_before_inline_keyboard() -> list[list[dict]]:
-    p = TG_UI_CALLBACK_PREFIX
-    return [
-        [
-            {"text": "On", "callback_data": f"{p}db|on"},
-            {"text": "Off", "callback_data": f"{p}db|off"},
-        ],
-    ]
+def _actions_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    return _on_off_inline_keyboard("a", bot_cfg)
 
 
-def _rich_inline_keyboard() -> list[list[dict]]:
-    p = TG_UI_CALLBACK_PREFIX
-    return [
-        [
-            {"text": "On", "callback_data": f"{p}ri|on"},
-            {"text": "Off", "callback_data": f"{p}ri|off"},
-        ],
-    ]
+def _detail_before_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    return _on_off_inline_keyboard("db", bot_cfg)
+
+
+def _rich_inline_keyboard(bot_cfg: dict | None = None) -> list[list[dict]]:
+    return _on_off_inline_keyboard("ri", bot_cfg)
 
 
 def _mark_active_buttons(rows: list[list[dict]], active_callback_data: str) -> list[list[dict]]:
@@ -759,14 +758,11 @@ def _apply_rich_setting(ctx: AgentContext, bot_cfg: dict, raw: str) -> str:
     arg = str(raw or "").strip().lower()
     if arg in ("on", "enable", "enabled"):
         ctx.data[CTX_TG_RICH_SESSION] = "on"
-        return (
-            "Rich messages: on — tables, headings, task lists and math render "
-            "natively in this session."
-        )
+        return i18n.t(bot_cfg, "rich_on")
     if arg in ("off", "disable", "disabled"):
         ctx.data[CTX_TG_RICH_SESSION] = "off"
-        return "Rich messages: off — replies stay plain for easy copying."
-    return "Usage: /rich [on|off]"
+        return i18n.t(bot_cfg, "rich_off")
+    return i18n.t(bot_cfg, "rich_usage")
 
 
 def _detail_session_description(ctx: AgentContext, bot_cfg: dict) -> str:
@@ -1959,11 +1955,8 @@ def _is_admin_user(bot_cfg: dict, user_id: int, username: str | None) -> bool:
 _UNAUTHORIZED_NOTICE_TTL = 3600
 
 
-def _unauthorized_notice_text(user_id: int) -> str:
-    return (
-        "You are not authorized to use this bot.\n"
-        f"Your Telegram user ID is {user_id} — share it with the bot operator to request access."
-    )
+def _unauthorized_notice_text(user_id: int, bot_cfg: dict | None = None) -> str:
+    return i18n.t(bot_cfg, "unauthorized", user_id=user_id)
 
 
 def _should_send_unauthorized_notice(bot_name: str, user_id: int) -> bool:
@@ -2004,7 +1997,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         return
 
     if not _is_allowed(bot_cfg, user.id, user.username):
-        await message.reply(_unauthorized_notice_text(user.id))
+        await message.reply(_unauthorized_notice_text(user.id, bot_cfg))
         return
 
     instance = get_bot(bot_name)
@@ -2025,7 +2018,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
         )
         if recent:
             label = _model_preset_button_label(
-                f"▶️ Continue: {recent.get('display_name') or recent.get('id')}"
+                i18n.t(bot_cfg, "continue_last", name=recent.get("display_name") or recent.get("id"))
             )
             keyboard = [[{
                 "text": label,
@@ -2036,11 +2029,7 @@ async def handle_start(message: TgMessage, bot_name: str, bot_cfg: dict):
 
     await _send_with_temp_bot(
         instance.bot.token, message.chat.id,
-        f"\U0001f44b Hello {user.first_name}! I'm connected to Agent Zero.\n\n"
-        "Send a message — text or voice — and I'll reply.\n\n"
-        "\U0001f399 /voice switches voice replies on or off.\n"
-        "\u2699\ufe0f /status shows the current modes.\n"
-        "\U0001f5d1 /clear resets this conversation. /help lists all commands.",
+        i18n.t(bot_cfg, "welcome", name=user.first_name),
         parse_mode=None,
         keyboard=keyboard,
     )
@@ -2087,7 +2076,7 @@ async def handle_clear(message: TgMessage, bot_name: str, bot_cfg: dict):
     if instance:
         await _send_with_temp_bot(
             instance.bot.token, message.chat.id,
-            "Chat cleared. Send a new message to start fresh.",
+            i18n.t(bot_cfg, "chat_cleared"),
             parse_mode=None,
         )
 
@@ -2140,7 +2129,7 @@ async def handle_help(message: TgMessage, bot_name: str, bot_cfg: dict):
     await _send_with_temp_bot(
         instance.bot.token,
         message.chat.id,
-        format_help_text(),
+        format_help_text(language=i18n.bot_language(bot_cfg)),
         parse_mode=None,
     )
 
@@ -2240,7 +2229,7 @@ async def handle_detail_before(message: TgMessage, bot_name: str, bot_cfg: dict)
             f"Tool start updates: {_detail_before_status_text(enabled)}.\n"
             "Tap a button or type /detail_before on|off for this session."
         )
-        kb = _detail_before_inline_keyboard()
+        kb = _detail_before_inline_keyboard(bot_cfg)
         save_tmp_chat(ctx)
         await _send_with_temp_bot(
             instance.bot.token,
@@ -2377,7 +2366,7 @@ async def handle_actions(message: TgMessage, bot_name: str, bot_cfg: dict):
             f"Reply actions: {_reply_actions_status_text(effective)}.\n"
             "Tap a button or type /actions on|off for this session."
         )
-        kb = _actions_inline_keyboard()
+        kb = _actions_inline_keyboard(bot_cfg)
         save_tmp_chat(ctx)
         await _send_with_temp_bot(
             instance.bot.token,
@@ -2430,13 +2419,13 @@ async def handle_edited_message(message: TgMessage, bot_name: str, bot_cfg: dict
                     react_bot, message.chat.id, message.message_id, "✍️"
                 )
     keyboard = [[{
-        "text": "🔁 Run again with the edited text",
+        "text": i18n.t(bot_cfg, "edited_offer_button"),
         "callback_data": f"{TG_UI_CALLBACK_PREFIX}em|{token}",
     }]]
     await _send_with_temp_bot(
         instance.bot.token,
         message.chat.id,
-        "✏️ You edited your message.",
+        i18n.t(bot_cfg, "edited_offer"),
         parse_mode=None,
         keyboard=keyboard,
     )
@@ -2457,12 +2446,8 @@ async def handle_rich(message: TgMessage, bot_name: str, bot_cfg: dict):
     arg = _cmd_rest(message)
     if not arg:
         effective = tc.effective_rich_enabled(bot_cfg, ctx.data)
-        reply = (
-            f"Rich messages: {'on' if effective else 'off'}.\n"
-            "Native rendering for tables, headings, task lists and math. "
-            "Tap a button or type /rich on|off for this session."
-        )
-        kb = _rich_inline_keyboard()
+        reply = i18n.t(bot_cfg, "rich_status", state="on" if effective else "off")
+        kb = _rich_inline_keyboard(bot_cfg)
         save_tmp_chat(ctx)
         await _send_with_temp_bot(
             instance.bot.token,
@@ -3283,7 +3268,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                 await _send_with_temp_bot(
                     denied_bot.bot.token,
                     message.chat.id,
-                    _unauthorized_notice_text(user.id),
+                    _unauthorized_notice_text(user.id, bot_cfg),
                     parse_mode=None,
                 )
         return
@@ -3330,7 +3315,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
             _stop_typing_handle(typing_stop)
             await _send_with_temp_bot(
                 instance.bot.token, message.chat.id,
-                "Failed to create chat session.",
+                i18n.t(bot_cfg, "failed_create_session"),
                 parse_mode=None,
                 )
             return
@@ -3370,8 +3355,7 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                     context,
                     instance.bot.token,
                     message.chat.id,
-                    "🤷 I can't process this type of message yet. "
-                    "Please send text, voice, photos, videos, or files.",
+                    i18n.t(bot_cfg, "unsupported_type"),
                 )
             else:
                 _clear_progress_state(context)
@@ -3391,17 +3375,10 @@ async def handle_message(message: TgMessage, bot_name: str, bot_cfg: dict):
                     if transcript:
                         text = _merge_voice_transcript(text, transcript)
                     else:
-                        stt_failure_notice = (
-                            "\U0001f399 I couldn't understand that voice message "
-                            "(the transcription came back empty). Please try again "
-                            "or send it as text."
-                        )
+                        stt_failure_notice = i18n.t(bot_cfg, "stt_empty")
                 except Exception as e:
                     PrintStyle.error(f"Telegram STT failed: {format_error(e)}")
-                    stt_failure_notice = (
-                        "\U0001f399 I couldn't process that voice message right now. "
-                        "Please try again or send it as text."
-                    )
+                    stt_failure_notice = i18n.t(bot_cfg, "stt_failed")
                 finally:
                     await _set_progress_phase_and_refresh(
                         context,
@@ -3851,11 +3828,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                             bot,
                             chat_id,
                             voice_file,
-                            caption=(
-                                "🔊 Shortened for voice — the full reply is in the text above."
-                                if tts_truncated
-                                else ""
-                            ),
+                            caption=(i18n.t(bot_cfg, "voice_shortened_above") if tts_truncated else ""),
                             reply_to_message_id=(query.message.message_id if query.message else None),
                         )
                     await query.answer("Sent as voice (shortened)" if tts_truncated else "Sent as voice")
@@ -3961,7 +3934,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             await query.answer("OK")
             if not await _edit_mode_status_message(
-                token, query, reply, _actions_inline_keyboard(),
+                token, query, reply, _actions_inline_keyboard(bot_cfg),
                 f"{TG_UI_CALLBACK_PREFIX}a|{payload}",
             ):
                 await _send_with_temp_bot(
@@ -3977,7 +3950,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             await query.answer("OK")
             if not await _edit_mode_status_message(
-                token, query, reply, _detail_before_inline_keyboard(),
+                token, query, reply, _detail_before_inline_keyboard(bot_cfg),
                 f"{TG_UI_CALLBACK_PREFIX}db|{payload}",
             ):
                 await _send_with_temp_bot(
@@ -3993,7 +3966,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             save_tmp_chat(context)
             await query.answer("OK")
             if not await _edit_mode_status_message(
-                token, query, reply, _rich_inline_keyboard(),
+                token, query, reply, _rich_inline_keyboard(bot_cfg),
                 f"{TG_UI_CALLBACK_PREFIX}ri|{payload}",
             ):
                 await _send_with_temp_bot(
@@ -4005,7 +3978,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
             pending_token = str(context.data.get(CTX_TG_EDITED_PENDING_TOKEN, "") or "")
             pending_text = str(context.data.get(CTX_TG_EDITED_PENDING_TEXT, "") or "")
             if not payload or payload != pending_token or not pending_text:
-                await query.answer("Edit is no longer available.")
+                await query.answer(i18n.t(bot_cfg, "edited_gone"))
                 return
             context.data.pop(CTX_TG_EDITED_PENDING_TEXT, None)
             context.data.pop(CTX_TG_EDITED_PENDING_TOKEN, None)
@@ -4017,9 +3990,9 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 body=pending_text,
                 attachments=[],
                 source=" (telegram edited message)",
-                busy_message="Agent is still working — use /stop first, then tap again.",
+                busy_message=i18n.t(bot_cfg, "busy_stop_first"),
             )
-            await query.answer("Running with the edited text" if not err else err)
+            await query.answer(i18n.t(bot_cfg, "edited_running") if not err else err)
             return
 
         if kind == "sx":
@@ -4050,7 +4023,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                 if not query.message:
                     await query.answer("Message is no longer available.")
                     return
-                keyboard = tc.build_inline_keyboard(_response_more_keyboard(action_token, include_show_text=show_text_flag))
+                keyboard = tc.build_inline_keyboard(_response_more_keyboard(action_token, include_show_text=show_text_flag, bot_cfg=bot_cfg))
                 edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
                 if callable(edit_reply_markup):
                     await edit_reply_markup(reply_markup=keyboard)
@@ -4068,6 +4041,7 @@ async def handle_callback_query(query: CallbackQuery, bot_name: str, bot_cfg: di
                         action_token,
                         include_more=True,
                         include_show_text=show_text_flag,
+                        bot_cfg=bot_cfg,
                     )
                 )
                 edit_reply_markup = getattr(query.message, "edit_reply_markup", None)
@@ -5334,7 +5308,7 @@ async def _maybe_notify_updates_paused(context: AgentContext, bot, chat_id: int)
         await tc.send_text(
             bot,
             chat_id,
-            "⏳ Still working — live updates are paused by Telegram rate limits.",
+            i18n.t(context.data.get(CTX_TG_BOT_CFG, {}) or {}, "updates_paused"),
             parse_mode=None,
         )
         if not _typing_rearm_blocked(context):
@@ -5370,10 +5344,7 @@ async def notify_telegram_delivery_failure(context: AgentContext) -> None:
     instance = get_bot(bot_name) if bot_name else None
     if not instance or not chat_id:
         return
-    notice = (
-        "⚠️ I finished, but the reply could not be delivered to Telegram. "
-        "Send /retry to run your last message again."
-    )
+    notice = i18n.t(context.data.get(CTX_TG_BOT_CFG, {}) or {}, "delivery_failed")
     try:
         await _finalize_progress_updates(context)
         progress_message_id = context.data.get(CTX_TG_PROGRESS_MESSAGE_ID)
@@ -6164,6 +6135,7 @@ async def send_telegram_reply(
                     response_token,
                     include_more=show_more_button,
                     include_show_text=want_show_text_button,
+                    bot_cfg=bot_cfg,
                 )
             else:
                 voice_buttons = None
@@ -6171,6 +6143,7 @@ async def send_telegram_reply(
                     response_action_rows = _response_action_keyboard(
                         response_token,
                         include_more=True,
+                        bot_cfg=bot_cfg,
                     )
             final_keyboard = _append_inline_keyboard(base_keyboard, response_action_rows)
             planned_items, text_body, media_reply_markup, response_text_in_caption = _plan_outbound_delivery(
@@ -6214,11 +6187,7 @@ async def send_telegram_reply(
                 )
                 voice_stop = None
                 try:
-                    voice_caption = (
-                        "🔊 Shortened for voice — the full reply is available as text."
-                        if tts_truncated
-                        else ""
-                    )
+                    voice_caption = i18n.t(bot_cfg, "voice_shortened") if tts_truncated else ""
                     voice_stop = _activate_context_record_voice(context, instance.bot.token, chat_id)
                     voice_file, _meta = await asyncio.to_thread(speech.synthesize_to_voice_file, bot_cfg, tts_payload)
                     msg_id = await tc.send_voice(

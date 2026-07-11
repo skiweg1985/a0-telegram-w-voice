@@ -244,5 +244,77 @@ class TruncateForTtsTests(unittest.TestCase):
         self.assertEqual(settings["max_chars"], 1400)
 
 
+def _load_i18n():
+    spec = importlib.util.spec_from_file_location(
+        "telegram_ux_i18n_under_test", REPO_ROOT / "helpers" / "i18n.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class I18nTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.i18n = _load_i18n()
+
+    def test_language_defaults_to_english(self):
+        self.assertEqual(self.i18n.bot_language({}), "en")
+        self.assertEqual(self.i18n.bot_language({"language": "fr"}), "en")
+        self.assertEqual(self.i18n.bot_language({"language": "DE"}), "de")
+
+    def test_translation_with_formatting(self):
+        de = self.i18n.t({"language": "de"}, "welcome", name="Ben")
+        self.assertIn("Hallo Ben!", de)
+        en = self.i18n.t({}, "welcome", name="Ben")
+        self.assertIn("Hello Ben!", en)
+
+    def test_unknown_key_falls_back_to_key(self):
+        self.assertEqual(self.i18n.t({}, "no_such_key"), "no_such_key")
+
+    def test_all_keys_have_english_and_german(self):
+        for key, entry in self.i18n._STRINGS.items():
+            self.assertIn("en", entry, f"missing en for {key}")
+            self.assertIn("de", entry, f"missing de for {key}")
+
+    def test_unauthorized_contains_user_id(self):
+        text = self.i18n.t({"language": "de"}, "unauthorized", user_id=1234)
+        self.assertIn("1234", text)
+
+
+class CommandRegistryI18nTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _install_stub_helpers()
+        aiogram = sys.modules["aiogram"]
+        aiogram.Bot = object
+
+        class _BotCommand:
+            def __init__(self, command="", description=""):
+                self.command = command
+                self.description = description
+
+        sys.modules["aiogram.types"].BotCommand = _BotCommand
+        spec = importlib.util.spec_from_file_location(
+            "telegram_ux_registry_under_test", REPO_ROOT / "helpers" / "command_registry.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        cls.registry = module
+
+    def test_german_menu_covers_every_command(self):
+        commands = {cmd for cmd, _, _ in self.registry.COMMAND_ROWS}
+        self.assertEqual(commands, set(self.registry.COMMAND_MENU_DE.keys()))
+
+    def test_german_help_text_uses_german_descriptions(self):
+        text = self.registry.format_help_text(language="de")
+        self.assertIn("Befehle:", text)
+        self.assertIn("/clear — Chat zurücksetzen", text)
+        english = self.registry.format_help_text()
+        self.assertIn("Commands:", english)
+
+
 if __name__ == "__main__":
     unittest.main()

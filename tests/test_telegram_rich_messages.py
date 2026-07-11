@@ -276,6 +276,14 @@ def _load_handler_for_rich_tests():
     tc.send_text_with_keyboard = mock.AsyncMock(return_value=889)
     sys.modules["usr.plugins.telegram_integration_voice.helpers.telegram_client"] = tc
 
+    i18n_spec = importlib.util.spec_from_file_location(
+        "usr.plugins.telegram_integration_voice.helpers.i18n",
+        REPO_ROOT / "helpers" / "i18n.py",
+    )
+    i18n_module = importlib.util.module_from_spec(i18n_spec)
+    sys.modules[i18n_spec.name] = i18n_module
+    i18n_spec.loader.exec_module(i18n_module)
+
     for mod_name, attrs in {
         "usr.plugins.telegram_integration_voice.helpers.detail_status": {},
         "usr.plugins.telegram_integration_voice.helpers.speech": {},
