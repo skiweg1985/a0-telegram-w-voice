@@ -6,6 +6,13 @@ Older entries are chronological release history and may mention commands/feature
 
 ### Added
 
+- New `/rich [on|off]` command: per-session toggle for native rich-message rendering (tables, headings, task lists, math) with inline buttons; the WebUI/YAML `rich_messages.enabled` becomes the default for new sessions, shown in `/status`, reset on `/clear`/`/newchat`. The session override also gates the rich system-prompt guidance so the agent only produces rich structures that will render.
+- Settings keyboards (`/voice`, `/detail`, `/detail_before`, `/optimize_output`, `/actions`, `/rich`) now edit the tapped message in place and mark the active option with a checkmark, instead of stacking confirmation bubbles below stale keyboards.
+- Incoming **GIFs/animations** are downloaded and labeled for the agent; unsupported message types (polls, dice, stories, …) answer with a short "can't process this type" notice in private chats instead of silently forwarding an empty turn (groups drop them silently).
+- **Emoji-reaction acknowledgements** (`reactions_enabled`, default on): 👀 on receipt, 👍 on delivered reply, 😢 on delivery failure; quiet no-op on old Bot API versions. **Edited messages** get a ✍️ reaction plus a one-tap "Run again with the edited text" offer (private chats).
+- **Session UX**: one-line previews (last user request) in the `/session` picker, 📌 pin/unpin from the details view (pinned sessions sort first), and a "▶️ Continue last session" button on `/start`.
+- **i18n layer** (`language: en|de`, WebUI selector): welcome, confirmations, notices, quick-action buttons, `/help`, and a German Telegram command menu via `setMyCommands(language_code="de")`. Operator surfaces (`/status` internals, session picker labels) stay English for now.
+
 - Voice replies that exceed the TTS character cap are now cut at a sentence boundary instead of mid-word, carry a "🔊 Shortened for voice" caption, and force the **Show text** reveal button so the full reply stays reachable (also applies to the **To voice** quick action). The default `speech.reply.max_chars` was raised from 700 to 1400.
 - STT failures now answer the user directly ("I couldn't understand that voice message…", reusing the progress bubble when possible) instead of injecting a raw `[Voice transcript failed: …]` marker into the agent prompt.
 - When the final reply cannot be delivered after all retries, the chat now shows "⚠️ … Send /retry" (the leftover progress bubble is edited into the notice) instead of freezing on "In progress…" while the failure was only logged server-side.

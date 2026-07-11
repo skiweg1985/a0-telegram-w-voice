@@ -740,3 +740,37 @@
   - yes ([Unreleased] Added + Fixed)
 - Follow-ups:
   - none
+
+## 2026-07-11 – Claude – Feature-Batch: /rich, In-place-Keyboards, GIF/Unsupported, Reaktionen+Edits, Session-UX, i18n
+
+- Done:
+  - **/rich [on|off]**: Session-Toggle für natives Rich-Rendering nach dem /actions-Muster (Inline-Buttons, persistierter Override `telegram_rich_messages_session`, Default aus `rich_messages.enabled`, Reset bei /clear, Anzeige in /status, Eintrag in command_registry + job_loop). Schaltet Sende-Pfad UND System-Prompt (`tc.effective_rich_enabled`).
+  - **In-place-Settings-Keyboards**: Mode-Callbacks (o/v/a/db/ri/d) editieren die getippte Nachricht per `_edit_mode_status_message` und markieren die aktive Option mit ✓; Fallback auf Neusenden, wenn Edit unmöglich.
+  - **Eingehende GIFs & unbekannte Typen**: `message.animation` wird heruntergeladen (Dokument-Spiegelkopie wird übersprungen) und gelabelt; Nachrichten ohne verwertbaren Inhalt antworten privat mit Hinweis (`_abort_turn_with_notice`), in Gruppen still verworfen.
+  - **Emoji-Reaktionen + Edits**: `tc.set_message_reaction` (versionsgesichert), Lifecycle 👀→👍/😢 (`reactions_enabled`, Default an); `edited_message`-Handler mit ✍️-Reaktion und Token-gesichertem „Run again"-Button auf die Retry-Mechanik (nur Privat-Chats; Registrierung in bot_manager/job_loop).
+  - **Session-UX**: `telegram_session_preview` (Vorschau je User-Turn) + `telegram_session_pinned` (📌 Pin/Unpin in Detailansicht, Callback `spn`, funktioniert für geladene und kalte On-Disk-Sessions); Picker sortiert Pinned zuerst und zeigt Previews im Button-Label; /start bietet „▶️ Continue last session" (`s|`-Callback).
+  - **i18n**: `helpers/i18n.py` mit `language: en|de` pro Bot (WebUI-Feld + Store-Default); lokalisiert: Welcome, Clear, Unauthorized, STT-/Unsupported-/Delivery-Notices, Rate-Limit-Hinweis, TTS-Captions, Edited-Offer, Quick-Action-Buttons, /rich- und /actions-Texte, /help; deutsches Command-Menü via `setMyCommands(language_code="de")`. Bewusst EN geblieben: /status-Details, Session-Picker-Labels, Voice-Mode-Bestätigungen (Follow-up).
+  - Nebenbei gefixt: `config.html` rief nicht existierendes `ensureReplyKeyboard` im Store auf (JS-Fehler bei jedem Kartenaufklappen) — Hook ergänzt (delegiert an neues `ensureLanguage`).
+  - Version 0.11.3 → 0.12.0 (plugin.yaml, README-Badge).
+- Next:
+  - Follow-up i18n: Session-Picker-Labels, /status, Voice-Mode-Bestätigungen.
+  - Telegram-Smoke-Test des Gesamtpakets auf einer echten Instanz.
+- Blockers:
+  - none
+- Branch/PR:
+  - branch: claude/plugin-ui-ux-improvements-cyrtvo (neu von main nach Merge von PR #24)
+  - PR: none
+- Files touched:
+  - helpers/handler.py, helpers/telegram_client.py, helpers/constants.py, helpers/command_registry.py, helpers/bot_manager.py, helpers/i18n.py (neu)
+  - extensions/python/job_loop/_10_telegram_bot.py, extensions/python/system_prompt/_20_telegram_context.py
+  - webui/config.html, webui/telegram-config-store.js
+  - default_config.yaml, plugin.yaml, README.md
+  - tests/test_telegram_session_picker.py, tests/test_telegram_ux_fixes.py, tests/test_telegram_system_prompt.py, tests/test_telegram_media_routing.py, tests/test_telegram_rich_messages.py
+  - docs/CHANGELOG.md, planning/coordination/WORKLOG.md
+- Test notes:
+  - commands: `python3 -m unittest discover -s tests` (230 passed)
+  - UI path: /rich-Buttons, Mode-Buttons mit ✓-Edit, GIF senden, Poll senden (privat), Reaktions-Lifecycle, Nachricht editieren, /session-Picker mit 📌+Preview, /start-Continue-Button, `language: de` mit deutschem Menü
+- Changelog updated:
+  - yes ([Unreleased] Added)
+- Follow-ups:
+  - i18n-Ausbau (siehe Next)
