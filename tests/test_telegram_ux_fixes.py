@@ -151,6 +151,27 @@ class SplitTextHtmlAwareTests(unittest.TestCase):
         self.assertEqual(plain, "x <= y && a > b")
 
 
+class EffectiveRichEnabledTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = _load_client()
+
+    def test_defaults_to_bot_config(self):
+        self.assertFalse(self.client.effective_rich_enabled({}, {}))
+        self.assertTrue(
+            self.client.effective_rich_enabled({"rich_messages": {"enabled": True}}, {})
+        )
+
+    def test_session_override_wins_both_ways(self):
+        cfg_on = {"rich_messages": {"enabled": True}}
+        self.assertFalse(
+            self.client.effective_rich_enabled(cfg_on, {"telegram_rich_messages_session": "off"})
+        )
+        self.assertTrue(
+            self.client.effective_rich_enabled({}, {"telegram_rich_messages_session": "on"})
+        )
+
+
 class TruncateForTtsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

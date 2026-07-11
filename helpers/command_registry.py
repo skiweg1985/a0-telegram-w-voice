@@ -79,6 +79,11 @@ COMMAND_ROWS: list[tuple[str, str, str]] = [
         "/voice [voice_only|voice_text|auto|text_only|off] — auto speaks only after a voice message; no arg = status + buttons",
     ),
     (
+        "rich",
+        "Rich message rendering",
+        "/rich [on|off] — native rendering for tables, headings, task lists and math; no arg = status + buttons",
+    ),
+    (
         "retry",
         "Redo last message",
         "/retry — re-run your last message",

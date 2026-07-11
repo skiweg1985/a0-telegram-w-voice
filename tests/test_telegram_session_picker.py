@@ -287,6 +287,16 @@ def _install_stub_modules():
     tc.rich_message_eligible = lambda text: False
     tc.rich_content_fits_limits = lambda text: True
 
+    def _tc_effective_rich_enabled(bot_cfg, ctx_data):
+        raw = str((ctx_data or {}).get("telegram_rich_messages_session", "") or "").strip().lower()
+        if raw in ("on", "true", "1", "yes"):
+            return True
+        if raw in ("off", "false", "0", "no"):
+            return False
+        return bool(((bot_cfg or {}).get("rich_messages") or {}).get("enabled"))
+
+    tc.effective_rich_enabled = _tc_effective_rich_enabled
+
     async def _tc_send_rich_text(*args, **kwargs):
         return types.SimpleNamespace(
             success=False,
@@ -3139,6 +3149,86 @@ class TelegramSessionPickerTests(unittest.TestCase):
             asyncio.run(handler.handle_clear(message, "mainbot", {}))
         self.assertEqual(len(sent), 1)
         self.assertIn("Chat cleared", str(sent[0][0][2]))
+
+    def test_handle_rich_without_arg_shows_inline_picker(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/rich",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+        saved = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat", side_effect=lambda current: saved.append(current)), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_rich(message, "mainbot", {"rich_messages": {"enabled": True}}))
+
+        self.assertEqual(saved, [ctx])
+        self.assertIn("Rich messages: on", sent[-1][0][2])
+        keyboard = sent[-1][1]["keyboard"]
+        self.assertEqual(keyboard[0][0]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}ri|on")
+        self.assertEqual(keyboard[0][1]["callback_data"], f"{handler.TG_UI_CALLBACK_PREFIX}ri|off")
+
+    def test_handle_rich_sets_session_toggle(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        message = types.SimpleNamespace(
+            text="/rich on",
+            chat=types.SimpleNamespace(id=99),
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+        )
+        sent = []
+
+        with mock.patch.object(handler, "_get_or_create_context", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "get_bot", return_value=types.SimpleNamespace(bot=types.SimpleNamespace(token="tok"))), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock(side_effect=lambda *args, **kwargs: sent.append((args, kwargs)))):
+            asyncio.run(handler.handle_rich(message, "mainbot", {}))
+
+        self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "on")
+        self.assertIn("Rich messages: on", sent[-1][0][2])
+
+    def test_handle_callback_query_rich_toggle_sets_session_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {}
+        query = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji"),
+            data=f"{handler.TG_UI_CALLBACK_PREFIX}ri|off",
+            message=types.SimpleNamespace(
+                message_id=77,
+                chat=types.SimpleNamespace(id=99, type="private"),
+            ),
+            answer=mock.AsyncMock(),
+        )
+        with mock.patch.object(handler, "_get_or_create_context_from_user", new=mock.AsyncMock(return_value=ctx)), \
+             mock.patch.object(handler, "save_tmp_chat"), \
+             mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()):
+            asyncio.run(handler.handle_callback_query(query, "mainbot", {}))
+        self.assertEqual(ctx.data[handler.CTX_TG_RICH_SESSION], "off")
+        query.answer.assert_awaited()
+
+    def test_clear_resets_rich_session_override(self):
+        handler = self.handler
+        ctx = _DummyAgentContext(name="Shipping dashboard")
+        ctx.data = {handler.CTX_TG_RICH_SESSION: "on"}
+        message = types.SimpleNamespace(
+            from_user=types.SimpleNamespace(id=42, username="benji", first_name="Benji", last_name=""),
+            chat=types.SimpleNamespace(id=99, type="private"),
+            reply=mock.AsyncMock(),
+        )
+        _DummyAgentContext.registry["ctx1"] = ctx
+        with mock.patch.object(handler, "_send_with_temp_bot", new=mock.AsyncMock()), \
+             mock.patch.object(handler, "_load_state", return_value={"chats": {handler._map_key("mainbot", 42, 99): "ctx1"}}), \
+             mock.patch.object(handler, "save_tmp_chat"):
+            asyncio.run(handler.handle_clear(message, "mainbot", {}))
+        self.assertNotIn(handler.CTX_TG_RICH_SESSION, ctx.data)
 
     def test_progress_lines_show_spinner_while_running_and_check_when_done(self):
         """Tool-start lines render with a spinner; the completion replace switches to a checkmark."""

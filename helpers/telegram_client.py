@@ -120,6 +120,20 @@ def rich_messages_settings(bot_cfg: dict | None) -> dict:
     }
 
 
+def effective_rich_enabled(bot_cfg: dict | None, ctx_data: dict | None) -> bool:
+    """Session-aware rich-message switch: /rich override, else bot config.
+
+    The literal key mirrors constants.CTX_TG_RICH_SESSION (kept inline so this
+    module stays importable without the plugin package, e.g. in tests).
+    """
+    raw = str((ctx_data or {}).get("telegram_rich_messages_session", "") or "").strip().lower()
+    if raw in ("on", "true", "1", "yes"):
+        return True
+    if raw in ("off", "false", "0", "no"):
+        return False
+    return bool(rich_messages_settings(bot_cfg).get("enabled"))
+
+
 def rich_content_fits_limits(text: str) -> bool:
     return len(str(text or "").encode("utf-8")) <= RICH_MESSAGE_MAX_BYTES
 

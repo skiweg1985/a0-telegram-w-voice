@@ -63,6 +63,7 @@ def _install_stubs(*, rich_enabled=False, optimize_mode="off", also_send_text=Fa
         "enabled": rich_enabled,
         "drafts_enabled": False,
     }
+    tc.effective_rich_enabled = lambda bot_cfg, ctx_data: rich_enabled
     sys.modules["usr.plugins.telegram_integration_voice.helpers.telegram_client"] = tc
     return constants
 

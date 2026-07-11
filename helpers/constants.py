@@ -91,6 +91,11 @@ CTX_TG_DETAIL_BEFORE_SESSION = "telegram_detail_before_session"
 # Per-session toggle for inline reply actions: missing = use config default; on | off.
 CTX_TG_REPLY_ACTIONS_SESSION = "telegram_reply_actions_session"
 
+# Per-session rich-message rendering (/rich): missing = use rich_messages.enabled; on | off.
+# Key without "_" prefix so the choice survives restarts. Keep the literal in
+# telegram_client.effective_rich_enabled in sync with this value.
+CTX_TG_RICH_SESSION = "telegram_rich_messages_session"
+
 # Throttle for Telegram detail status lines (transient; reset on new user message).
 CTX_TG_DETAIL_LAST_SENT_TS = "_telegram_detail_last_sent_ts"
 

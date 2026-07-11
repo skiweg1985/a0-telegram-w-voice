@@ -25,7 +25,7 @@ class TelegramContextPrompt(Extension):
             )
 
             bot_cfg = self.agent.context.data.get(CTX_TG_BOT_CFG, {}) or {}
-            if tc.rich_messages_settings(bot_cfg).get("enabled"):
+            if tc.effective_rich_enabled(bot_cfg, self.agent.context.data):
                 system_prompt.append(
                     self.agent.read_prompt("fw.telegram.rich_messages.md")
                 )

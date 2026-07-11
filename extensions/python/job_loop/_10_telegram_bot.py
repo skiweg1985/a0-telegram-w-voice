@@ -73,6 +73,7 @@ class TelegramBotManager(Extension):
         handle_retry = getattr(_tg_handler, "handle_retry", None)
         handle_undo = getattr(_tg_handler, "handle_undo", None)
         handle_topic = getattr(_tg_handler, "handle_topic", None)
+        handle_rich = getattr(_tg_handler, "handle_rich", None)
 
         handle_optimize_output = getattr(_tg_handler, "handle_optimize_output", None)
         if handle_optimize_output is None and not _MISSING_OPTIMIZE_HANDLER_WARNED:
@@ -139,6 +140,11 @@ class TelegramBotManager(Extension):
                     if handle_voice
                     else None
                 )
+                _on_rich = (
+                    partial(_make_handler(handle_rich), bot_name=name, bot_cfg=bot_cfg)
+                    if handle_rich
+                    else None
+                )
                 _on_detail = partial(_make_handler(handle_detail), bot_name=name, bot_cfg=bot_cfg)
                 _on_detail_before = (
                     partial(_make_handler(handle_detail_before), bot_name=name, bot_cfg=bot_cfg)
@@ -189,6 +195,7 @@ class TelegramBotManager(Extension):
                     *(([("actions", _on_actions)]) if _on_actions else []),
                     *(([("topic", _on_topic)]) if _on_topic else []),
                     *(([("voice", _on_voice)]) if _on_voice else []),
+                    *(([("rich", _on_rich)]) if _on_rich else []),
                     ("detail", _on_detail),
                     *(([("detail_before", _on_detail_before)]) if _on_detail_before else []),
                 ]
